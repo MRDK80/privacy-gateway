@@ -42,10 +42,9 @@ def fernet_key() -> bytes:
 
 @pytest.fixture()
 def mock_keyring(fernet_key: bytes) -> Iterator[bytes]:
-    """Подменяет get_all_keys в pipeline и restore без обращения к реальному keyring."""
-    with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key):
-        with patch("privacy_gateway.restore.get_all_keys", return_value=[fernet_key]):
-            yield fernet_key
+    """Подменяет lookup в restore; prepare получает ключ явно."""
+    with patch("privacy_gateway.restore.get_all_keys", return_value=[fernet_key]):
+        yield fernet_key
 
 
 def _prepare_artifacts(tmp_path: Path, key: bytes, text: str = SYNTH_TEXT) -> Path:
