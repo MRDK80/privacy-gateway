@@ -74,6 +74,39 @@ def test_delete_key(safe_backend: _SafeBackendMock) -> None:
 # Fail-closed: небезопасный backend
 # ---------------------------------------------------------------------------
 
+def test_no_unused_backend_exception() -> None:
+    """#135: remove the unused subtype; retain the common backend error."""
+    assert not hasattr(ks, "UnsafeBackendError")
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("keyrings.alt.file", "PlaintextKeyring"),
+        ("keyring.backends.fail", "Keyring"),
+    ],
+)
+def test_backend_rejection_uses_common_error(
+    monkeypatch: pytest.MonkeyPatch, module: str, name: str,
+) -> None:
+    backend = type(name, (), {"__module__": module})()
+    backend.get_password = MagicMock()
+    backend.set_password = MagicMock()
+    backend.delete_password = MagicMock()
+    monkeypatch.setattr("keyring.get_keyring", lambda: backend)
+
+    with pytest.raises(KeystoreError) as exc_info:
+        ks._get_backend()
+
+    assert type(exc_info.value) is KeystoreError
+    assert "Unsafe or unavailable keyring backend" in str(exc_info.value)
+    for address_part in (ks._SERVICE, ks._ACTIVE_KEY, ks._RETIRED_KEY):
+        assert address_part not in str(exc_info.value)
+    backend.get_password.assert_not_called()
+    backend.set_password.assert_not_called()
+    backend.delete_password.assert_not_called()
+
+
 class _PlaintextBackendMock:
     """Mock backend с FQCN вне allowlist; методы рабочие."""
 

@@ -9,8 +9,10 @@
     delete_key() -> None (удалить ключ из keyring)
     rotate_key() -> bytes (ротация: новый активный, старый для чтения)
 
-Все методы выбрасывают подклассы KeystoreError при сбое.
-Адрес keystore (service/username) не выводится в сообщениях об ошибках.
+Отклонённый backend вызывает общий KeystoreError; отсутствие ключа
+и конфликт создания — соответствующие подклассы. Ошибки операций keyring
+и декодирования не оборачиваются во всех случаях. Собственные сообщения
+модуля не включают адрес keystore (service/username).
 """
 
 from __future__ import annotations
@@ -58,10 +60,6 @@ class KeyNotFoundError(KeystoreError):
 
 class KeyExistsError(KeystoreError):
     """Ключ уже существует (вызов create_key без force=True)."""
-
-
-class UnsafeBackendError(KeystoreError):
-    """Keyring использует небезопасный backend (plaintext-файл и т.п.)."""
 
 
 # ---------------------------------------------------------------------------

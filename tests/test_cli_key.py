@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
+import privacy_gateway.keystore as ks
 from privacy_gateway.cli import main
 from privacy_gateway.crypto import generate_key
 from privacy_gateway.keystore import (
@@ -175,3 +176,35 @@ def test_key_status_no_value(
         f"Ключевой материал найден в stderr: {captured.err!r}"
     )
     assert captured.out.strip()
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("keyrings.alt.file", "PlaintextKeyring"),
+        ("keyring.backends.fail", "Keyring"),
+    ],
+)
+@pytest.mark.parametrize("command", ["create", "status", "rotate"])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_rejected_backend_exit_code(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    module: str,
+    name: str,
+    command: str,
+    json_mode: bool,
+) -> None:
+    """Real backend validation preserves code 4 for both rejection cases."""
+    backend = type(name, (), {"__module__": module})()
+    monkeypatch.setattr("keyring.get_keyring", lambda: backend)
+    prefix = ("--json",) if json_mode else ()
+
+    assert _run_cli(*prefix, "key", command, capsys=capsys) == 4
+
+    captured = capsys.readouterr()
+    output = captured.out + captured.err
+    assert output.strip()
+    for address_part in (ks._SERVICE, ks._ACTIVE_KEY, ks._RETIRED_KEY):
+        assert address_part not in output
+    assert not _FERNET_KEY_RE.search(output)
