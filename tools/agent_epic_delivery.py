@@ -12,7 +12,10 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
+from tools import agent_coordinator_branch as branch
+from tools import agent_epic_policy_binding as binding
 from tools.agent_coordinator_delivery import REQUIRED_CHECKS as REQUIRED_CHECKS
+from tools.agent_epic_handover import MANDATE_FIELDS
 from tools.agent_epic_handover import MandateContext as MandateContext
 from tools.agent_epic_handover import mandate_digest as mandate_digest
 from tools.agent_epic_handover import mandate_lifecycle_code as mandate_lifecycle_code
@@ -47,12 +50,14 @@ class Request:
     repository: str
     epic: int
     task: int
-    pr: int
+    pr: int | None
     base_ref: str
     base_sha: str
     head_ref: str
     head_sha: str
     merge_sha: str | None = None
+    schema_version: str = "1.0"
+    policy_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,7 @@ class Ledger:
     def __init__(self, directory: Path, repository_root: Path) -> None:
         self.directory = directory.resolve()
         root = repository_root.resolve()
+        self.repository_root = root
         try:
             self.directory.relative_to(root)
         except ValueError:
@@ -130,19 +136,38 @@ def _blocked(code: str) -> Result:
 
 def _valid_request(request: Request) -> bool:
     return (
-        request.operation in OPERATIONS
+        request.schema_version in {"1.0", "2.0", "3.0"}
+        and (
+            (
+                request.schema_version == "3.0"
+                and isinstance(request.policy_sha, str)
+                and SHA_RE.fullmatch(request.policy_sha) is not None
+            )
+            or (request.schema_version != "3.0" and request.policy_sha is None)
+        )
+        and request.operation in OPERATIONS
         and bool(request.operation_id)
         and request.repository.count("/") == 1
         and request.epic > 0
         and request.task > 0
-        and request.pr > 0
+        and (
+            (
+                isinstance(request.pr, int)
+                and not isinstance(request.pr, bool)
+                and request.pr > 0
+            )
+            or (
+                request.schema_version in {"2.0", "3.0"}
+                and request.pr is None
+                and request.operation in {"commit_task", "push_task", "create_task_pr"}
+            )
+        )
         and request.base_ref.startswith(f"roadmap/{request.epic}-")
         and not request.head_ref.startswith("roadmap/")
         and SHA_RE.fullmatch(request.base_sha) is not None
         and SHA_RE.fullmatch(request.head_sha) is not None
         and (
-            request.merge_sha is None
-            or SHA_RE.fullmatch(request.merge_sha) is not None
+            request.merge_sha is None or SHA_RE.fullmatch(request.merge_sha) is not None
         )
         and (
             (request.operation in POST_MERGE_OPERATIONS)
@@ -157,6 +182,8 @@ def _authorized(
     approved_mandate_digest: str,
     mandate_context: MandateContext,
 ) -> str | None:
+    if mandate.get("schema_version") == "3.0" and set(mandate) != MANDATE_FIELDS:
+        return "MANDATE_INVALID"
     if DIGEST_RE.fullmatch(approved_mandate_digest) is None:
         return "MANDATE_APPROVAL_MISMATCH"
     lifecycle = mandate_lifecycle_code(mandate, mandate_context)
@@ -172,11 +199,13 @@ def _authorized(
     ):
         return "MANDATE_APPROVAL_MISMATCH"
     if (
-        mandate.get("schema_version") != "2.0"
+        mandate.get("schema_version")
+        != ("3.0" if request.schema_version == "3.0" else "2.0")
         or mandate.get("repository") != request.repository
         or mandate.get("epic") != request.epic
         or mandate.get("roadmap_ref") != request.base_ref
-        or mandate.get("policy_sha") != request.base_sha
+        or mandate.get("policy_sha")
+        != (request.policy_sha if request.schema_version == "3.0" else request.base_sha)
         or not isinstance(grants, Mapping)
         or str(request.task) not in grants
     ):
@@ -233,10 +262,20 @@ def _entry(
 ) -> dict[str, object]:
     return {
         "operation": request.operation,
-        "request": asdict(request),
+        "request": _request_fields(request),
         "status": status,
         "receipt": dict(receipt) if receipt is not None else None,
     }
+
+
+def _request_fields(request: Request) -> dict[str, object]:
+    """Keep persisted legacy request identity unchanged for reconciliation."""
+    value = asdict(request)
+    if request.schema_version != "3.0":
+        del value["policy_sha"]
+    if request.schema_version == "1.0":
+        del value["schema_version"]
+    return value
 
 
 def _has_applied(
@@ -253,9 +292,49 @@ def _has_applied(
             and stored.get("task") == request.task
             and stored.get("pr") == request.pr
             and stored.get("merge_sha") == request.merge_sha
+            and (
+                request.schema_version != "3.0"
+                or all(
+                    stored.get(key) == _request_fields(request).get(key)
+                    for key in (
+                        "schema_version",
+                        "policy_sha",
+                        "base_ref",
+                        "base_sha",
+                        "head_ref",
+                        "head_sha",
+                    )
+                )
+            )
         ):
             return True
     return False
+
+
+def _binding_code(request: Request, ledger: Ledger) -> str | None:
+    if request.schema_version != "3.0":
+        return None
+    try:
+        binding.validate_live_binding(
+            {
+                "schema_version": binding.SCHEMA_VERSION,
+                "repository": request.repository,
+                "epic": request.epic,
+                "roadmap_ref": request.base_ref,
+                "policy_sha": request.policy_sha,
+                "base_sha": request.base_sha,
+            },
+            repository_root=ledger.repository_root,
+            repository=request.repository,
+            epic=request.epic,
+            roadmap_ref=request.base_ref,
+            policy_sha=cast(str, request.policy_sha),
+            branches=branch.GitHubCLI().branches,
+            merge_sha=request.merge_sha,
+        )
+    except binding.BindingError as error:
+        return str(error)
+    return None
 
 
 def deliver(
@@ -273,14 +352,15 @@ def deliver(
     """Apply one exact side effect after authority and live-state revalidation."""
     if not _valid_request(request):
         return _blocked("REQUEST_INVALID")
-    authority = _authorized(
-        request, mandate, approved_mandate_digest, mandate_context
-    )
+    authority = _authorized(request, mandate, approved_mandate_digest, mandate_context)
     if authority is not None:
         return _blocked(authority)
     gate = _assessment_code(request, assessment)
     if gate is not None:
         return _blocked(gate)
+    proof = _binding_code(request, ledger)
+    if proof is not None:
+        return _blocked(proof)
     try:
         entries = ledger.load()
     except ValueError:
@@ -291,7 +371,7 @@ def deliver(
         return _blocked("TASK_NOT_CLOSED")
     previous = entries.get(request.operation_id)
     if previous is not None:
-        if previous.get("request") != asdict(request):
+        if previous.get("request") != _request_fields(request):
             return _blocked("OPERATION_ID_COLLISION")
         receipt = previous.get("receipt")
         if previous.get("status") == "APPLIED":
@@ -310,9 +390,10 @@ def deliver(
                 return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
     if not revalidate(request):
         return _blocked("STALE_IDENTITY")
-    authority = _authorized(
-        request, mandate, approved_mandate_digest, mandate_context
-    )
+    proof = _binding_code(request, ledger)
+    if proof is not None:
+        return _blocked(proof)
+    authority = _authorized(request, mandate, approved_mandate_digest, mandate_context)
     if authority is not None:
         return _blocked(authority)
     entries[request.operation_id] = _entry(request, "INTENT", None)

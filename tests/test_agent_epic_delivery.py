@@ -3,11 +3,113 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
 import pytest
 from tools import agent_epic_delivery as delivery
+
+
+@pytest.mark.parametrize("operation", ["commit_task", "push_task", "create_task_pr"])
+def test_versioned_bootstrap_request_does_not_require_fictitious_pr(
+    operation: str,
+) -> None:
+    request = replace(_request(operation), pr=None, schema_version="2.0")
+    assert delivery._valid_request(request)
+    assert not delivery._valid_request(replace(request, schema_version="1.0"))
+    assert not delivery._valid_request(replace(request, pr=0))
+    assert not delivery._valid_request(replace(request, pr=True))
+
+
+@pytest.mark.parametrize("operation", ["merge_task_pr", "close_task", "update_epic"])
+def test_delivery_still_requires_real_pr(operation: str) -> None:
+    assert not delivery._valid_request(
+        replace(_request(operation), pr=None, schema_version="2.0")
+    )
+
+
+def test_bootstrap_delivery_keeps_mandate_and_idempotency_boundary(
+    tmp_path: Path,
+) -> None:
+    request = replace(_request("create_task_pr"), pr=None, schema_version="2.0")
+    calls: list[str] = []
+
+    def effect(value: delivery.Request) -> dict[str, object]:
+        calls.append(value.operation)
+        return {"pr": 278}
+
+    assert _run(tmp_path, request=request, effect=effect).status == "APPLIED"
+    assert _run(tmp_path, request=request, effect=effect).status == "NO_OP"
+    assert calls == ["create_task_pr"]
+    entries = delivery.Ledger(tmp_path / "private", tmp_path / "repository").load()
+    stored = entries[request.operation_id]["request"]
+    assert isinstance(stored, dict) and stored["schema_version"] == "2.0"
+    denied = _run(
+        tmp_path,
+        request=request,
+        effect=lambda _: pytest.fail("expired mandate"),
+        mandate_context=delivery.MandateContext(1001, "OWNER", 900, 0, 0),
+    )
+    assert denied.status == "BLOCKED"
+
+
+def test_legacy_ledger_request_fields_do_not_change() -> None:
+    from dataclasses import asdict
+
+    request = _request()
+    expected = asdict(request)
+    del expected["schema_version"]
+    del expected["policy_sha"]
+    assert delivery._request_fields(request) == expected
+
+
+def test_policy_version_cannot_silently_upgrade_legacy_authority() -> None:
+    mandate = _mandate()
+    request = replace(_request(), schema_version="3.0", policy_sha="a" * 40)
+    assert delivery._valid_request(request)
+    assert (
+        delivery._authorized(
+            request,
+            mandate,
+            delivery.mandate_digest(mandate),
+            delivery.MandateContext(200, "OWNER", 150, 0, 0),
+        )
+        == "MANDATE_IDENTITY_MISMATCH"
+    )
+
+
+def test_new_policy_authority_is_not_a_legacy_base_equality_bypass() -> None:
+    mandate = _mandate()
+    mandate["schema_version"] = "3.0"
+    approval = mandate["approval"]
+    assert isinstance(approval, dict)
+    digest = delivery.mandate_digest(mandate)
+    approval["mandate_digest"] = digest
+    context = delivery.MandateContext(200, "OWNER", 150, 0, 0)
+    request = replace(
+        _request(), schema_version="3.0", policy_sha="a" * 40, base_sha="c" * 40
+    )
+    assert delivery._authorized(request, mandate, digest, context) is None
+    assert (
+        delivery._authorized(
+            replace(request, policy_sha="c" * 40), mandate, digest, context
+        )
+        == "MANDATE_IDENTITY_MISMATCH"
+    )
+    assert (
+        delivery._authorized(
+            replace(request, schema_version="1.0", policy_sha=None),
+            mandate,
+            digest,
+            context,
+        )
+        == "MANDATE_IDENTITY_MISMATCH"
+    )
+
+
+def test_legacy_delivery_cannot_add_pinned_policy_field() -> None:
+    assert not delivery._valid_request(replace(_request(), policy_sha="a" * 40))
 
 
 def _mandate() -> dict[str, object]:
@@ -193,10 +295,13 @@ def test_unknown_merge_outcome_is_not_repeated_without_reconciliation(
 def test_reconciliation_can_prove_applied_or_not_applied(tmp_path: Path) -> None:
     (tmp_path / "repository").mkdir()
 
-    assert _run(
-        tmp_path,
-        effect=lambda _request: (_ for _ in ()).throw(delivery.OutcomeUnknown()),
-    ).machine_code == "ESCALATE_UNKNOWN_OUTCOME"
+    assert (
+        _run(
+            tmp_path,
+            effect=lambda _request: (_ for _ in ()).throw(delivery.OutcomeUnknown()),
+        ).machine_code
+        == "ESCALATE_UNKNOWN_OUTCOME"
+    )
     applied = _run(
         tmp_path,
         reconcile=lambda _request: ("APPLIED", {"receipt": "found"}),
@@ -204,12 +309,15 @@ def test_reconciliation_can_prove_applied_or_not_applied(tmp_path: Path) -> None
     assert applied == delivery.Result("NO_OP", "ALREADY_APPLIED", {"receipt": "found"})
 
     other = _request("push_task")
-    assert _run(
-        tmp_path,
-        request=other,
-        assessment={},
-        effect=lambda _request: (_ for _ in ()).throw(delivery.OutcomeUnknown()),
-    ).machine_code == "ESCALATE_UNKNOWN_OUTCOME"
+    assert (
+        _run(
+            tmp_path,
+            request=other,
+            assessment={},
+            effect=lambda _request: (_ for _ in ()).throw(delivery.OutcomeUnknown()),
+        ).machine_code
+        == "ESCALATE_UNKNOWN_OUTCOME"
+    )
     retried = _run(
         tmp_path,
         request=other,
@@ -226,15 +334,20 @@ def test_post_merge_gate_required_before_close_and_epic_update(tmp_path: Path) -
     update = _request("update_epic")
     assert _run(tmp_path, request=close).machine_code == "GATE_INVALID"
     assert _run(tmp_path, request=update).machine_code == "GATE_INVALID"
-    assert _run(
-        tmp_path, request=update, assessment=_assessment("post-merge")
-    ).machine_code == "TASK_NOT_CLOSED"
-    assert _run(
-        tmp_path, request=close, assessment=_assessment("post-merge")
-    ).status == "APPLIED"
-    assert _run(
-        tmp_path, request=update, assessment=_assessment("post-merge")
-    ).status == "APPLIED"
+    assert (
+        _run(
+            tmp_path, request=update, assessment=_assessment("post-merge")
+        ).machine_code
+        == "TASK_NOT_CLOSED"
+    )
+    assert (
+        _run(tmp_path, request=close, assessment=_assessment("post-merge")).status
+        == "APPLIED"
+    )
+    assert (
+        _run(tmp_path, request=update, assessment=_assessment("post-merge")).status
+        == "APPLIED"
+    )
 
 
 def test_issue_text_cannot_expand_mandate(tmp_path: Path) -> None:
