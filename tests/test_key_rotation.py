@@ -4,7 +4,7 @@
 - после rotate_key() шифрование идёт новым ключом;
 - манифест, созданный до ротации, читается после ротации;
 - порядок ключей в MultiFernet имеет значение;
-- прерывание rotate_key не оставляет частично записанное состояние;
+- отказ перед записью нового active сохраняет читаемость текущего поколения;
 - удаление ключа делает старые манифесты нечитаемыми;
 - полный цикл: create → prepare → restore → rotate → restore старого манифеста;
 - коды возврата 3, 4, 5 различимы между собой.
@@ -120,11 +120,16 @@ def test_multifernet_order_matters(
         decrypt_multi(ciphertext, [key_b])
 
 
-def test_rotation_atomic(
+def test_rotation_active_write_failure_preserves_current_generation(
     safe_backend: _SafeBackendMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Прерывание на втором _set_raw не оставляет keystore в повреждённом состоянии."""
+    """Отказ перед второй записью сохраняет читаемость текущего поколения.
+
+    Mock сообщает ошибку до записи нового active, после carry в retired.
+    Проверяется расшифрование прежним active; атомарность и rollback
+    всей ротации не предполагаются (ADR-46, уточнение #66).
+    """
     old_key = ks.create_key()
     plaintext = "+7 900 000-00-00"
     ciphertext = encrypt_multi(plaintext, [old_key])
