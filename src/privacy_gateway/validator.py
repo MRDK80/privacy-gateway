@@ -145,11 +145,16 @@ def _find_high_entropy_tokens(text: str) -> list[tuple[int, int]]:
 
     Возвращает список (start, end) позиций.
     """
+    # Exclude only recognized token spans from entropy analysis. Equal-length
+    # spaces preserve finding offsets and keep adjacent residuals separate.
+    # PII patterns and token-format checks still inspect the original text.
+    text = _RE_BRACKET_SEQUENCE.sub(
+        lambda m: " " * len(m.group()) if _is_valid_token(m.group()) else m.group(),
+        text,
+    )
     findings: list[tuple[int, int]] = []
     for m in re.finditer(r"[^\s,;.!?\"'`]+", text):
         word = m.group()
-        if _is_valid_token(word):
-            continue
         long_enough = len(word) >= _ENTROPY_MIN_LEN
         high_entropy = _shannon_entropy(word) >= _ENTROPY_THRESHOLD
         if long_enough and high_entropy:
