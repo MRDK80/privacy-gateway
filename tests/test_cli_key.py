@@ -13,29 +13,17 @@
 
 from __future__ import annotations
 
-import re
 from unittest.mock import patch
 
 import pytest
 
 import privacy_gateway.keystore as ks
-from privacy_gateway.cli import main
 from privacy_gateway.crypto import generate_key
 from privacy_gateway.keystore import (
     KeyExistsError,
     KeystoreError,
 )
-
-_FERNET_KEY_RE = re.compile(r"[A-Za-z0-9_\-]{43}=")
-
-
-def _run_cli(*args: str, capsys: pytest.CaptureFixture) -> int:  # type: ignore[type-arg]
-    with patch("sys.argv", ["pgw", *args]):
-        try:
-            main()
-        except SystemExit as exc:
-            return int(exc.code) if exc.code is not None else 0
-    return 0
+from tests.conftest import KEY_MATERIAL_RE, run_cli
 
 
 def test_key_create_success(
@@ -46,7 +34,7 @@ def test_key_create_success(
         "privacy_gateway.keystore.create_key",
         return_value=generate_key(),
     ) as mock_create:
-        code = _run_cli("key", "create", capsys=capsys)
+        code = run_cli("key", "create")
 
     assert code == 0
     out = capsys.readouterr().out
@@ -76,13 +64,13 @@ def test_key_create_refuses_existing(
         "privacy_gateway.keystore.create_key",
         side_effect=_refusing_create,
     ):
-        code = _run_cli("key", "create", capsys=capsys)
+        code = run_cli("key", "create")
 
     assert code == 3
     captured = capsys.readouterr()
     assert captured.err
-    assert not _FERNET_KEY_RE.search(captured.out)
-    assert not _FERNET_KEY_RE.search(captured.err)
+    assert not KEY_MATERIAL_RE.search(captured.out)
+    assert not KEY_MATERIAL_RE.search(captured.err)
     assert call_count == 1
 
 
@@ -94,7 +82,7 @@ def test_key_create_force_overwrites(
         "privacy_gateway.keystore.create_key",
         return_value=generate_key(),
     ) as mock_create:
-        code = _run_cli("key", "create", "--force", capsys=capsys)
+        code = run_cli("key", "create", "--force")
 
     assert code == 0
     mock_create.assert_called_once_with(force=True)
@@ -132,13 +120,13 @@ def test_key_never_printed(
         patch("privacy_gateway.keystore.key_exists", return_value=True),
     ):
         for args in scenarios:
-            _run_cli(*args, capsys=capsys)
+            run_cli(*args)
             captured = capsys.readouterr()
-            assert not _FERNET_KEY_RE.search(captured.out), (
+            assert not KEY_MATERIAL_RE.search(captured.out), (
                 f"Ключевой материал в stdout "
                 f"при сценарии {args}: {captured.out!r}"
             )
-            assert not _FERNET_KEY_RE.search(captured.err), (
+            assert not KEY_MATERIAL_RE.search(captured.err), (
                 f"Ключевой материал в stderr "
                 f"при сценарии {args}: {captured.err!r}"
             )
@@ -152,12 +140,12 @@ def test_key_create_backend_unavailable(
         "privacy_gateway.keystore.create_key",
         side_effect=KeystoreError("Unsafe or unavailable keyring backend"),
     ):
-        code = _run_cli("key", "create", capsys=capsys)
+        code = run_cli("key", "create")
 
     assert code == 4
     captured = capsys.readouterr()
     assert len(captured.err.strip()) > 0
-    assert not _FERNET_KEY_RE.search(captured.err)
+    assert not KEY_MATERIAL_RE.search(captured.err)
 
 
 def test_key_status_no_value(
@@ -165,14 +153,14 @@ def test_key_status_no_value(
 ) -> None:
     """key status при наличии ключа → код 0, значение ключа не выводится."""
     with patch("privacy_gateway.keystore.key_exists", return_value=True):
-        code = _run_cli("key", "status", capsys=capsys)
+        code = run_cli("key", "status")
 
     assert code == 0
     captured = capsys.readouterr()
-    assert not _FERNET_KEY_RE.search(captured.out), (
+    assert not KEY_MATERIAL_RE.search(captured.out), (
         f"Ключевой материал найден в stdout: {captured.out!r}"
     )
-    assert not _FERNET_KEY_RE.search(captured.err), (
+    assert not KEY_MATERIAL_RE.search(captured.err), (
         f"Ключевой материал найден в stderr: {captured.err!r}"
     )
     assert captured.out.strip()
@@ -200,11 +188,11 @@ def test_rejected_backend_exit_code(
     monkeypatch.setattr("keyring.get_keyring", lambda: backend)
     prefix = ("--json",) if json_mode else ()
 
-    assert _run_cli(*prefix, "key", command, capsys=capsys) == 4
+    assert run_cli(*prefix, "key", command) == 4
 
     captured = capsys.readouterr()
     output = captured.out + captured.err
     assert output.strip()
     for address_part in (ks._SERVICE, ks._ACTIVE_KEY, ks._RETIRED_KEY):
         assert address_part not in output
-    assert not _FERNET_KEY_RE.search(output)
+    assert not KEY_MATERIAL_RE.search(output)

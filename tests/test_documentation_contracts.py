@@ -21,15 +21,14 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from privacy_gateway.cli import main
 from privacy_gateway.keystore import KeyExistsError
 from privacy_gateway.models import RestoreStrictError
+from tests.conftest import run_cli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,20 +92,9 @@ ACTIVE_DOCS = (
 )
 
 
-def _run(*args: str) -> int:
-    """Запустить CLI через main() с подменой sys.argv и вернуть код завершения."""
-    with (
-        patch.object(sys, "argv", ["pgw", *args]),
-        pytest.raises(SystemExit) as excinfo,
-    ):
-        main()
-    code = excinfo.value.code
-    return 0 if code is None else int(code)
-
-
 def _key_subcommands(capsys: pytest.CaptureFixture[str]) -> frozenset[str]:
     """Набор подкоманд, фактически объявленный в help группы pgw key."""
-    assert _run("key", "--help") == 0
+    assert run_cli("key", "--help") == 0
     out = capsys.readouterr().out
     match = re.search(r"\{([a-z,]+)\}", out)
     assert match is not None, f"help не содержит списка подкоманд: {out!r}"
@@ -129,7 +117,7 @@ def test_key_delete_is_not_a_cli_command(capsys: pytest.CaptureFixture[str]) -> 
     """pgw key delete отсутствует и обслуживается usage-error контрактом."""
     assert "delete" not in _key_subcommands(capsys)
     capsys.readouterr()
-    code = _run("key", "delete")
+    code = run_cli("key", "delete")
     captured = capsys.readouterr()
     assert code == USAGE_ERROR_EXIT
     assert captured.out == ""
@@ -144,7 +132,7 @@ def test_duplicate_create_exit_code_matches_docs(
         "privacy_gateway.keystore.create_key",
         side_effect=KeyExistsError("Ключ уже существует."),
     ):
-        code = _run("key", "create")
+        code = run_cli("key", "create")
     captured = capsys.readouterr()
     assert code == DUPLICATE_CREATE_EXIT
     assert captured.err.strip()
@@ -162,7 +150,7 @@ def test_strict_restore_exit_code_matches_docs(
         "privacy_gateway.restore.restore_text",
         side_effect=RestoreStrictError("строгий отказ"),
     ):
-        code = _run("restore", str(reply), "--route", str(tmp_path / "route.json"))
+        code = run_cli("restore", str(reply), "--route", str(tmp_path / "route.json"))
     captured = capsys.readouterr()
     assert code == STRICT_RESTORE_EXIT
     assert captured.out == ""
