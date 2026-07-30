@@ -28,7 +28,9 @@ class _SafeBackendMock:
     def get_password(self, service: str, username: str) -> str | None:
         return self.storage.get((service, username))
 
-    def set_password(self, service: str, username: str, password: str) -> None:
+    def set_password(
+        self, service: str, username: str, password: str
+    ) -> None:
         self.storage[(service, username)] = password
 
     def delete_password(self, service: str, username: str) -> None:
@@ -78,13 +80,19 @@ class _PlaintextBackendMock:
     __module__ = "keyrings.alt.file"
     __qualname__ = "PlaintextKeyring"
 
-    def get_password(self, service: str, username: str) -> str | None:  # pragma: no cover
+    def get_password(
+        self, service: str, username: str
+    ) -> str | None:  # pragma: no cover
         return None
 
-    def set_password(self, service: str, username: str, password: str) -> None:  # pragma: no cover
+    def set_password(
+        self, service: str, username: str, password: str
+    ) -> None:  # pragma: no cover
         pass
 
-    def delete_password(self, service: str, username: str) -> None:  # pragma: no cover
+    def delete_password(
+        self, service: str, username: str
+    ) -> None:  # pragma: no cover
         pass
 
 
@@ -120,7 +128,7 @@ def test_plaintext_backend_rejected(
 # ---------------------------------------------------------------------------
 
 def test_missing_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    """KeystoreError должен исходить из нашего кода, а не из библиотеки.
+    """КеустореError должен исходить из нашего кода, а не из библиотеки.
 
     Прежняя версия была «зелёной» благодаря тому, что
     keyring.backends.fail.Keyring кидал собственное исключение, а не наш
@@ -129,18 +137,24 @@ def test_missing_backend_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     модуля до вызова каких-либо методов backend'а.
     """
     class _FailBackendMock:
-        """Имитирует fail.Keyring, но методы никогда не вызываются."""
+        """Mock fail.Keyring; методы не должны вызываться."""
 
         __module__ = "keyring.backends.fail"
         __qualname__ = "Keyring"
 
-        def get_password(self, service: str, username: str) -> str | None:  # pragma: no cover
+        def get_password(
+            self, service: str, username: str
+        ) -> str | None:  # pragma: no cover
             raise RuntimeError("should not be called")
 
-        def set_password(self, service: str, username: str, password: str) -> None:  # pragma: no cover
+        def set_password(
+            self, service: str, username: str, password: str
+        ) -> None:  # pragma: no cover
             raise RuntimeError("should not be called")
 
-        def delete_password(self, service: str, username: str) -> None:  # pragma: no cover
+        def delete_password(
+            self, service: str, username: str
+        ) -> None:  # pragma: no cover
             raise RuntimeError("should not be called")
 
     monkeypatch.setattr("keyring.get_keyring", lambda: _FailBackendMock())
@@ -172,7 +186,10 @@ def test_no_key_material_on_disk() -> None:
     tracked_files = result.stdout.split("\0")
     suspicious = [
         f for f in tracked_files
-        if any(kw in f.lower() for kw in ["fernet", ".key", "secret.json", "keyring"])
+        if any(
+            kw in f.lower()
+            for kw in ["fernet", ".key", "secret.json", "keyring"]
+        )
         and f.endswith((".key", ".pem", ".der"))
     ]
     assert suspicious == [], f"Suspicious key files tracked by git: {suspicious}"
