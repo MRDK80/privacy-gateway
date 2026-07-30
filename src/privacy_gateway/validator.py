@@ -4,7 +4,7 @@
 Его задача — доказать, что в подготовленном тексте не осталось
 ничего чувствительного, то есть найти то, что детектор Э3 пропустил.
 
-Архитектурное решение (зафиксировано намеренно):
+Архитектурное решение (зафиксированно намеренно):
     Валидатор реализован как независимый строгий набор правил.
     Импортировать `detector.py` или переиспользовать его конфигурацию
     ЗАПРЕЩЕНО. Дублирование паттернов здесь — сознательная плата
@@ -81,10 +81,7 @@ _RE_SECRET_KW = re.compile(
 )
 
 # BEGIN PRIVATE KEY блоки (паттерн для поиска в чужом тексте, не секрет)
-_RE_PEM = re.compile(
-    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",  # pragma: allowlist secret
-    re.IGNORECASE,
-)
+_RE_PEM = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)  # pragma: allowlist secret
 
 _NEGATIVE_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("email", _RE_EMAIL),
