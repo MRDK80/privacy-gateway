@@ -80,8 +80,8 @@ _RE_SECRET_KW = re.compile(
     re.IGNORECASE,
 )
 
-# BEGIN PRIVATE KEY блоки
-_RE_PEM = re.compile(
+# BEGIN PRIVATE KEY блоки (паттерн для поиска в чужом тексте, не секрет)
+_RE_PEM = re.compile(  # pragma: allowlist secret
     r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
     re.IGNORECASE,
 )
@@ -112,11 +112,9 @@ _RE_NESTED_BRACKET = re.compile(r"\[\[[^\]]*\]|\[[^\]]*\]\]")
 
 def _is_valid_token(token_text: str) -> bool:
     """Вернуть True, если строка — корректный токен вида [TYPE_N]."""
-    # Убираем [ и ]
     if not (token_text.startswith("[") and token_text.endswith("]")):
         return False
     inner = token_text[1:-1]
-    # Формат: TYPE_N, где N — одно или несколько цифр
     parts = inner.rsplit("_", 1)
     if len(parts) != 2:
         return False
@@ -300,19 +298,15 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
             continue  # корректный токен — ОК
         positive_triggered = True
         inner = token_text[1:-1]
-        # Проверяем: тип известен, но формат нарушен → BLOCKED
-        # Проверяем: тип неизвестен → PENDING
         parts = inner.rsplit("_", 1)
         known_type = (
             len(parts) == 2
             and parts[0] in _VALID_ENTITY_TYPES
         )
         if known_type:
-            # TYPE есть, но формат неверен (пробел, нет номера и т.д.) → BLOCKED
             has_malformed_token = True
             rule = "malformed_token"
         else:
-            # TYPE неизвестен → PENDING
             has_unknown_token = True
             rule = "unknown_token_type"
         findings.append(ValidationFinding(
@@ -330,7 +324,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
             depth += 1
         elif ch == "]":
             if depth == 0:
-                # висячая ]
                 positive_triggered = True
                 has_malformed_token = True
                 findings.append(ValidationFinding(
@@ -343,7 +336,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
             else:
                 depth -= 1
     if depth > 0:
-        # незакрытая [
         positive_triggered = True
         has_malformed_token = True
         findings.append(ValidationFinding(

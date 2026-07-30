@@ -68,7 +68,7 @@ def test_high_entropy_string_blocks() -> None:
 
     Используем строку с энтропией >= 3.0 и длиной >= 16 символов.
     """
-    high_entropy_str = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # 24 символа, энтропия ~4.5
+    high_entropy_str = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # pragma: allowlist secret
     result = validate(f"Значение поля: {high_entropy_str}")
     assert _is_blocked(result)
     assert result.negative_triggered
@@ -151,7 +151,7 @@ def test_validator_catches_what_detector_misses() -> None:
     """
     from privacy_gateway.detector import DetectorConfig, detect_entities
 
-    high_entropy_token = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # 24 символа, энтропия ~4.5
+    high_entropy_token = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # pragma: allowlist secret
     text = f"Значение поля: {high_entropy_token}"
 
     config = DetectorConfig()
