@@ -1,82 +1,64 @@
-# entities.yaml — пример конфигурации обнаружения сущностей.
-# Этап Э1: только структура; обнаружение НЕ реализовано.
-# Не добавляйте реальные имена, организации, домены, IP или инфраструктурные данные.
+# entities.yaml — конфигурация обнаружения сущностей.
+# Этап Э2: regex-детекторы и синтетические словари включены.
+# НЕ добавляйте реальные имена, организации, домены, IP или инфраструктурные данные.
 
-entity_types:
-  - id: PERSON
-    description: "Физическое лицо (полное имя, имя, фамилия)"
-    enabled: false  # будет включено в Э2+
+# Типы сущностей, включённые для regex-детекции.
+# Если список пуст или отсутствует — включаются все поддерживаемые regex-детекторы.
+enabled_regex_types:
+  - EMAIL
+  - PHONE
+  - HOST
+  - ENDPOINT
+  - RESOURCE
+  - DATE
+  - AMOUNT
 
-  - id: ROLE
-    description: "Должность или организационная роль"
-    enabled: false
+# Синтетические словари для детектирования по точному вхождению.
+# Все значения ОБЯЗАНЫ быть вымышленными и не содержать реальных данных.
+dictionary:
+  PERSON:
+    - "Синтетический Иванов"
+    - "Вымышленный Петров"
+    - "Тестовый Сидоров"
+  ORG:
+    - "ООО Северный Маяк"
+    - "АО Тестовая Компания"
+    - "ПАО Синтетик Груп"
+  SYSTEM:
+    - "Система-Альфа"
+    - "Платформа-Бета"
+    - "Сервис-Гамма"
+  PROJECT:
+    - "Проект-Орион"
+    - "Проект-Зенит"
+    - "ALPHA-001"
+  DEPARTMENT:
+    - "Отдел Тестирования"
+    - "Служба Контроля"
+    - "Управление Синтеза"
+  ROLE:
+    - "Руководитель группы"
+    - "Технический директор"
+    - "Аналитик данных"
+  ENVIRONMENT:
+    - "prod-synthetic"
+    - "staging-test"
+    - "dev-local"
 
-  - id: ORG
-    description: "Юридическое лицо или название организации"
-    enabled: false
-
-  - id: DEPARTMENT
-    description: "Внутреннее подразделение или отдел"
-    enabled: false
-
-  - id: EMAIL
-    description: "Адрес электронной почты"
-    enabled: false
-
-  - id: PHONE
-    description: "Номер телефона в любом формате"
-    enabled: false
-
-  - id: HOST
-    description: "Имя хоста или сервера"
-    enabled: false
-
-  - id: ENDPOINT
-    description: "URL, URI или сетевой эндпоинт"
-    enabled: false
-
-  - id: RESOURCE
-    description: "Путь в файловой системе или ресурс хранилища"
-    enabled: false
-
-  - id: SYSTEM
-    description: "Внутренняя система или приложение"
-    enabled: false
-
-  - id: PROJECT
-    description: "Внутреннее название или код проекта"
-    enabled: false
-
-  - id: AMOUNT
-    description: "Денежная сумма или финансовый показатель"
-    enabled: false
-
-  - id: METRIC
-    description: "KPI или значение метрики производительности"
-    enabled: false
-
-  - id: DOCUMENT
-    description: "Идентификатор документа, номер договора или код ссылки"
-    enabled: false
-
-  - id: DATE
-    description: "Конкретная дата или диапазон дат"
-    enabled: false
-
-  - id: DURATION
-    description: "Период времени или продолжительность"
-    enabled: false
-
-  - id: ENVIRONMENT
-    description: "Метка среды развёртывания (например: prod, staging)"
-    enabled: false
-
-# local_dictionary: будущий файл переопределений для конкретного кейса, НЕ коммитится в Git.
-# Пример структуры (синтетический, только для иллюстрации):
+# Таблица приоритетов перекрытий (документация, не исполняемая логика).
+# Реализация — в detector.py :: _TYPE_PRIORITY / _SECRET_KIND_PRIORITY.
 #
-# local_dictionary:
-#   PERSON:
-#     - "Синтетическое Имя Один"
-#     - "Синтетическое Имя Два"
-#   PROJECT:
-#     - "SYNTH-PROJECT-ALPHA"
+# Приоритет  Тип
+# 0          PRIVATE_KEY, CONNECTION_STRING, API_TOKEN, PASSWORD  (наивысший)
+# 1          ENDPOINT
+# 2          EMAIL
+# 3          RESOURCE
+# 4          HOST
+# 5          PHONE
+# 6          AMOUNT
+# 7          DATE
+# 8          словарные сущности (наименьший)
+#
+# При равном приоритете выбирается более длинное совпадение.
+# При равной длине — совпадение с меньшим start.
+# Дубликаты на одинаковой позиции не создаются.

@@ -1,0 +1,3 @@
+﻿Тестовый документ с UTF-8 BOM.
+Email: bom-test@synthetic.example
+Дата: 15.06.2025
