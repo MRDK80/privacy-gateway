@@ -81,8 +81,8 @@ _RE_SECRET_KW = re.compile(
 )
 
 # BEGIN PRIVATE KEY блоки (паттерн для поиска в чужом тексте, не секрет)
-_RE_PEM = re.compile(  # pragma: allowlist secret
-    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+_RE_PEM = re.compile(
+    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",  # pragma: allowlist secret
     re.IGNORECASE,
 )
 
@@ -132,11 +132,11 @@ def _shannon_entropy(s: str) -> float:
     """Вычислить энтропию Шеннона строки (бит на символ)."""
     if not s:
         return 0.0
-    freq = {}
+    freq: dict[str, int] = {}
     for ch in s:
         freq[ch] = freq.get(ch, 0) + 1
     n = len(s)
-    return -sum((c / n) * math.log2(c / n) for c in freq.values())
+    return float(-sum((c / n) * math.log2(c / n) for c in freq.values()))
 
 
 def _find_high_entropy_tokens(text: str) -> list[tuple[int, int]]:
@@ -215,9 +215,9 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
     Семантика статусов:
         OK      — обе проверки не выявили нарушений.
         BLOCKED — обнаружены остаточные PII/секреты (негативная)
-                  или явно искажённые токены (позитивная).
+                или явно искажённые токены (позитивная).
         PENDING — обнаружен токен с неизвестным типом сущности;
-                  автоматическая отправка невозможна, нужно ручное решение.
+                автоматическая отправка невозможна, нужно ручное решение.
 
     При любой неоднозначности статус не может быть OK (fail closed).
     PENDING не является «мягким OK» — отправка при PENDING также запрещена.
