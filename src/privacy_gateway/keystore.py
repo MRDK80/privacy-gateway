@@ -36,6 +36,7 @@ CI / headless-сценарий:
 from __future__ import annotations
 
 import os
+from typing import cast
 
 import keyring
 import keyring.backend
@@ -90,7 +91,9 @@ def _get_backend() -> keyring.backend.KeyringBackend:
 
         module_name, _, class_name = env_override.rpartition(".")
         mod = importlib.import_module(module_name)
-        return getattr(mod, class_name)()
+        return cast(
+            keyring.backend.KeyringBackend, getattr(mod, class_name)()
+        )
     return keyring.get_keyring()
 
 
