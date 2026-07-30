@@ -12,6 +12,17 @@ authors = [
   {name = "Mikhail Iofik"}
 ]
 readme = "README.md"
+keywords = ["privacy", "llm", "pii", "anonymization", "tokenization"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+  "Topic :: Text Processing",
+]
 dependencies = [
   "cryptography>=42",
   "keyring>=25",
@@ -27,6 +38,9 @@ dev = [
   "detect-secrets>=1.5",
     "types-PyYAML",
 ]
+
+[project.urls]
+Repository = "https://github.com/MRDK80/privacy-gateway"
 
 [project.scripts]
 pgw = "privacy_gateway.cli:main"
