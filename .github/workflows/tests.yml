@@ -42,16 +42,24 @@ jobs:
       - name: Статическая типизация mypy
         run: mypy src
 
-      - name: Сканирование секретов (detect-secrets) — Linux
+      - name: Проверка baseline detect-secrets — Linux
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          detect-secrets scan --all-files --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)' > /dev/null
-          echo "Сканирование detect-secrets завершено без находок."
+          detect-secrets scan \
+            --all-files \
+            --baseline .secrets.baseline \
+            --exclude-files '(^|/)(\.git|\.venv|\.mypy_cache|\.pytest_cache|\.ruff_cache|.*\.egg-info)(/|$)' \
+            > /dev/null
+          echo "Проверка detect-secrets baseline завершена."
 
-      - name: Сканирование секретов (detect-secrets) — Windows
+      - name: Проверка baseline detect-secrets — Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          detect-secrets scan --all-files --exclude-files "(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)" | Out-Null
-          Write-Host "Сканирование detect-secrets завершено без находок."
+          detect-secrets scan `
+            --all-files `
+            --baseline .secrets.baseline `
+            --exclude-files '(^|/)(\.git|\.venv|\.mypy_cache|\.pytest_cache|\.ruff_cache|.*\.egg-info)(/|$)' `
+            | Out-Null
+          Write-Host "Проверка detect-secrets baseline завершена."
