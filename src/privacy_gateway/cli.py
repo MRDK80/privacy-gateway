@@ -54,7 +54,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "детекторы и выводит JSON-метаданные обнаруженных сущностей.\n"
             "Исходный текст и значения сущностей в вывод НЕ включаются.\n"
             "Команда диагностическая и не гарантирует полноту обнаружения.\n"
-            "Результат команды НЕ является разрешением передавать исходный текст модели."
+            "Результат команды НЕ является разрешением\n"
+            "передавать исходный текст модели."
         ),
     )
     detect_parser.add_argument(
@@ -131,7 +132,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     # Обнаружение
     try:
         entities = detect_entities(input_text.text, config)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         print("Unexpected error during detection.", file=sys.stderr)
         return 1
 

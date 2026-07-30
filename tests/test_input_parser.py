@@ -54,7 +54,8 @@ def test_read_cp1251_as_utf8_raises_encoding_error(tmp_path: Path) -> None:
     with pytest.raises(EncodingError) as exc_info:
         read_input(cp_file, encoding="utf-8")
     # Сообщение ошибки не должно содержать фрагмент входного текста
-    assert "bad_encoding.txt" not in str(exc_info.value) or True  # только имя файла допустимо
+    # В сообщении допустимо только имя файла
+    assert "bad_encoding.txt" not in str(exc_info.value) or True
     assert "\xff" not in str(exc_info.value)
     assert "\xd2" not in str(exc_info.value)
 
@@ -78,13 +79,11 @@ def test_file_size_limit(tmp_path: Path) -> None:
 def test_stdin_size_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     """stdin, превышающий max_bytes, должен вызывать InputError."""
     big_data = b"y" * 1001
-    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(big_data)))
-    # Подменяем stdin.buffer напрямую
-    mock_buffer = io.BytesIO(big_data)
-    monkeypatch.setattr(sys.stdin, "buffer", mock_buffer)
+    mock_stdin = io.TextIOWrapper(io.BytesIO(big_data), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdin", mock_stdin)
 
     with pytest.raises(InputError):
-        read_input("-", max_bytes=1000)
+        read_input("-", encoding="utf-8", max_bytes=1000)
 
 
 def test_repr_does_not_expose_text() -> None:

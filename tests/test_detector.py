@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from privacy_gateway.detector import DetectorConfig, detect_entities, load_config
-from privacy_gateway.models import DetectedEntity, DetectionConfidence, EntityType
+from privacy_gateway.models import DetectedEntity, EntityType
 
 _CONFIG_PATH = Path("config.example") / "entities.yaml"
 
@@ -74,7 +74,7 @@ def test_endpoint_supersedes_host(cfg: DetectorConfig) -> None:
             ]
             for es, ee in endpoint_ranges:
                 assert not (es <= e.start and e.end <= ee), (
-                    "HOST внутри ENDPOINT не должен присутствовать как отдельная сущность"
+                    "HOST внутри ENDPOINT не должен быть отдельной сущностью"
                 )
 
 
@@ -206,7 +206,9 @@ def test_fingerprint_not_equal_to_value(cfg: DetectorConfig) -> None:
 # Дубликаты и позиции
 # ---------------------------------------------------------------------------
 
-def test_same_value_different_positions_detected_separately(cfg: DetectorConfig) -> None:
+def test_same_value_different_positions_detected_separately(
+    cfg: DetectorConfig,
+) -> None:
     """Одинаковое значение на разных позициях — два отдельных вхождения."""
     text = "Email: dup@example-test.local и dup@example-test.local — два вхождения."
     entities = detect_entities(text, cfg)

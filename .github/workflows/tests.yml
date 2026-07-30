@@ -8,15 +8,21 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11"]
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Настройка Python 3.11
+      - name: Настройка Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Установка зависимостей
         run: |
@@ -32,11 +38,16 @@ jobs:
       - name: Статическая типизация mypy
         run: mypy src
 
-      - name: Сканирование секретов (detect-secrets)
-        # Запуск без baseline-файла; код выхода 0 означает отсутствие находок.
-        # detect-secrets завершается с ненулевым кодом только при обнаружении
-        # НОВОГО секрета относительно baseline. На проекте без baseline-файла
-        # сканирование завершится с кодом 0, если находок нет.
+      - name: Сканирование секретов (detect-secrets) — Linux
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           detect-secrets scan --all-files --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)' > /dev/null
           echo "Сканирование detect-secrets завершено без находок."
+
+      - name: Сканирование секретов (detect-secrets) — Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          detect-secrets scan --all-files --exclude-files "(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)" | Out-Null
+          Write-Host "Сканирование detect-secrets завершено без находок."

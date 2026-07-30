@@ -3,7 +3,8 @@
 Телефон: +7 (900) 123-45-67
 Сервер: 192.168.100.200
 Адрес: https://api.example-test.local/v1/data
-Путь: C:\SyntheticData\report.txt
+Путь Windows: C:\SyntheticData\report.txt
+Путь Linux: /opt/synthetic-app/data/report.txt
 UNC: \\synth-server\share\docs
 Дата: 2026-03-15
 Сумма: 150 000 руб.

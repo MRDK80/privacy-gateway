@@ -12,17 +12,36 @@
 
 ## Требования
 
-- Windows (основная целевая ОС для MVP); Linux поддерживается для CI
+- **Windows** 10/11 или **Linux** (Ubuntu 22.04+, Linux Mint 21+, Debian 12+)
 - Python 3.11+
 
 ## Установка
 
+### Linux / Linux Mint (bash)
+
+```bash
+sudo apt update
+sudo apt install python3.11 python3.11-venv
+
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Если `python3.11` отсутствует в репозиториях Linux Mint, используйте deadsnakes PPA или системный `python3` версии 3.11+:
+
+```bash
+python3 --version   # должно быть 3.11 или выше
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+### Windows (PowerShell)
+
 ```powershell
-# Создать и активировать виртуальное окружение
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
-
-# Установить в режиме разработки с dev-зависимостями
 pip install -e ".[dev]"
 ```
 
@@ -34,7 +53,7 @@ pip install -e ".[dev]"
 
 ## Использование
 
-```powershell
+```bash
 pgw --help
 pgw detect --help
 
@@ -51,14 +70,27 @@ pgw detect -
 
 Вывод — JSON-метаданные обнаруженных сущностей. Исходный текст и значения сущностей в вывод **не включаются**.
 
+Детектор распознаёт пути всех трёх форматов (UNC, `C:\...`, `/opt/...`) независимо от текущей ОС, поскольку анализируется содержимое текста, а не файловая система.
+
 ## Проверки в процессе разработки
 
-```powershell
+### Linux / macOS
+
+```bash
 pytest
 ruff check .
 mypy src
 detect-secrets scan --all-files \
   --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)'
+```
+
+### Windows (PowerShell)
+
+```powershell
+pytest
+ruff check .
+mypy src
+detect-secrets scan --all-files --exclude-files "(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)"
 ```
 
 ## ⚠️ Политика безопасности
@@ -75,7 +107,7 @@ Privacy Gateway **не гарантирует** юридической, абсо
 | Этап | Описание | Статус |
 |------|----------|--------|
 | **Э1** | Каркас проекта, примеры конфигурации, документация | ✅ Готово |
-| **Э2** | `detect`: безопасное чтение входа, обнаружение сущностей | ✅ Готово |
+| **Э2** | `detect`: безопасное чтение входа, обнаружение сущностей, кроссплатформенность | ✅ Готово |
 | Э3 | `prepare`: псевдонимизация, токены в памяти | 🔜 |
 | Э4 | `restore`: обратная подстановка, целостность токенов | 🔜 |
 | Э5 | Интеграция сканирования секретов, рекомендации по маршрутизации | 🔜 |

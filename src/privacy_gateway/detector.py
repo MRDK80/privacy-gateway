@@ -2,6 +2,7 @@
 
 Использует regex и локальные синтетические словари из YAML-конфига.
 Автоматическое NER не применяется.
+Поддерживаются Windows и Linux/macOS.
 """
 
 from __future__ import annotations
@@ -24,15 +25,15 @@ from privacy_gateway.models import (
 # ---------------------------------------------------------------------------
 # Таблица приоритетов перекрытий (чем меньше число — тем выше приоритет).
 #
-# PRIVATE_KEY / CONNECTION_STRING / API_TOKEN / PASSWORD  → 0
-# ENDPOINT                                                → 1
-# EMAIL                                                   → 2
-# RESOURCE                                                → 3
-# HOST                                                    → 4
-# PHONE                                                   → 5
-# AMOUNT                                                  → 6
-# DATE                                                    → 7
-# словарные сущности                                      → 8
+# PRIVATE_KEY / CONNECTION_STRING / API_TOKEN / PASSWORD  -> 0
+# ENDPOINT                                                -> 1
+# EMAIL                                                   -> 2
+# RESOURCE                                                -> 3
+# HOST                                                    -> 4
+# PHONE                                                   -> 5
+# AMOUNT                                                  -> 6
+# DATE                                                    -> 7
+# словарные сущности                                      -> 8
 # ---------------------------------------------------------------------------
 
 _SECRET_KIND_PRIORITY: dict[str, int] = {
@@ -50,7 +51,6 @@ _TYPE_PRIORITY: dict[EntityType, int] = {
     EntityType.PHONE: 5,
     EntityType.AMOUNT: 6,
     EntityType.DATE: 7,
-    # словарные типы → 8 (назначается в _DICTIONARY_TYPES)
     EntityType.PERSON: 8,
     EntityType.ORG: 8,
     EntityType.SYSTEM: 8,
@@ -138,11 +138,15 @@ _RE_ENDPOINT = re.compile(
     re.IGNORECASE,
 )
 
-# RESOURCE — UNC-пути и Windows-пути с буквой диска
+# RESOURCE — кроссплатформенные пути:
+#   - UNC:          \\server\share\folder          (Windows)
+#   - Windows disk: C:\path\to\file                (Windows)
+#   - POSIX:        /absolute/path/to/file         (Linux / macOS)
 _RE_RESOURCE = re.compile(
     r"(?:"
     r"\\\\[\w\-.]+(?:\\[\w\-. ]+)+"
     r"|[A-Za-z]:\\(?:[\w\-. ]+\\)*[\w\-. ]+"
+    r"|/(?:[\w\-.]+/)+[\w\-.]+"
     r")"
 )
 
@@ -157,7 +161,7 @@ _RE_DATE = re.compile(
 # AMOUNT — денежные суммы с символом/кодом/словом валюты
 _RE_AMOUNT = re.compile(
     r"(?:"
-    r"[\$€£¥₽]\s*\d[\d\s,.']*"
+    r"[\$\u20ac\u00a3\u00a5\u20bd]\s*\d[\d\s,.']*"
     r"|\d[\d\s,.']*\s*(?:USD|EUR|GBP|RUB|руб(?:\.?)|тыс\.?\s*руб(?:\.?)|млн\.?\s*руб(?:\.?)|рублей|долларов|евро)"
     r")",
     re.IGNORECASE,
@@ -166,10 +170,23 @@ _RE_AMOUNT = re.compile(
 # Синтетические секреты — паттерны для внутреннего обнаружения
 _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("PASSWORD", re.compile(r"(?:password|passwd|пароль)\s*[:=]\s*\S+", re.IGNORECASE)),
-    ("API_TOKEN", re.compile(r"(?:api[_\-]?token|api[_\-]?key|apikey)\s*[:=]\s*\S+", re.IGNORECASE)),
-    ("PRIVATE_KEY", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)),
+    (
+        "API_TOKEN",
+        re.compile(
+            r"(?:api[_\-]?token|api[_\-]?key|apikey)\s*[:=]\s*\S+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "PRIVATE_KEY",
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----",
+            re.IGNORECASE,
+        ),
+    ),
     ("CONNECTION_STRING", re.compile(
-        r"(?:Server|Data Source|Host)\s*=\s*[^;]+;[^;]*(?:Database|Initial Catalog)\s*=\s*[^;]+",
+        r"(?:Server|Data Source|Host)\s*=\s*[^;]+;"
+        r"[^;]*(?:Database|Initial Catalog)\s*=\s*[^;]+",
         re.IGNORECASE,
     )),
 ]
@@ -212,7 +229,8 @@ def _collect_regex_candidates(
         for m in pattern.finditer(text):
             candidates.append(
                 _Candidate(
-                    entity_type=EntityType.HOST,  # тип-заглушка; выводится через secret_kind
+                    # тип-заглушка; вид выводится через secret_kind
+                    entity_type=EntityType.HOST,
                     start=m.start(),
                     end=m.end(),
                     confidence=DetectionConfidence.HIGH,
@@ -223,7 +241,11 @@ def _collect_regex_candidates(
                 )
             )
 
-    def _add(pattern: re.Pattern[str], etype: EntityType, conf: DetectionConfidence) -> None:
+    def _add(
+        pattern: re.Pattern[str],
+        etype: EntityType,
+        conf: DetectionConfidence,
+    ) -> None:
         ename = etype.value
         if enabled and ename not in enabled:
             return
@@ -240,7 +262,7 @@ def _collect_regex_candidates(
                 )
             )
 
-    # ENDPOINT до HOST — приоритет выше, разрешится в resolve_overlaps
+    # ENDPOINT до HOST — приоритет выше, разрешится в _resolve_overlaps
     _add(_RE_ENDPOINT, EntityType.ENDPOINT, DetectionConfidence.HIGH)
     _add(_RE_EMAIL, EntityType.EMAIL, DetectionConfidence.HIGH)
     _add(_RE_RESOURCE, EntityType.RESOURCE, DetectionConfidence.HIGH)
@@ -312,7 +334,6 @@ def _resolve_overlaps(candidates: list[_Candidate]) -> list[_Candidate]:
     3. При равной длине — более раннее начало.
     4. Дубликаты на той же позиции удаляются.
     """
-    # Сортируем: приоритет ASC, длина DESC, start ASC
     sorted_cands = sorted(
         candidates,
         key=lambda c: (c.priority, -(c.end - c.start), c.start),
@@ -326,7 +347,6 @@ def _resolve_overlaps(candidates: list[_Candidate]) -> list[_Candidate]:
         if not overlaps:
             accepted.append(c)
 
-    # Сортируем результат по позиции
     accepted.sort(key=lambda c: c.start)
     return accepted
 

@@ -7,8 +7,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 _FIXTURES = Path(__file__).parent / "fixtures" / "synthetic"
 
 
@@ -59,7 +57,8 @@ def test_detect_json_no_raw_values() -> None:
     result = _run("detect", str(_FIXTURES / "utf8_sample.txt"))
     assert result.returncode == 0, result.stderr
     output = result.stdout
-    # Проверяем, что конкретные синтетические значения из фикстуры не появляются в выводе
+    # Синтетические значения из фикстуры
+    # не должны появляться в выводе
     assert "synth-user@example-test.local" not in output
     assert "192.168.100.200" not in output
     assert "+7 (900) 123-45-67" not in output

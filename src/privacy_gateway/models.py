@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 
-class EntityType(str, Enum):
+class EntityType(StrEnum):
     """Допустимые типы обнаруживаемых сущностей."""
 
     PERSON = "PERSON"
@@ -30,7 +30,7 @@ class EntityType(str, Enum):
     ENVIRONMENT = "ENVIRONMENT"
 
 
-class DetectionConfidence(str, Enum):
+class DetectionConfidence(StrEnum):
     """Уровень уверенности обнаружения."""
 
     HIGH = "HIGH"
@@ -38,7 +38,7 @@ class DetectionConfidence(str, Enum):
     LOW = "LOW"
 
 
-class InputSource(str, Enum):
+class InputSource(StrEnum):
     """Источник входного текста."""
 
     FILE = "file"
