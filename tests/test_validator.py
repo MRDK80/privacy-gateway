@@ -4,7 +4,7 @@
 Реальные адреса, ключи и пароли не используются.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001
 
 from privacy_gateway.models import ProcessingStatus
 from privacy_gateway.validator import ValidationResult, validate
