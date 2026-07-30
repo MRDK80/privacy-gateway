@@ -1,0 +1,82 @@
+# entities.yaml — example configuration for entity detection.
+# Stage E1: structure only; detection is NOT implemented yet.
+# Do NOT add real names, organisations, domains, IPs, or infrastructure data.
+
+entity_types:
+  - id: PERSON
+    description: "Natural person (full name, first name, last name)"
+    enabled: false  # will be enabled in E2+
+
+  - id: ROLE
+    description: "Job title or organisational role"
+    enabled: false
+
+  - id: ORG
+    description: "Legal entity or organisation name"
+    enabled: false
+
+  - id: DEPARTMENT
+    description: "Internal department or division name"
+    enabled: false
+
+  - id: EMAIL
+    description: "Email address"
+    enabled: false
+
+  - id: PHONE
+    description: "Phone number in any format"
+    enabled: false
+
+  - id: HOST
+    description: "Hostname or server name"
+    enabled: false
+
+  - id: ENDPOINT
+    description: "URL, URI, or network endpoint"
+    enabled: false
+
+  - id: RESOURCE
+    description: "File system path or storage resource"
+    enabled: false
+
+  - id: SYSTEM
+    description: "Internal system or application name"
+    enabled: false
+
+  - id: PROJECT
+    description: "Internal project name or code"
+    enabled: false
+
+  - id: AMOUNT
+    description: "Monetary amount or financial figure"
+    enabled: false
+
+  - id: METRIC
+    description: "KPI or performance metric value"
+    enabled: false
+
+  - id: DOCUMENT
+    description: "Document identifier, contract number, or reference code"
+    enabled: false
+
+  - id: DATE
+    description: "Specific date or date range"
+    enabled: false
+
+  - id: DURATION
+    description: "Time period or duration"
+    enabled: false
+
+  - id: ENVIRONMENT
+    description: "Deployment environment label (e.g. prod, staging)"
+    enabled: false
+
+# local_dictionary: future per-case override file, NOT committed to Git.
+# Example structure (synthetic, illustrative only):
+#
+# local_dictionary:
+#   PERSON:
+#     - "Synthetic Name One"
+#     - "Synthetic Name Two"
+#   PROJECT:
+#     - "SYNTH-PROJECT-ALPHA"

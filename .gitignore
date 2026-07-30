@@ -1,0 +1,50 @@
+# Secrets and sensitive data — never commit
+.env
+.env.*
+!.env.example
+
+# Local working directories
+output/
+cases/
+local/
+secrets/
+keys/
+private/
+dictionaries.local/
+config.local/
+
+# Encrypted / key material
+*.enc
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Mail / message files that may contain real data
+*.msg
+*.eml
+
+# Input / output text files with real content
+input*.txt
+original*.txt
+model_response*.txt
+restored*.txt
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp

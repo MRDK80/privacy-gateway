@@ -1,0 +1,38 @@
+# safety.yaml — example safety check configuration.
+# Stage E1: structure only; no checks are executed yet.
+
+statuses:
+  READY:
+    description: "Text passed all safety checks; safe to forward to model."
+  REVIEW:
+    description: "Text requires manual review before forwarding."
+  BLOCKED:
+    description: "Text contains high-risk content; must not be forwarded."
+
+check_categories:
+  - id: secret_leak
+    description: "Detects potential secrets, tokens, passwords, and API keys."
+    status_on_trigger: BLOCKED
+    enabled: false
+
+  - id: unresolved_entity
+    description: "Detects entity-like patterns that were not tokenised."
+    status_on_trigger: REVIEW
+    enabled: false
+
+  - id: token_integrity
+    description: "Verifies all tokens are well-formed and present in the case map."
+    status_on_trigger: BLOCKED
+    enabled: false
+
+  - id: unsupported_attachment
+    description: "Flags non-text content types that cannot be safely processed."
+    status_on_trigger: BLOCKED
+    enabled: false
+
+  - id: output_length
+    description: "Warns when sanitised text exceeds recommended prompt size."
+    status_on_trigger: REVIEW
+    enabled: false
+
+# All checks disabled in E1. Thresholds and rule details added in E2+.

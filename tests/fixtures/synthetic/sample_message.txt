@@ -1,0 +1,11 @@
+# Synthetic test fixture — Stage E1
+# This file contains NO real names, organisations, emails, IPs, or corporate data.
+
+Hello,
+
+Please review the attached specification for Project ALPHA-001.
+Contact the team lead at role@example-synthetic.local if you have questions.
+Deadline: 2026-01-15. Budget estimate: AMOUNT_PLACEHOLDER units.
+
+Regards,
+Synthetic Sender

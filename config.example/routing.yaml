@@ -1,0 +1,62 @@
+# routing.yaml — example channel routing configuration.
+# Stage E1: structure only; routing logic is NOT implemented yet.
+# Keywords below are synthetic and illustrative.
+
+channels:
+  - id: "01"
+    name: "Интеграция и границы ответственности"
+    description: "Questions about system integration, ownership boundaries, and handover points."
+    keywords_synthetic:
+      - integration
+      - boundary
+      - responsibility
+      - handover
+      - interface
+    enabled: false
+
+  - id: "02"
+    name: "Безопасная деловая переписка"
+    description: "Safe business correspondence drafting and review."
+    keywords_synthetic:
+      - correspondence
+      - letter
+      - reply
+      - approval
+      - acknowledgement
+    enabled: false
+
+  - id: "03"
+    name: "Портфель коммерческих инициатив"
+    description: "Commercial initiative portfolio analysis and prioritisation."
+    keywords_synthetic:
+      - initiative
+      - portfolio
+      - estimate
+      - commercial
+      - pipeline
+    enabled: false
+
+  - id: "04"
+    name: "Реестр решений и ограничений"
+    description: "Decision log, constraints registry, and ADR management."
+    keywords_synthetic:
+      - decision
+      - constraint
+      - adr
+      - rationale
+      - tradeoff
+    enabled: false
+
+  - id: "05"
+    name: "Инвентаризация технических зависимостей"
+    description: "Technical dependency inventory and version management."
+    keywords_synthetic:
+      - dependency
+      - version
+      - library
+      - inventory
+      - compatibility
+    enabled: false
+
+# Future: routing rules will map detected entity types and keywords
+# to the most appropriate channel. No automatic routing in E1.
