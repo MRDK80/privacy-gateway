@@ -130,7 +130,7 @@ pgw detect input.txt --config path/to/entities.yaml
       "end": 22,
       "confidence": "MEDIUM",
       "source": "dictionary",
-      "fingerprint": "a1b2c3d4e5f6"
+      "fingerprint": "<sha256-prefix>"
     },
     {
       "type": "PHONE",
@@ -138,7 +138,7 @@ pgw detect input.txt --config path/to/entities.yaml
       "end": 43,
       "confidence": "MEDIUM",
       "source": "regex",
-      "fingerprint": "9f8e7d6c5b4a"
+      "fingerprint": "<sha256-prefix>"
     }
   ]
 }

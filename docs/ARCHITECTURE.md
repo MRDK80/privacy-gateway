@@ -116,25 +116,27 @@ Service: `privacy-gateway`, Username: `fernet-key`.
 
 ## Формат файла манифеста
 
+Пример структуры (все значения синтетические; `encrypted_value` — Fernet-токен в hex):
+
 ```json
 [
   {
     "token": "[EMAIL_1]",
     "entity_type": "EMAIL",
-    "fingerprint": "a1b2c3d4e5f6",
-    "encrypted_value": "67656e6572617465..."
+    "fingerprint": "<sha256-prefix>",
+    "encrypted_value": "<fernet-hex>"
   },
   {
     "token": "[PHONE_1]",
     "entity_type": "PHONE",
-    "fingerprint": "9f8e7d6c5b4a",
-    "encrypted_value": "7465737476616c75...",
+    "fingerprint": "<sha256-prefix>",
+    "encrypted_value": "<fernet-hex>",
     "secret_kind": null
   }
 ]
 ```
 
-Все значения синтетические. `encrypted_value` — Fernet-токен в hex. Ключ в файле отсутствует.
+Ключ в файле отсутствует. Без ключа из keyring `encrypted_value` бесполезен для злоумышленника.
 
 ## Почему валидатор независим от детектора
 
