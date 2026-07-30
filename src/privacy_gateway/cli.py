@@ -1,4 +1,21 @@
-"""CLI для Privacy Gateway — Этапы Э1 и Э2."""
+"""CLI для Privacy Gateway — Этапы Э1–Э2.
+
+Точка входа: команда ``pgw``.
+
+Реализованные команды:
+    detect   Диагностическое обнаружение сущностей (Э2). Читает .txt-файл
+             или stdin, применяет детектор и выводит JSON-метаданные.
+             Исходные значения в вывод не включаются.
+
+Заглушки (недоступны):
+    prepare  Токенизация текста (Э3+) — не реализована.
+    restore  Восстановление оригиналов (Э7+) — не реализована.
+
+Коды завершения:
+    0  Успех.
+    1  Непредвиденная ошибка.
+    3  Ошибка конфигурации или входных данных.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +42,11 @@ _DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Собрать и вернуть парсер аргументов командной строки."""
+    """Собрать и вернуть парсер аргументов командной строки.
+
+    Returns:
+        Настроенный ArgumentParser с подкомандами detect, prepare, restore.
+    """
     parser = argparse.ArgumentParser(
         prog="pgw",
         description=_DESCRIPTION,
@@ -110,7 +131,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_detect(args: argparse.Namespace) -> int:
-    """Выполнить команду detect. Возвращает код завершения."""
+    """Выполнить команду detect.
+
+    Загружает конфиг, читает входной текст, запускает детектор,
+    выводит JSON-метаданные без исходных значений.
+
+    Args:
+        args: Разобранные аргументы командной строки.
+
+    Returns:
+        Код завершения: 0 — успех, 3 — ошибка конфигурации/входа,
+        1 — непредвиденная ошибка.
+    """
     from privacy_gateway.detector import DetectorConfig, detect_entities, load_config
     from privacy_gateway.input_parser import read_input
 
@@ -162,7 +194,12 @@ def _cmd_detect(args: argparse.Namespace) -> int:
 
 
 def main() -> None:
-    """Основная точка входа CLI."""
+    """Основная точка входа CLI.
+
+    Разбирает аргументы и диспетчеризует команду.
+    Команды ``prepare`` и ``restore`` возвращают сообщение о недоступности.
+    При отсутствии команды выводит справку.
+    """
     parser = _build_parser()
     args = parser.parse_args()
 
