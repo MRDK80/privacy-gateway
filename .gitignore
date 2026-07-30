@@ -48,3 +48,4 @@ htmlcov/
 .idea/
 .vscode/
 *.swp
+.secrets.new

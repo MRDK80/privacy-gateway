@@ -56,7 +56,7 @@ def test_detected_entity_round_trip_basic() -> None:
         end=35,
         confidence=DetectionConfidence.HIGH,
         source="regex",
-        fingerprint="abc123def456",
+        fingerprint="abc123def456",  # pragma: allowlist secret
     )
     restored = DetectedEntity.from_dict(original.to_dict())
     assert restored == original
@@ -71,11 +71,11 @@ def test_detected_entity_round_trip_with_secret_kind() -> None:
         confidence=DetectionConfidence.HIGH,
         source="regex",
         fingerprint="000111222333",
-        secret_kind="API_TOKEN",
+        secret_kind="API_TOKEN",  # pragma: allowlist secret
     )
     restored = DetectedEntity.from_dict(original.to_dict())
     assert restored == original
-    assert restored.secret_kind == "API_TOKEN"
+    assert restored.secret_kind == "API_TOKEN"  # pragma: allowlist secret
 
 
 def test_detected_entity_round_trip_via_json_string() -> None:
@@ -158,7 +158,7 @@ def test_token_record_round_trip() -> None:
     original = TokenRecord(
         token="[EMAIL_1]",
         entity_type=EntityType.EMAIL,
-        fingerprint="abc123def456",
+        fingerprint="abc123def456",  # pragma: allowlist secret
     )
     restored = TokenRecord.from_dict(original.to_dict())
     assert restored == original
@@ -170,7 +170,7 @@ def test_token_record_round_trip_with_secret_kind() -> None:
         token="[SECRET_1]",
         entity_type=EntityType.HOST,
         fingerprint="deadbeef0000",
-        secret_kind="PASSWORD",
+        secret_kind="PASSWORD",  # pragma: allowlist secret
     )
     restored = TokenRecord.from_dict(original.to_dict())
     assert restored == original
@@ -181,7 +181,7 @@ def test_token_record_round_trip_via_json_string() -> None:
     original = TokenRecord(
         token="[PHONE_1]",
         entity_type=EntityType.PHONE,
-        fingerprint="cafebabe1234",
+        fingerprint="cafebabe1234",  # pragma: allowlist secret
     )
     json_str = json.dumps(original.to_dict(), ensure_ascii=False)
     restored = TokenRecord.from_dict(json.loads(json_str))
@@ -208,7 +208,7 @@ def test_manifest_entry_round_trip() -> None:
     original = ManifestEntry(
         token="[EMAIL_1]",
         entity_type=EntityType.EMAIL,
-        fingerprint="abc123def456",
+        fingerprint="abc123def456",  # pragma: allowlist secret
         encrypted_value=b"\x00\x01\x02synthetic_ciphertext",
     )
     restored = ManifestEntry.from_dict(original.to_dict())
@@ -220,7 +220,7 @@ def test_manifest_entry_round_trip_via_json_string() -> None:
     original = ManifestEntry(
         token="[HOST_1]",
         entity_type=EntityType.HOST,
-        fingerprint="deadbeef1234",
+        fingerprint="deadbeef1234",  # pragma: allowlist secret
         encrypted_value=b"synthetic_encrypted_bytes_xyz",
     )
     json_str = json.dumps(original.to_dict(), ensure_ascii=False)
@@ -233,7 +233,7 @@ def test_manifest_entry_encrypted_value_is_bytes() -> None:
     original = ManifestEntry(
         token="[PHONE_1]",
         entity_type=EntityType.PHONE,
-        fingerprint="cafebabe5678",
+        fingerprint="cafebabe5678",  # pragma: allowlist secret
         encrypted_value=b"\xde\xad\xbe\xef",
     )
     restored = ManifestEntry.from_dict(original.to_dict())
@@ -248,7 +248,7 @@ def test_manifest_entry_with_secret_kind() -> None:
         entity_type=EntityType.HOST,
         fingerprint="000111222333",
         encrypted_value=b"cipher",
-        secret_kind="API_TOKEN",
+        secret_kind="API_TOKEN",  # pragma: allowlist secret
     )
     restored = ManifestEntry.from_dict(original.to_dict())
     assert restored == original
