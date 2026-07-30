@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -16,6 +17,9 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-m", "privacy_gateway", *args],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
     )
 
 
