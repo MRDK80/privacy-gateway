@@ -1,4 +1,4 @@
-"""Basic smoke tests for Privacy Gateway CLI — Stage E1."""
+"""Базовые smoke-тесты CLI Privacy Gateway — Этап Э1."""
 
 from __future__ import annotations
 
@@ -10,69 +10,54 @@ import pytest
 import privacy_gateway
 
 
+def _run(*args: str) -> subprocess.CompletedProcess[str]:
+    """Вызвать CLI как отдельный процесс и вернуть результат."""
+    return subprocess.run(
+        [sys.executable, "-m", "privacy_gateway", *args],
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_package_importable() -> None:
-    """privacy_gateway package must be importable."""
+    """Пакет privacy_gateway должен импортироваться."""
     assert privacy_gateway.__version__ == "0.1.0"
 
 
 def test_help_exit_code() -> None:
-    """python -m privacy_gateway --help must exit with code 0."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", "--help"],
-        capture_output=True,
-        text=True,
-    )
+    """python -m privacy_gateway --help должен завершаться с кодом 0."""
+    result = _run("--help")
     assert result.returncode == 0, result.stderr
 
 
 def test_help_contains_product_name() -> None:
-    """Help output must mention 'Privacy Gateway'."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", "--help"],
-        capture_output=True,
-        text=True,
-    )
+    """Вывод help должен содержать название 'Privacy Gateway'."""
+    result = _run("--help")
     assert "Privacy Gateway" in result.stdout
 
 
 def test_prepare_subcommand_visible_in_help() -> None:
-    """'prepare' must appear in the top-level help as a future command."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", "--help"],
-        capture_output=True,
-        text=True,
-    )
+    """Команда 'prepare' должна быть видна в общем help как будущая команда."""
+    result = _run("--help")
     assert "prepare" in result.stdout
 
 
 def test_prepare_returns_nonzero_in_e1() -> None:
-    """Calling 'prepare' in stage E1 must exit with nonzero code."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", "prepare"],
-        capture_output=True,
-        text=True,
-    )
+    """Вызов 'prepare' на этапе Э1 должен завершаться с ненулевым кодом."""
+    result = _run("prepare")
     assert result.returncode != 0
-    assert "E1" in result.stderr
+    assert "Э1" in result.stderr
 
 
 def test_restore_returns_nonzero_in_e1() -> None:
-    """Calling 'restore' in stage E1 must exit with nonzero code."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", "restore"],
-        capture_output=True,
-        text=True,
-    )
+    """Вызов 'restore' на этапе Э1 должен завершаться с ненулевым кодом."""
+    result = _run("restore")
     assert result.returncode != 0
-    assert "E1" in result.stderr
+    assert "Э1" in result.stderr
 
 
 @pytest.mark.parametrize("subcommand", ["prepare", "restore"])
 def test_subcommand_help_exits_zero(subcommand: str) -> None:
-    """pgw prepare --help and pgw restore --help must exit 0."""
-    result = subprocess.run(
-        [sys.executable, "-m", "privacy_gateway", subcommand, "--help"],
-        capture_output=True,
-        text=True,
-    )
+    """pgw prepare --help и pgw restore --help должны завершаться с кодом 0."""
+    result = _run(subcommand, "--help")
     assert result.returncode == 0, result.stderr

@@ -1,38 +1,38 @@
-# safety.yaml — example safety check configuration.
-# Stage E1: structure only; no checks are executed yet.
+# safety.yaml — пример конфигурации проверок безопасности.
+# Этап Э1: только структура; никакие проверки не выполняются.
 
 statuses:
   READY:
-    description: "Text passed all safety checks; safe to forward to model."
+    description: "Текст прошёл все проверки безопасности; безопасно передавать модели."
   REVIEW:
-    description: "Text requires manual review before forwarding."
+    description: "Текст требует ручной проверки перед передачей."
   BLOCKED:
-    description: "Text contains high-risk content; must not be forwarded."
+    description: "Текст содержит данные высокого риска; передача запрещена."
 
 check_categories:
   - id: secret_leak
-    description: "Detects potential secrets, tokens, passwords, and API keys."
+    description: "Обнаруживает возможные секреты, токены, пароли и API-ключи."
     status_on_trigger: BLOCKED
     enabled: false
 
   - id: unresolved_entity
-    description: "Detects entity-like patterns that were not tokenised."
+    description: "Обнаруживает паттерны, похожие на сущности, которые не были токенизированы."
     status_on_trigger: REVIEW
     enabled: false
 
   - id: token_integrity
-    description: "Verifies all tokens are well-formed and present in the case map."
+    description: "Проверяет корректность формата всех токенов и их наличие в карте кейса."
     status_on_trigger: BLOCKED
     enabled: false
 
   - id: unsupported_attachment
-    description: "Flags non-text content types that cannot be safely processed."
+    description: "Помечает нетекстовые типы содержимого, которые нельзя безопасно обработать."
     status_on_trigger: BLOCKED
     enabled: false
 
   - id: output_length
-    description: "Warns when sanitised text exceeds recommended prompt size."
+    description: "Предупреждает, если обезличенный текст превышает рекомендуемый размер prompt."
     status_on_trigger: REVIEW
     enabled: false
 
-# All checks disabled in E1. Thresholds and rule details added in E2+.
+# Все проверки отключены в Э1. Пороги и детали правил добавляются в Э2+.

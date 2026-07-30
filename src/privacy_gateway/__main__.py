@@ -1,4 +1,4 @@
-"""Entry point for `python -m privacy_gateway`."""
+"""Точка входа для команды `python -m privacy_gateway`."""
 
 from privacy_gateway.cli import main
 

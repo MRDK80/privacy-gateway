@@ -1,30 +1,30 @@
-# Security Policy
+# Политика безопасности
 
-## Handling sensitive data
+## Работа с чувствительными данными
 
-- **Do not publish** real input texts, case maps, encryption keys, or encrypted manifests in this repository.
-- **Do not write** real personal data, organisation names, server names, IP addresses, financial figures, or any corporate identifiers in issues, pull requests, commit messages, or CI logs.
-- **Do not commit** `.env` files or any file containing credentials, tokens, or secrets.
-- Windows Credential Manager and `keyring` are used for local key storage only — they must never be used as a source of data for Git.
+- **Не публикуйте** реальные входные тексты, карты кейсов, ключи шифрования или зашифрованные манифесты в этом репозитории.
+- **Не вносите** реальные персональные данные, названия организаций, имена серверов, IP-адреса, финансовые показатели и любые корпоративные идентификаторы в issues, pull request'ы, сообщения коммитов или логи CI.
+- **Не коммитьте** файлы `.env` и любые файлы, содержащие учётные данные, токены или секреты.
+- Windows Credential Manager и `keyring` используются исключительно для локального хранения ключей — они никогда не должны служить источником данных для Git.
 
-## Before every push
+## Перед каждым push
 
-Run secret scanning to verify no accidental secrets are staged:
+Запустите сканирование секретов, чтобы убедиться в отсутствии случайных утечек:
 
 ```bash
 detect-secrets scan --all-files --exclude-files '\.git/.*'
 ```
 
-If any finding is reported, resolve it before pushing.
+Если обнаружена хотя бы одна находка — устраните её до выполнения push.
 
-## CI logs
+## Логи CI
 
-CI pipelines run only on synthetic data. Real data must never appear in CI logs, artefacts, or test reports.
+Pipeline CI работает только на синтетических данных. Реальные данные не должны появляться в логах CI, артефактах или тестовых отчётах.
 
-## Reporting vulnerabilities
+## Сообщение об уязвимостях
 
-Please report vulnerabilities **privately** to the repository owner. Do not open a public issue for security findings.
+Сообщайте об уязвимостях **приватно** владельцу репозитория. Не открывайте публичный issue для сведений о проблемах безопасности.
 
-## Local test case cleanup
+## Удаление локального тестового кейса
 
-Instructions for securely removing a local test case (case map, encrypted manifest, and working files) will be added in a future stage.
+Инструкции по безопасному удалению локального тестового кейса (карта кейса, зашифрованный манифест и рабочие файлы) будут добавлены в следующем этапе.

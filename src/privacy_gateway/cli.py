@@ -1,22 +1,23 @@
-"""CLI for Privacy Gateway — Stage E1 skeleton."""
+"""CLI для Privacy Gateway — каркас Этапа Э1."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
-_DESCRIPTION = "Privacy Gateway — local text sanitiser for safe LLM interaction."
-_E1_MESSAGE = "Command is not available in stage E1."
+_DESCRIPTION = "Privacy Gateway — локальное обезличивание текста для безопасной работы с LLM."
+_E1_MESSAGE = "Команда недоступна на этапе Э1."
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Собрать и вернуть парсер аргументов командной строки."""
     parser = argparse.ArgumentParser(
         prog="pgw",
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Stage E1: skeleton only.\n"
-            "Commands 'prepare' and 'restore' will be implemented in future stages."
+            "Этап Э1: только каркас.\n"
+            "Команды 'prepare' и 'restore' будут реализованы в следующих этапах."
         ),
     )
     parser.add_argument(
@@ -25,44 +26,45 @@ def _build_parser() -> argparse.ArgumentParser:
         version="%(prog)s 0.1.0",
     )
 
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    subparsers = parser.add_subparsers(dest="command", metavar="КОМАНДА")
 
     prepare_parser = subparsers.add_parser(
         "prepare",
-        help="[future] Detect and tokenise sensitive data in a text.",
+        help="[будущая] Обнаружить и токенизировать чувствительные данные в тексте.",
         description=(
-            "[Stage E2+] Reads a .txt file or stdin, detects sensitive entities,\n"
-            "replaces them with neutral tokens, and outputs a sanitised prompt.\n"
-            "Not available in stage E1."
+            "[Этап Э2+] Читает файл .txt или stdin, обнаруживает чувствительные сущности,\n"
+            "заменяет их нейтральными токенами и выводит обезличенный prompt.\n"
+            "Недоступно на этапе Э1."
         ),
     )
     prepare_parser.add_argument(
         "input",
         nargs="?",
-        metavar="FILE",
-        help="Input .txt file (future use).",
+        metavar="ФАЙЛ",
+        help="Входной файл .txt (будущее использование).",
     )
 
     restore_parser = subparsers.add_parser(
         "restore",
-        help="[future] Restore original values from a model response.",
+        help="[будущая] Восстановить исходные значения из ответа модели.",
         description=(
-            "[Stage E2+] Accepts a model response containing known tokens and\n"
-            "replaces them with original values from the encrypted case map.\n"
-            "Not available in stage E1."
+            "[Этап Э2+] Принимает ответ модели с известными токенами и заменяет\n"
+            "их исходными значениями из зашифрованной карты кейса.\n"
+            "Недоступно на этапе Э1."
         ),
     )
     restore_parser.add_argument(
         "input",
         nargs="?",
-        metavar="FILE",
-        help="Model response file (future use).",
+        metavar="ФАЙЛ",
+        help="Файл с ответом модели (будущее использование).",
     )
 
     return parser
 
 
 def main() -> None:
+    """Основная точка входа CLI."""
     parser = _build_parser()
     args = parser.parse_args()
 

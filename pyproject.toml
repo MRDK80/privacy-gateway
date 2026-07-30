@@ -1,11 +1,11 @@
 [build-system]
 requires = ["setuptools>=70", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "privacy-gateway"
 version = "0.1.0"
-description = "Local tool for safe preparation of corporate texts before manual transfer to an external language model."
+description = "Локальный инструмент для безопасной подготовки корпоративных текстов перед ручной передачей во внешнюю языковую модель."
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [

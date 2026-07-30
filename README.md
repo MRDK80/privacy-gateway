@@ -1,51 +1,51 @@
 # Privacy Gateway
 
-A local Python tool for safe preparation of corporate texts before manual transfer to an external language model.
+Локальный Python-инструмент для безопасной подготовки корпоративных текстов перед ручной передачей во внешнюю языковую модель.
 
-> **Status:** Early MVP — Stage E1 (skeleton only). The `prepare` and `restore` commands are not yet implemented.
+> **Статус:** ранний MVP — Этап Э1 (только каркас). Команды `prepare` и `restore` пока не реализованы.
 
-## How it works
+## Принцип работы
 
-All processing is **local**. Privacy Gateway detects sensitive entities in a text, replaces them with neutral tokens (e.g. `[PERSON_001]`), and builds an encrypted local case map. The model receives only the sanitised text — **the case map is never sent to the model**. After you copy the model response back, `restore` substitutes the original values.
+Вся обработка выполняется **локально**. Privacy Gateway обнаруживает чувствительные сущности в тексте, заменяет их нейтральными токенами (например, `[PERSON_001]`) и формирует зашифрованную локальную карту кейса. Модель получает только обезличенный текст — **карта соответствий модели не передаётся**. После того как вы вручную скопируете ответ модели обратно, команда `restore` восстановит исходные значения.
 
-In Stage E1 none of the above is active. Only the project skeleton, configuration examples, and documentation are present.
+На Этапе Э1 ничего из перечисленного не активно. Присутствует только каркас проекта, примеры конфигурации и документация.
 
-## Requirements
+## Требования
 
-- Windows (primary target for MVP); Linux supported for CI
+- Windows (основная целевая ОС для MVP); Linux поддерживается для CI
 - Python 3.11+
 
-## Installation
+## Установка
 
 ```powershell
-# Create and activate a virtual environment
+# Создать и активировать виртуальное окружение
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 
-# Install in editable mode with dev dependencies
+# Установить в режиме разработки с dev-зависимостями
 pip install -e ".[dev]"
 ```
 
-If PowerShell execution policy blocks activation:
+Если политика выполнения PowerShell блокирует активацию:
 
 ```powershell
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
-## Usage
+## Использование
 
 ```powershell
 pgw --help
 python -m privacy_gateway --help
 ```
 
-In Stage E1, calling `pgw prepare` or `pgw restore` exits with a non-zero code and the message:
+На Этапе Э1 вызов `pgw prepare` или `pgw restore` завершается с ненулевым кодом и сообщением:
 
 ```
-Command is not available in stage E1.
+Команда недоступна на этапе Э1.
 ```
 
-## Development checks
+## Проверки в процессе разработки
 
 ```powershell
 pytest
@@ -54,20 +54,20 @@ mypy src
 detect-secrets scan --all-files --exclude-files "\.git/.*"
 ```
 
-## ⚠️ Security policy
+## ⚠️ Политика безопасности
 
-**Do not add real corporate data to this repository.**
-This includes names, organisations, email addresses, server names, IP addresses, document references, financial figures, or any other identifying information.
+**Не добавляйте в этот репозиторий реальные корпоративные данные.**
+Это касается имён, организаций, адресов электронной почты, имён серверов, IP-адресов, ссылок на документы, финансовых показателей и любой другой идентифицирующей информации.
 
-See [SECURITY.md](SECURITY.md) for the full policy.
+Полная политика — в файле [SECURITY.md](SECURITY.md).
 
-Privacy Gateway does **not** guarantee legal, absolute, or complete data protection. It is a development-stage tool and must be used as part of a broader security practice.
+Privacy Gateway **не гарантирует** юридической, абсолютной или полной защиты данных. Это инструмент на стадии разработки; он должен применяться в рамках комплексной практики информационной безопасности.
 
-## Roadmap
+## Дорожная карта
 
-| Stage | Description |
-|-------|-------------|
-| **E1** | Project skeleton, config examples, documentation |
-| E2 | `prepare`: entity detection, tokenisation, encrypted case map |
-| E3 | `restore`: token integrity check, back-substitution |
-| E4 | Secret scanning integration, routing recommendations |
+| Этап | Описание |
+|------|----------|
+| **Э1** | Каркас проекта, примеры конфигурации, документация |
+| Э2 | `prepare`: обнаружение сущностей, токенизация, зашифрованная карта кейса |
+| Э3 | `restore`: проверка целостности токенов, обратная подстановка |
+| Э4 | Интеграция сканирования секретов, рекомендации по маршрутизации |

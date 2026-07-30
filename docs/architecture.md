@@ -1,38 +1,38 @@
-# Architecture
+# Архитектура
 
-## Stage E1 scope
+## Область применения Этапа Э1
 
-Stage E1 establishes the project skeleton only. No data processing logic is implemented.
+Этап Э1 создаёт только каркас проекта. Никакая логика обработки данных не реализована.
 
-## Future data flow
+## Будущий поток данных
 
 ```
-input (.txt / stdin)
+входной файл (.txt / stdin)
     │
     ▼
  prepare
-    │  detects entities → replaces with tokens → writes encrypted case map
+    │  обнаруживает сущности → заменяет токенами → записывает зашифрованную карту кейса
     ▼
- sanitised text / prompt
+ обезличенный текст / prompt
     │
     ▼
- [manual copy → external LLM — no API call made by this tool]
+ [ручное копирование → внешняя LLM — API-вызов инструментом не выполняется]
     │
     ▼
- model response (copy back manually)
+ ответ модели (копируется вручную)
     │
     ▼
  restore
-    │  matches tokens → looks up encrypted case map → substitutes originals
+    │  сопоставляет токены → обращается к зашифрованной карте → подставляет оригиналы
     ▼
- restored text
+ восстановленный текст
 ```
 
-## Key design constraints
+## Ключевые проектные ограничения
 
-- **No API call to any LLM.** The model interaction is always manual. Privacy Gateway never sends data over the network.
-- **Source text is not persisted by default.** Only the encrypted token-to-value map (case map) is stored locally.
-- **The case map is never sent to the model.** The model receives only the sanitised text with tokens.
-- **Restore works only on exact token matches.** Distorted tokens (e.g. `[PERSON-001]`) are detected and flagged, not silently skipped.
-- **All cryptography uses standard libraries** (`cryptography.Fernet`). No custom crypto.
-- **Windows is the primary target OS for MVP.** Linux is supported for CI.
+- **Никаких API-вызовов к LLM.** Взаимодействие с моделью всегда ручное. Privacy Gateway никогда не отправляет данные по сети.
+- **Исходный текст по умолчанию не сохраняется.** Локально хранится только зашифрованная карта соответствий токен → значение (карта кейса).
+- **Карта кейса модели не передаётся.** Модель получает только обезличенный текст с токенами.
+- **Restore работает только по точному совпадению токенов.** Искажённые токены (например, `[PERSON-001]`) обнаруживаются и помечаются — они не пропускаются молча.
+- **Вся криптография использует стандартные библиотеки** (`cryptography.Fernet`). Собственная криптография не применяется.
+- **Windows — основная целевая ОС для MVP.** Linux поддерживается для CI.

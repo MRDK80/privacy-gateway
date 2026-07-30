@@ -1,11 +1,11 @@
-# Synthetic test fixture — Stage E1
-# This file contains NO real names, organisations, emails, IPs, or corporate data.
+# Синтетическая тестовая фикстура — Этап Э1
+# Этот файл НЕ содержит реальных имён, организаций, email, IP или корпоративных данных.
 
-Hello,
+Здравствуйте,
 
-Please review the attached specification for Project ALPHA-001.
-Contact the team lead at role@example-synthetic.local if you have questions.
-Deadline: 2026-01-15. Budget estimate: AMOUNT_PLACEHOLDER units.
+Просьба рассмотреть приложенную спецификацию по проекту ALPHA-001.
+По вопросам обращайтесь к руководителю группы: role@example-synthetic.local
+Срок: 2026-01-15. Оценка бюджета: AMOUNT_PLACEHOLDER условных единиц.
 
-Regards,
-Synthetic Sender
+С уважением,
+Синтетический Отправитель

@@ -1,3 +1,3 @@
-"""Privacy Gateway — local tool for safe preparation of corporate texts."""
+"""Privacy Gateway — локальный инструмент для безопасной подготовки корпоративных текстов."""
 
 __version__ = "0.1.0"

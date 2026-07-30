@@ -1,50 +1,50 @@
-# Token Format
+# Формат токенов
 
-This document specifies the token format used by Privacy Gateway for entity replacement.
+В этом документе описан формат токенов, используемых Privacy Gateway для замены сущностей.
 
-## Token syntax
+## Синтаксис токена
 
 ```
-[TYPE_NNN]
+[ТИП_NNN]
 ```
 
-- `TYPE` — uppercase entity type identifier (see list below)
-- `NNN` — zero-padded three-digit sequence number, starting at `001`
+- `ТИП` — идентификатор типа сущности в верхнем регистре (см. список ниже)
+- `NNN` — трёхзначный порядковый номер с ведущими нулями, начиная с `001`
 
-## Defined token types
+## Определённые типы токенов
 
-| Token | Entity category |
-|-------|-----------------|
-| `[PERSON_001]` | Natural person |
-| `[ROLE_001]` | Job title or role |
-| `[ORG_001]` | Legal entity or organisation |
-| `[DEPARTMENT_001]` | Internal department or division |
-| `[EMAIL_001]` | Email address |
-| `[PHONE_001]` | Phone number |
-| `[HOST_001]` | Hostname or server |
-| `[ENDPOINT_001]` | URL, URI, or network endpoint |
-| `[RESOURCE_001]` | File system path or storage resource |
-| `[SYSTEM_001]` | Internal system or application |
-| `[PROJECT_001]` | Internal project name or code |
-| `[AMOUNT_001]` | Monetary amount or financial figure |
-| `[METRIC_001]` | KPI or performance metric |
-| `[DOCUMENT_001]` | Document ID, contract number, or reference |
-| `[DATE_001]` | Specific date or date range |
-| `[DURATION_001]` | Time period or duration |
-| `[ENVIRONMENT_001]` | Deployment environment label |
+| Токен | Категория сущности |
+|-------|--------------------|
+| `[PERSON_001]` | Физическое лицо |
+| `[ROLE_001]` | Должность или роль |
+| `[ORG_001]` | Юридическое лицо или организация |
+| `[DEPARTMENT_001]` | Внутреннее подразделение или отдел |
+| `[EMAIL_001]` | Адрес электронной почты |
+| `[PHONE_001]` | Номер телефона |
+| `[HOST_001]` | Имя хоста или сервера |
+| `[ENDPOINT_001]` | URL, URI или сетевой эндпоинт |
+| `[RESOURCE_001]` | Путь в файловой системе или ресурс хранилища |
+| `[SYSTEM_001]` | Внутренняя система или приложение |
+| `[PROJECT_001]` | Внутреннее название или код проекта |
+| `[AMOUNT_001]` | Денежная сумма или финансовый показатель |
+| `[METRIC_001]` | KPI или значение метрики производительности |
+| `[DOCUMENT_001]` | Идентификатор документа, номер договора или код ссылки |
+| `[DATE_001]` | Конкретная дата или диапазон дат |
+| `[DURATION_001]` | Период времени или продолжительность |
+| `[ENVIRONMENT_001]` | Метка среды развёртывания |
 
-## Numbering rules
+## Правила нумерации
 
-- Numbering is **per case**: each new case starts at `_001` for every type.
-- One real-world object per case → one stable token. The same person always maps to the same `[PERSON_NNN]` within a case.
-- Different real-world objects are **never merged** automatically, even if they appear similar.
-- Reverse substitution uses **exact string matching** only.
+- Нумерация **отдельная для каждого кейса**: каждый новый кейс начинается с `_001` для каждого типа.
+- Один объект в кейсе → один стабильный токен. Один и тот же человек всегда соответствует одному `[PERSON_NNN]` в пределах кейса.
+- Разные объекты **никогда не объединяются** автоматически, даже если они кажутся похожими.
+- Обратная подстановка выполняется только по **точному совпадению строки**.
 
-## Error detection (future)
+## Обнаружение ошибок (будущее)
 
-- Distorted tokens such as `[PERSON-001]`, `[person_001]`, or `PERSON_001` (missing brackets) will be detected and flagged during `restore`.
-- Detection of distorted tokens is planned for Stage E3.
+- Искажённые токены вида `[PERSON-001]`, `[person_001]` или `PERSON_001` (без скобок) будут обнаруживаться и помечаться при выполнении `restore`.
+- Обнаружение искажённых токенов запланировано для Этапа Э3.
 
-## Safety constraint
+## Ограничение безопасности
 
-Tokens **never include any fragment of the original value**. A token such as `[PERSON_Smith]` is invalid and will be rejected.
+Токены **никогда не содержат фрагментов исходного значения**. Токен вида `[PERSON_Иванов]` является недопустимым и будет отклонён.

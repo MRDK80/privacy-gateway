@@ -1,17 +1,17 @@
-# Threat Model
+# Модель угроз
 
-Stage E1 creates a safe development skeleton and establishes security rules.
-Most technical countermeasures will be implemented in later stages.
+Этап Э1 создаёт безопасный каркас разработки и устанавливает правила безопасности.
+Большинство технических контрмер будут реализованы в последующих этапах.
 
-| # | Threat | Countermeasure | E1 status | Future stage |
-|---|--------|---------------|-----------|-------------|
-| 1 | Real data committed to Git | `.gitignore` rules; SECURITY.md policy; no real fixtures | ✅ Enforced in E1 | Maintained |
-| 2 | Real data sent to LLM | No API calls; manual-only flow by design | ✅ By design in E1 | Maintained |
-| 3 | Case map stored in plaintext | `cryptography.Fernet` + `keyring` planned | ⏳ Not implemented | E2 |
-| 4 | Data printed to console or logs | CLI never logs input content; policy documented | ✅ Enforced in E1 | Maintained |
-| 5 | Secrets in fixtures or test files | Only synthetic fixtures; `detect-secrets` in CI | ✅ Enforced in E1 | Maintained |
-| 6 | Model distorts tokens on restore | Token integrity check on restore | ⏳ Not implemented | E3 |
-| 7 | Wrong case map substituted (manifest swap) | Case map bound to case ID; integrity check | ⏳ Not implemented | E2 |
-| 8 | Unsupported attachment passed to prepare | Input type validation | ⏳ Not implemented | E2 |
+| № | Угроза | Контрмера | Статус в Э1 | Будущий этап |
+|---|--------|-----------|-------------|--------------|
+| 1 | Реальные данные попадают в Git | Правила `.gitignore`; политика SECURITY.md; только синтетические fixtures | ✅ Реализовано в Э1 | Поддерживается |
+| 2 | Реальные данные попадают в LLM | Нет API-вызовов; только ручной поток по замыслу | ✅ По замыслу в Э1 | Поддерживается |
+| 3 | Карта соответствий хранится открыто | `cryptography.Fernet` + `keyring` запланированы | ⏳ Не реализовано | Э2 |
+| 4 | Данные выводятся в консоль или логи | CLI не записывает содержимое входных данных; политика задокументирована | ✅ Реализовано в Э1 | Поддерживается |
+| 5 | Секреты попадают в fixtures | Только синтетические fixtures; `detect-secrets` в CI | ✅ Реализовано в Э1 | Поддерживается |
+| 6 | Модель искажает токены | Проверка целостности токенов при restore | ⏳ Не реализовано | Э3 |
+| 7 | Подменяется manifest другого кейса | Карта привязана к идентификатору кейса; проверка целостности | ⏳ Не реализовано | Э2 |
+| 8 | Неподдерживаемое вложение передаётся в обработку | Валидация типа входных данных | ⏳ Не реализовано | Э2 |
 
-**Legend:** ✅ Active in E1 · ⏳ Planned for future stage
+**Обозначения:** ✅ Активно в Э1 · ⏳ Запланировано для будущего этапа

@@ -1,62 +1,62 @@
-# routing.yaml — example channel routing configuration.
-# Stage E1: structure only; routing logic is NOT implemented yet.
-# Keywords below are synthetic and illustrative.
+# routing.yaml — пример конфигурации маршрутизации по каналам.
+# Этап Э1: только структура; логика маршрутизации НЕ реализована.
+# Ключевые слова ниже синтетические и приведены только для иллюстрации.
 
 channels:
   - id: "01"
     name: "Интеграция и границы ответственности"
-    description: "Questions about system integration, ownership boundaries, and handover points."
+    description: "Вопросы системной интеграции, границ владения и точек передачи."
     keywords_synthetic:
-      - integration
-      - boundary
-      - responsibility
-      - handover
-      - interface
+      - интеграция
+      - граница
+      - ответственность
+      - передача
+      - интерфейс
     enabled: false
 
   - id: "02"
     name: "Безопасная деловая переписка"
-    description: "Safe business correspondence drafting and review."
+    description: "Составление и проверка безопасной деловой корреспонденции."
     keywords_synthetic:
-      - correspondence
-      - letter
-      - reply
-      - approval
-      - acknowledgement
+      - переписка
+      - письмо
+      - ответ
+      - согласование
+      - подтверждение
     enabled: false
 
   - id: "03"
     name: "Портфель коммерческих инициатив"
-    description: "Commercial initiative portfolio analysis and prioritisation."
+    description: "Анализ и приоритизация портфеля коммерческих инициатив."
     keywords_synthetic:
-      - initiative
-      - portfolio
-      - estimate
-      - commercial
-      - pipeline
+      - инициатива
+      - портфель
+      - оценка
+      - коммерческий
+      - воронка
     enabled: false
 
   - id: "04"
     name: "Реестр решений и ограничений"
-    description: "Decision log, constraints registry, and ADR management."
+    description: "Журнал решений, реестр ограничений и управление ADR."
     keywords_synthetic:
-      - decision
-      - constraint
+      - решение
+      - ограничение
       - adr
-      - rationale
-      - tradeoff
+      - обоснование
+      - компромисс
     enabled: false
 
   - id: "05"
     name: "Инвентаризация технических зависимостей"
-    description: "Technical dependency inventory and version management."
+    description: "Инвентаризация технических зависимостей и управление версиями."
     keywords_synthetic:
-      - dependency
-      - version
-      - library
-      - inventory
-      - compatibility
+      - зависимость
+      - версия
+      - библиотека
+      - инвентаризация
+      - совместимость
     enabled: false
 
-# Future: routing rules will map detected entity types and keywords
-# to the most appropriate channel. No automatic routing in E1.
+# Будущее: правила маршрутизации будут сопоставлять обнаруженные типы сущностей
+# и ключевые слова с наиболее подходящим каналом. В Э1 автоматической маршрутизации нет.

@@ -13,31 +13,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Настройка Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Установка зависимостей
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run tests
+      - name: Запуск тестов
         run: pytest
 
-      - name: Lint with ruff
+      - name: Проверка линтером ruff
         run: ruff check .
 
-      - name: Type-check with mypy
+      - name: Статическая типизация mypy
         run: mypy src
 
-      - name: Scan for secrets (detect-secrets)
-        # Run a baseline-free scan; exit code 0 means no secrets found.
-        # detect-secrets exits non-zero only when a NEW secret is detected
-        # above the baseline. On a fresh project with no baseline file,
-        # we use --list-all-plugins to confirm the tool runs, then scan.
-        # The scan itself exits 0 if nothing is detected.
+      - name: Сканирование секретов (detect-secrets)
+        # Запуск без baseline-файла; код выхода 0 означает отсутствие находок.
+        # detect-secrets завершается с ненулевым кодом только при обнаружении
+        # НОВОГО секрета относительно baseline. На проекте без baseline-файла
+        # сканирование завершится с кодом 0, если находок нет.
         run: |
           detect-secrets scan --all-files --exclude-files '\.git/.*' > /dev/null
-          echo "detect-secrets scan completed with no findings."
+          echo "Сканирование detect-secrets завершено без находок."

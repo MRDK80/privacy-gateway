@@ -1,82 +1,82 @@
-# entities.yaml — example configuration for entity detection.
-# Stage E1: structure only; detection is NOT implemented yet.
-# Do NOT add real names, organisations, domains, IPs, or infrastructure data.
+# entities.yaml — пример конфигурации обнаружения сущностей.
+# Этап Э1: только структура; обнаружение НЕ реализовано.
+# Не добавляйте реальные имена, организации, домены, IP или инфраструктурные данные.
 
 entity_types:
   - id: PERSON
-    description: "Natural person (full name, first name, last name)"
-    enabled: false  # will be enabled in E2+
+    description: "Физическое лицо (полное имя, имя, фамилия)"
+    enabled: false  # будет включено в Э2+
 
   - id: ROLE
-    description: "Job title or organisational role"
+    description: "Должность или организационная роль"
     enabled: false
 
   - id: ORG
-    description: "Legal entity or organisation name"
+    description: "Юридическое лицо или название организации"
     enabled: false
 
   - id: DEPARTMENT
-    description: "Internal department or division name"
+    description: "Внутреннее подразделение или отдел"
     enabled: false
 
   - id: EMAIL
-    description: "Email address"
+    description: "Адрес электронной почты"
     enabled: false
 
   - id: PHONE
-    description: "Phone number in any format"
+    description: "Номер телефона в любом формате"
     enabled: false
 
   - id: HOST
-    description: "Hostname or server name"
+    description: "Имя хоста или сервера"
     enabled: false
 
   - id: ENDPOINT
-    description: "URL, URI, or network endpoint"
+    description: "URL, URI или сетевой эндпоинт"
     enabled: false
 
   - id: RESOURCE
-    description: "File system path or storage resource"
+    description: "Путь в файловой системе или ресурс хранилища"
     enabled: false
 
   - id: SYSTEM
-    description: "Internal system or application name"
+    description: "Внутренняя система или приложение"
     enabled: false
 
   - id: PROJECT
-    description: "Internal project name or code"
+    description: "Внутреннее название или код проекта"
     enabled: false
 
   - id: AMOUNT
-    description: "Monetary amount or financial figure"
+    description: "Денежная сумма или финансовый показатель"
     enabled: false
 
   - id: METRIC
-    description: "KPI or performance metric value"
+    description: "KPI или значение метрики производительности"
     enabled: false
 
   - id: DOCUMENT
-    description: "Document identifier, contract number, or reference code"
+    description: "Идентификатор документа, номер договора или код ссылки"
     enabled: false
 
   - id: DATE
-    description: "Specific date or date range"
+    description: "Конкретная дата или диапазон дат"
     enabled: false
 
   - id: DURATION
-    description: "Time period or duration"
+    description: "Период времени или продолжительность"
     enabled: false
 
   - id: ENVIRONMENT
-    description: "Deployment environment label (e.g. prod, staging)"
+    description: "Метка среды развёртывания (например: prod, staging)"
     enabled: false
 
-# local_dictionary: future per-case override file, NOT committed to Git.
-# Example structure (synthetic, illustrative only):
+# local_dictionary: будущий файл переопределений для конкретного кейса, НЕ коммитится в Git.
+# Пример структуры (синтетический, только для иллюстрации):
 #
 # local_dictionary:
 #   PERSON:
-#     - "Synthetic Name One"
-#     - "Synthetic Name Two"
+#     - "Синтетическое Имя Один"
+#     - "Синтетическое Имя Два"
 #   PROJECT:
 #     - "SYNTH-PROJECT-ALPHA"
