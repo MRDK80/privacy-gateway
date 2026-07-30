@@ -136,7 +136,7 @@ class DetectedEntity:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DetectedEntity":
+    def from_dict(cls, data: dict[str, Any]) -> DetectedEntity:
         """Десериализовать из словаря (результат to_dict / JSON).
 
         Raises:
@@ -179,7 +179,7 @@ class TokenRecord:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TokenRecord":
+    def from_dict(cls, data: dict[str, Any]) -> TokenRecord:
         """Десериализовать из словаря.
 
         Raises:
@@ -221,7 +221,7 @@ class ManifestEntry:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ManifestEntry":
+    def from_dict(cls, data: dict[str, Any]) -> ManifestEntry:
         """Десериализовать из словаря.
 
         Raises:
