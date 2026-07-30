@@ -1,4 +1,4 @@
-"""Типизированные модели данных Privacy Gateway — Этап Э2."""
+"""Типизированные модели данных Privacy Gateway — Этапы Э2–Э4."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import hashlib
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 
 class EntityType(StrEnum):
@@ -43,6 +44,19 @@ class InputSource(StrEnum):
 
     FILE = "file"
     STDIN = "stdin"
+
+
+class ProcessingStatus(StrEnum):
+    """Итоговый статус обработки текста.
+
+    OK      — текст безопасен для передачи после токенизации.
+    BLOCKED — текст содержит необработанные секреты или остаточные PII.
+    PENDING — обработка не завершена.
+    """
+
+    OK = "OK"
+    BLOCKED = "BLOCKED"
+    PENDING = "PENDING"
 
 
 @dataclass
@@ -106,6 +120,121 @@ class DetectedEntity:
 
     def __str__(self) -> str:  # noqa: D105
         return repr(self)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Сериализовать в JSON-совместимый словарь."""
+        d: dict[str, Any] = {
+            "entity_type": self.entity_type.value,
+            "start": self.start,
+            "end": self.end,
+            "confidence": self.confidence.value,
+            "source": self.source,
+            "fingerprint": self.fingerprint,
+        }
+        if self.secret_kind is not None:
+            d["secret_kind"] = self.secret_kind
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> DetectedEntity:
+        """Десериализовать из словаря (результат to_dict / JSON).
+
+        Raises:
+            KeyError: Обязательное поле отсутствует.
+            ValueError: Некорректное значение enum-поля или диапазон [start, end).
+        """
+        return cls(
+            entity_type=EntityType(data["entity_type"]),
+            start=int(data["start"]),
+            end=int(data["end"]),
+            confidence=DetectionConfidence(data["confidence"]),
+            source=str(data["source"]),
+            fingerprint=str(data["fingerprint"]),
+            secret_kind=data.get("secret_kind"),
+        )
+
+
+@dataclass
+class TokenRecord:
+    """Запись о токене: связывает стабильный токен с fingerprint сущности.
+
+    Исходное значение НЕ хранится — только fingerprint.
+    Зашифрованное значение (encrypted_value) хранится в ManifestEntry.
+    """
+
+    token: str  # например «[EMAIL_1]»
+    entity_type: EntityType
+    fingerprint: str
+    secret_kind: str | None = field(default=None)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Сериализовать в JSON-совместимый словарь."""
+        d: dict[str, Any] = {
+            "token": self.token,
+            "entity_type": self.entity_type.value,
+            "fingerprint": self.fingerprint,
+        }
+        if self.secret_kind is not None:
+            d["secret_kind"] = self.secret_kind
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TokenRecord:
+        """Десериализовать из словаря.
+
+        Raises:
+            KeyError: Обязательное поле отсутствует.
+            ValueError: Некорректное значение EntityType.
+        """
+        return cls(
+            token=str(data["token"]),
+            entity_type=EntityType(data["entity_type"]),
+            fingerprint=str(data["fingerprint"]),
+            secret_kind=data.get("secret_kind"),
+        )
+
+
+@dataclass
+class ManifestEntry:
+    """Запись зашифрованного манифеста для одного токена.
+
+    encrypted_value — bytes зашифрованного исходного значения (Fernet / AES-GCM).
+    Формат шифрования фиксируется в Э4; здесь — только контейнер.
+    """
+
+    token: str
+    entity_type: EntityType
+    fingerprint: str
+    encrypted_value: bytes
+    secret_kind: str | None = field(default=None)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Сериализовать в JSON-совместимый словарь (encrypted_value → hex)."""
+        d: dict[str, Any] = {
+            "token": self.token,
+            "entity_type": self.entity_type.value,
+            "fingerprint": self.fingerprint,
+            "encrypted_value": self.encrypted_value.hex(),
+        }
+        if self.secret_kind is not None:
+            d["secret_kind"] = self.secret_kind
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ManifestEntry:
+        """Десериализовать из словаря.
+
+        Raises:
+            KeyError: Обязательное поле отсутствует.
+            ValueError: Некорректные данные.
+        """
+        return cls(
+            token=str(data["token"]),
+            entity_type=EntityType(data["entity_type"]),
+            fingerprint=str(data["fingerprint"]),
+            encrypted_value=bytes.fromhex(data["encrypted_value"]),
+            secret_kind=data.get("secret_kind"),
+        )
 
 
 # ---------------------------------------------------------------------------
