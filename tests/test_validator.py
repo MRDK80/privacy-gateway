@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from privacy_gateway.models import ProcessingStatus
 from privacy_gateway.validator import ValidationResult, validate
 
@@ -62,19 +60,15 @@ def test_any_secret_blocks() -> None:
     result = validate("Настройки: password=SuperSecret123")  # pragma: allowlist secret
     assert _is_blocked(result)
     assert result.negative_triggered
-    # Убеждаемся, что именно secret_keyword сработал
     assert any(f.rule == "secret_keyword" for f in result.findings)
 
 
 def test_high_entropy_string_blocks() -> None:
-    """Высокоэнтропийная строка, которую Э3 мог пропустить, ловится валидатором.
+    """High-entropy строка, которую Э3 мог пропустить, ловится валидатором.
 
     Используем строку с энтропией >= 3.0 и длиной >= 16 символов.
-    Base64-подобный токен без ключевых слов — детектор Э3 без настройки
-    пропускает его, валидатор блокирует по энтропии.
     """
-    # 24 символа, высокая энтропия (~4.5 бит/символ)
-    high_entropy_str = "aB3xQ9mZpLwY7nKv2RtS5dUe"
+    high_entropy_str = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # 24 символа, энтропия ~4.5
     result = validate(f"Значение поля: {high_entropy_str}")
     assert _is_blocked(result)
     assert result.negative_triggered
@@ -97,15 +91,12 @@ def test_fully_tokenized_text_is_ok() -> None:
 
 def test_malformed_token_not_ok() -> None:
     """Искажённые токены не дают OK."""
-    # [EMAIL_] — нет номера
     r1 = validate("Контакт: [EMAIL_]")
     assert not _is_ok(r1)
 
-    # [EMAIL 1] — пробел вместо _
     r2 = validate("Контакт: [EMAIL 1]")
     assert not _is_ok(r2)
 
-    # [[EMAIL_1]] — вложенные скобки
     r3 = validate("Контакт: [[EMAIL_1]]")
     assert not _is_ok(r3)
 
@@ -153,27 +144,22 @@ def test_plain_text_without_entities_is_ok() -> None:
 def test_validator_catches_what_detector_misses() -> None:
     """Валидатор блокирует то, что детектор Э3 пропускает.
 
-    Сценарий: высокоэнтропийная строка без ключевых слов.
-    Детектор Э3 не имеет правила для «случайно выглядящих» строк
-    без ключевых слов — он ищет конкретные паттерны (email, IP, телефон,
-    секреты с ключевым словом). Строка вида «aB3xQ9mZpLwY7nKv2RtS5dUe»
-    не попадает ни под один паттерн Э3, но валидатор Э5 ловит её
-    по Shannon-энтропии (>= 3.0 бит/символ при длине >= 16 символов).
+    Сценарий: высокоэнтропийная строка без ключевых слов. Детектор Э3
+    не имеет правила для «случайно выглядящих» строк — он ищет
+    конкретные паттерны. Строка «aB3xQ9mZpLwY7nKv2RtS5dUe» не попадает
+    ни под один паттерн Э3, но валидатор Э5 ловит её по Shannon-энтропии.
     """
     from privacy_gateway.detector import DetectorConfig, detect_entities
 
     high_entropy_token = "aB3xQ9mZpLwY7nKv2RtS5dUe"  # 24 символа, энтропия ~4.5
     text = f"Значение поля: {high_entropy_token}"
 
-    # Детектор Э3 с пустым конфигом (без словаря, включены все regex)
     config = DetectorConfig()
     detector_entities = detect_entities(text, config)
-    # Детектор НЕ должен найти эту строку (нет email/IP/phone/secret-keyword)
     assert not any(
         text[e.start:e.end] == high_entropy_token for e in detector_entities
     ), "Детектор Э3 неожиданно нашёл высокоэнтропийную строку — тест теряет смысл"
 
-    # Валидатор ДОЛЖЕН заблокировать
     result = validate(text)
     assert _is_blocked(result), (
         f"Валидатор не заблокировал высокоэнтропийную строку (статус={result.status})"
@@ -194,14 +180,12 @@ def test_findings_do_not_leak_values() -> None:
     )
     assert _is_blocked(result)
     for finding in result.findings:
-        # masked не должен содержать полное значение
         assert sensitive_email not in finding.masked, (
             f"Finding {finding.rule!r} раскрывает email: {finding.masked!r}"
         )
         assert sensitive_ip not in finding.masked, (
             f"Finding {finding.rule!r} раскрывает IP: {finding.masked!r}"
         )
-        # Поле rule не содержит значений
         assert "@" not in finding.rule
         assert "." not in finding.rule or finding.rule in ("secret_keyword",)
 

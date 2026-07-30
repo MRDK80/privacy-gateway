@@ -147,13 +147,13 @@ def _find_high_entropy_tokens(text: str) -> list[tuple[int, int]]:
     Возвращает список (start, end) позиций.
     """
     findings: list[tuple[int, int]] = []
-    # Разбиваем по пробелам/переносам/знакам пунктуации
     for m in re.finditer(r"[^\s,;.!?\"'`]+", text):
         word = m.group()
-        # Пропускаем корректные токены
         if _is_valid_token(word):
             continue
-        if len(word) >= _ENTROPY_MIN_LEN and _shannon_entropy(word) >= _ENTROPY_THRESHOLD:
+        long_enough = len(word) >= _ENTROPY_MIN_LEN
+        high_entropy = _shannon_entropy(word) >= _ENTROPY_THRESHOLD
+        if long_enough and high_entropy:
             findings.append((m.start(), m.end()))
     return findings
 
@@ -266,7 +266,10 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
     for start, end in _find_high_entropy_tokens(text):
         negative_triggered = True
         val = text[start:end]
-        masked = val[:2] + "*" * (len(val) - 4) + val[-2:] if len(val) > 6 else "*" * len(val)
+        if len(val) > 6:
+            masked = val[:2] + "*" * (len(val) - 4) + val[-2:]
+        else:
+            masked = "*" * len(val)
         findings.append(ValidationFinding(
             kind="negative",
             rule="high_entropy",
@@ -321,7 +324,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
         ))
 
     # Обрывки токенов (незакрытые [ или висячие ])
-    # Ищем одиночные [ без закрывающей ] и наоборот
     depth = 0
     for i, ch in enumerate(text):
         if ch == "[":
