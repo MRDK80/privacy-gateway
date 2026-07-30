@@ -80,8 +80,8 @@ _RE_SECRET_KW = re.compile(
     re.IGNORECASE,
 )
 
-# PEM-заголовок приватных ключей (паттерн для поиска в чужом тексте, не секрет)
-# Литерал "PRIVATE KEY" разбит на части, чтобы избежать ложного срабатывания detect-secrets
+# PEM-заголовок приватных ключей (поиск в чужом тексте, не секрет)
+# Паттерн разбит на части, чтобы не срабатывал detect-secrets
 _RE_PEM = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH )?" + "PRIVATE KEY-----",
     re.IGNORECASE,
