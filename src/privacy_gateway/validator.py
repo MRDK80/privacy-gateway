@@ -4,7 +4,7 @@
 Его задача — доказать, что в подготовленном тексте не осталось
 ничего чувствительного, то есть найти то, что детектор Э3 пропустил.
 
-Архитектурное решение (зафиксированно намеренно):
+Архитектурное решение (зафиксировано намеренно):
     Валидатор реализован как независимый строгий набор правил.
     Импортировать `detector.py` или переиспользовать его конфигурацию
     ЗАПРЕЩЕНО. Дублирование паттернов здесь — сознательная плата
@@ -81,7 +81,10 @@ _RE_SECRET_KW = re.compile(
 )
 
 # BEGIN PRIVATE KEY блоки (паттерн для поиска в чужом тексте, не секрет)
-_RE_PEM = re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE)  # pragma: allowlist secret
+_PEM_PATTERN = (  # pragma: allowlist secret
+    r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
+)
+_RE_PEM = re.compile(_PEM_PATTERN, re.IGNORECASE)
 
 _NEGATIVE_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("email", _RE_EMAIL),
@@ -228,11 +231,8 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
     findings: list[ValidationFinding] = []
     negative_triggered = False
     positive_triggered = False
-    # секрет → безусловный BLOCKED
     has_secret = False
-    # неизвестный тип токена → PENDING (если нет ничего хуже)
     has_unknown_token = False
-    # искажённый токен → BLOCKED
     has_malformed_token = False
 
     # ------------------------------------------------------------------
@@ -242,7 +242,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
         for m in pattern.finditer(text):
             negative_triggered = True
             val = m.group()
-            # Маскируем: оставляем первые 2 и последние 2 символа
             if len(val) > 6:
                 masked = val[:2] + "*" * (len(val) - 4) + val[-2:]
             else:
@@ -276,7 +275,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
     # ------------------------------------------------------------------
     # 2. Позитивная проверка формата токенов
     # ------------------------------------------------------------------
-    # Вложенные скобки
     for m in _RE_NESTED_BRACKET.finditer(text):
         positive_triggered = True
         has_malformed_token = True
@@ -288,11 +286,10 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
             masked="[nested]",
         ))
 
-    # Все [...] последовательности
     for m in _RE_BRACKET_SEQUENCE.finditer(text):
         token_text = m.group()
         if _is_valid_token(token_text):
-            continue  # корректный токен — ОК
+            continue
         positive_triggered = True
         inner = token_text[1:-1]
         parts = inner.rsplit("_", 1)
@@ -314,7 +311,6 @@ def validate(text: str) -> ValidationResult:  # noqa: C901
             masked=token_text[:4] + "..." if len(token_text) > 4 else token_text,
         ))
 
-    # Обрывки токенов (незакрытые [ или висячие ])
     depth = 0
     for i, ch in enumerate(text):
         if ch == "[":
