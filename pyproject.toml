@@ -39,6 +39,8 @@ testpaths = ["tests"]
 [tool.ruff]
 src = ["src", "tests"]
 target-version = "py311"
+line-length = 88
+extend-exclude = [".venv", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

@@ -12,7 +12,8 @@
 Запустите сканирование секретов, чтобы убедиться в отсутствии случайных утечек:
 
 ```bash
-detect-secrets scan --all-files --exclude-files '\.git/.*'
+detect-secrets scan --all-files \
+  --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)'
 ```
 
 Если обнаружена хотя бы одна находка — устраните её до выполнения push.

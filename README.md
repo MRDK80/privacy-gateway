@@ -51,7 +51,8 @@ python -m privacy_gateway --help
 pytest
 ruff check .
 mypy src
-detect-secrets scan --all-files --exclude-files "\.git/.*"
+detect-secrets scan --all-files \
+  --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)'
 ```
 
 ## ⚠️ Политика безопасности

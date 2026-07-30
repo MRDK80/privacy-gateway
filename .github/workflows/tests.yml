@@ -38,5 +38,5 @@ jobs:
         # НОВОГО секрета относительно baseline. На проекте без baseline-файла
         # сканирование завершится с кодом 0, если находок нет.
         run: |
-          detect-secrets scan --all-files --exclude-files '\.git/.*' > /dev/null
+          detect-secrets scan --all-files --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)' > /dev/null
           echo "Сканирование detect-secrets завершено без находок."
