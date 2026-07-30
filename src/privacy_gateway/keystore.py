@@ -5,7 +5,7 @@
     create_key() -> bytes
     delete_key() -> None
 
-Hранилище: системный keyring через библиотеку ``keyring``.
+Хранилище: системный keyring через библиотеку ``keyring``.
 
 Константы (зафиксированы для Э7):
     SERVICE_NAME = "privacy-gateway"
@@ -35,6 +35,7 @@ CI / headless-сценарий:
 
 from __future__ import annotations
 
+import importlib
 import os
 from typing import cast
 
@@ -63,16 +64,25 @@ class KeyNotFoundError(KeystoreError):
     """Ключ не найден в хранилище."""
 
 
-def _assert_safe_backend() -> None:
-    """Проверить, что активный keyring backend входит в allowlist.
+def _get_backend() -> keyring.backend.KeyringBackend:
+    """Вернуть проверенный backend.
 
+    Если переменная PGW_KEYRING_BACKEND задана — инстанциировать backend
+    по FQCN из неё; иначе использовать системный.
+
+    В обоих случаях backend проверяется по allowlist _SAFE_BACKENDS.
     Поднимает KeystoreError, если backend небезопасен или недоступен.
     """
     env_override = os.environ.get("PGW_KEYRING_BACKEND")
     if env_override:
-        return
+        module_name, _, class_name = env_override.rpartition(".")
+        mod = importlib.import_module(module_name)
+        backend: keyring.backend.KeyringBackend = cast(
+            keyring.backend.KeyringBackend, getattr(mod, class_name)()
+        )
+    else:
+        backend = keyring.get_keyring()
 
-    backend = keyring.get_keyring()
     fqcn = f"{type(backend).__module__}.{type(backend).__qualname__}"
     if fqcn not in _SAFE_BACKENDS:
         raise KeystoreError(
@@ -81,31 +91,18 @@ def _assert_safe_backend() -> None:
             "For CI/headless set PGW_KEYRING_BACKEND or use "
             "dbus-run-session + gnome-keyring-daemon."
         )
-
-
-def _get_backend() -> keyring.backend.KeyringBackend:
-    """Вернуть актуальный backend (с учётом PGW_KEYRING_BACKEND)."""
-    env_override = os.environ.get("PGW_KEYRING_BACKEND")
-    if env_override:
-        import importlib
-
-        module_name, _, class_name = env_override.rpartition(".")
-        mod = importlib.import_module(module_name)
-        return cast(
-            keyring.backend.KeyringBackend, getattr(mod, class_name)()
-        )
-    return keyring.get_keyring()
+    return backend
 
 
 def get_key() -> bytes:
     """Получить Fernet-ключ из системного хранилища.
 
     Raises:
-        KeystoreError:  Небезопасный или недоступный backend.
+        KeystoreError:    Небезопасный или недоступный backend.
         KeyNotFoundError: Ключ ещё не создан (вызовите create_key()).
     """
-    _assert_safe_backend()
-    value = keyring.get_password(SERVICE_NAME, USERNAME)
+    backend = _get_backend()
+    value = backend.get_password(SERVICE_NAME, USERNAME)
     if value is None:
         raise KeyNotFoundError(
             f"No key found for service={SERVICE_NAME!r}, username={USERNAME!r}. "
@@ -123,9 +120,9 @@ def create_key() -> bytes:
     Returns:
         Новый ключ (bytes).
     """
-    _assert_safe_backend()
+    backend = _get_backend()
     key = generate_key()
-    keyring.set_password(SERVICE_NAME, USERNAME, key.decode("latin-1"))
+    backend.set_password(SERVICE_NAME, USERNAME, key.decode("latin-1"))
     return key
 
 
@@ -135,5 +132,5 @@ def delete_key() -> None:
     Raises:
         KeystoreError: Небезопасный или недоступный backend.
     """
-    _assert_safe_backend()
-    keyring.delete_password(SERVICE_NAME, USERNAME)
+    backend = _get_backend()
+    backend.delete_password(SERVICE_NAME, USERNAME)
