@@ -6,15 +6,15 @@
     load_manifest(path, key)                      -> list[ManifestEntry]
 
 Манифест хранится в JSON (UTF-8). encrypted_value сериализуется как hex.
-Исходные значения в открытом виде в файле не присутствуют.
-Ключ в манифест не записывается.
+Исходные значения в открытом виде в файле отсутствуют.
+Ключ в манифест не записывается ни в каком виде.
 
 При чтении манифеста, зашифрованного другим ключом, поднимается
 DecryptionError (из crypto.py).
 
 Ротация ключа:
     Манифесты зашифрованы конкретным ключом. При замене ключа старые манифесты
-    становятся нечитаемыми (load_manifest поднимет DecryptionError). Для ротации
+    становятся нечитаемы (load_manifest поднимет DecryptionError). Для ротации
     необходимо: 1) загрузить со старым ключом, 2) пересохранить с новым.
 """
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from privacy_gateway.crypto import DecryptionError, decrypt, encrypt
+from privacy_gateway.crypto import decrypt, encrypt
 from privacy_gateway.models import ManifestEntry, TokenRecord
 
 
@@ -48,8 +48,8 @@ def build_manifest(
     """
     if len(records) != len(original_values):
         raise ValueError(
-            f"records ({len(records)}) and original_values ({len(original_values)}) "
-            "must have the same length"
+            f"records ({len(records)}) and original_values "
+            f"({len(original_values)}) must have the same length"
         )
     entries: list[ManifestEntry] = []
     for record, value in zip(records, original_values):
@@ -76,7 +76,9 @@ def save_manifest(entries: list[ManifestEntry], path: Path) -> None:
         path:    Путь к файлу (создаётся или перезаписывается).
     """
     data = [entry.to_dict() for entry in entries]
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def load_manifest(path: Path, key: bytes) -> list[ManifestEntry]:
@@ -102,7 +104,6 @@ def load_manifest(path: Path, key: bytes) -> list[ManifestEntry]:
     entries: list[ManifestEntry] = []
     for item in data:
         entry = ManifestEntry.from_dict(item)
-        # Проверяем расшифровку (поднимет DecryptionError при чужом ключе)
         decrypt(entry.encrypted_value, key)
         entries.append(entry)
     return entries

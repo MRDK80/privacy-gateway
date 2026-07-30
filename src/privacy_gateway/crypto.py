@@ -70,4 +70,6 @@ def decrypt(data: bytes, key: bytes) -> str:
     try:
         return f.decrypt(data).decode("utf-8")
     except InvalidToken as exc:
-        raise DecryptionError("Decryption failed: wrong key or corrupted ciphertext") from exc
+        raise DecryptionError(
+            "Decryption failed: wrong key or corrupted ciphertext"
+        ) from exc

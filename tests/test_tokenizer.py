@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from privacy_gateway.models import DetectedEntity, DetectionConfidence, EntityType
-from privacy_gateway.tokenizer import PerDocumentStrategy, tokenize
+from privacy_gateway.tokenizer import tokenize
 
 
 def _make_entity(
@@ -26,7 +26,7 @@ def _make_entity(
 
 
 def test_tokens_are_stable() -> None:
-    text = "Contact user@example.com please"  # noqa: S105 — synthetic fixture  # pragma: allowlist secret
+    text = "Contact user@example.com please"  # pragma: allowlist secret
     entity = _make_entity(EntityType.EMAIL, 8, 24, fingerprint="fp1")
     result1, records1 = tokenize(text, [entity])
     result2, records2 = tokenize(text, [entity])
@@ -35,7 +35,7 @@ def test_tokens_are_stable() -> None:
 
 
 def test_same_entity_same_token() -> None:
-    text = "a@b.com and a@b.com and a@b.com"  # noqa: S105  # pragma: allowlist secret
+    text = "a@b.com and a@b.com and a@b.com"  # pragma: allowlist secret
     e1 = _make_entity(EntityType.EMAIL, 0, 7, fingerprint="fp1")
     e2 = _make_entity(EntityType.EMAIL, 12, 19, fingerprint="fp1")
     e3 = _make_entity(EntityType.EMAIL, 24, 31, fingerprint="fp1")
@@ -66,7 +66,6 @@ def test_overlapping_entities() -> None:
     e1 = _make_entity(EntityType.PHONE, 5, 21, fingerprint="fp_phone")
     e2 = _make_entity(EntityType.PHONE, 10, 21, fingerprint="fp_phone2")  # overlap
     result, records = tokenize(text, [e1, e2])
-    # Должна быть ровно одна замена
     assert len(records) == 1
     assert "[PHONE_1]" in result
 

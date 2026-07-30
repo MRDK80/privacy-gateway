@@ -6,18 +6,12 @@
 
 from __future__ import annotations
 
-import os
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 import privacy_gateway.keystore as ks
 from privacy_gateway.keystore import (
     KeyNotFoundError,
     KeystoreError,
-    SERVICE_NAME,
-    USERNAME,
-    _SAFE_BACKENDS,
 )
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -25,9 +24,21 @@ _SYNTHETIC_PHONE = "+7 900 000-00-00"  # pragma: allowlist secret
 @pytest.fixture()
 def sample_records() -> list[TokenRecord]:
     return [
-        TokenRecord(token="[EMAIL_1]", entity_type=EntityType.EMAIL, fingerprint="fp_email"),
-        TokenRecord(token="[HOST_1]", entity_type=EntityType.HOST, fingerprint="fp_ip"),
-        TokenRecord(token="[PHONE_1]", entity_type=EntityType.PHONE, fingerprint="fp_phone"),
+        TokenRecord(
+            token="[EMAIL_1]",
+            entity_type=EntityType.EMAIL,
+            fingerprint="fp_email",
+        ),
+        TokenRecord(
+            token="[HOST_1]",
+            entity_type=EntityType.HOST,
+            fingerprint="fp_ip",
+        ),
+        TokenRecord(
+            token="[PHONE_1]",
+            entity_type=EntityType.PHONE,
+            fingerprint="fp_phone",
+        ),
     ]
 
 

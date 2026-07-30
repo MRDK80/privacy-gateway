@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from privacy_gateway.models import DetectedEntity, EntityType, TokenRecord
+from privacy_gateway.models import DetectedEntity, TokenRecord
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,10 @@ class TokenAssignmentStrategy(Protocol):
 
 
 class PerDocumentStrategy:
-    """Вариант A: счётчик внутри документа, сбрасывается при создании нового экземпляра."""
+    """Вариант A: счётчик внутри документа.
+
+    Сбрасывается при создании нового экземпляра.
+    """
 
     def __init__(self) -> None:  # noqa: D107
         self._counters: dict[str, int] = {}
@@ -85,7 +88,6 @@ def tokenize(
     if original_values is not None and len(original_values) != len(entities):
         raise ValueError("original_values must have the same length as entities")
 
-    # Сортируем по убыванию start для корректной back-to-front замены
     indexed = sorted(enumerate(entities), key=lambda t: t[1].start, reverse=True)
 
     token_map: dict[int, TokenRecord] = {}
@@ -93,7 +95,6 @@ def tokenize(
 
     for orig_idx, entity in indexed:
         s, e = entity.start, entity.end
-        # Проверка перекрытия с уже обработанными диапазонами
         overlaps = any(not (e <= cs or s >= ce) for cs, ce in covered)
         if overlaps:
             log.warning(
@@ -118,7 +119,6 @@ def tokenize(
             secret_kind=entity.secret_kind,
         )
 
-    # Применяем замены в порядке убывания start (уже отсортировано)
     result = text
     for orig_idx, entity in indexed:
         if orig_idx not in token_map:
@@ -126,7 +126,6 @@ def tokenize(
         s, e = entity.start, entity.end
         result = result[:s] + token_map[orig_idx].token + result[e:]
 
-    # Возвращаем TokenRecord в порядке первого вхождения (по start ascending)
     records_ordered = [
         token_map[i]
         for i, _ in sorted(enumerate(entities), key=lambda t: t[1].start)
