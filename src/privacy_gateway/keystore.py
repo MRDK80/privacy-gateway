@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+from typing import Protocol
 
 import keyring
 
@@ -61,11 +62,24 @@ class UnsafeBackendError(KeystoreError):
 
 
 # ---------------------------------------------------------------------------
+# Protocol для типизации backend-интерфейса
+# ---------------------------------------------------------------------------
+
+
+class _KeyringBackend(Protocol):
+    def get_password(self, service: str, username: str) -> str | None: ...
+    def set_password(
+        self, service: str, username: str, password: str
+    ) -> None: ...
+    def delete_password(self, service: str, username: str) -> None: ...
+
+
+# ---------------------------------------------------------------------------
 # Внутренние хелперы
 # ---------------------------------------------------------------------------
 
 
-def _get_backend() -> object:
+def _get_backend() -> _KeyringBackend:
     """Verify and return the current keyring backend.
 
     Raises:
@@ -79,26 +93,23 @@ def _get_backend() -> object:
             "Configure a secure system keyring (SecretService, macOS Keychain, "
             "Windows Credential Vault)."
         )
-    return backend
+    return backend  # type: ignore[return-value]
 
 
 def _get_raw(name: str) -> str | None:
     """Получить строку из keyring или None."""
-    backend = _get_backend()
-    return backend.get_password(_SERVICE, name)  # type: ignore[union-attr]
+    return _get_backend().get_password(_SERVICE, name)
 
 
 def _set_raw(name: str, value: str) -> None:
     """Сохранить строку в keyring."""
-    backend = _get_backend()
-    backend.set_password(_SERVICE, name, value)  # type: ignore[union-attr]
+    _get_backend().set_password(_SERVICE, name, value)
 
 
 def _delete_raw(name: str) -> None:
     """Удалить запись из keyring (игнорировать отсутствие)."""
-    backend = _get_backend()
     try:
-        backend.delete_password(_SERVICE, name)  # type: ignore[union-attr]
+        _get_backend().delete_password(_SERVICE, name)
     except keyring.errors.PasswordDeleteError:
         pass
 
@@ -112,7 +123,6 @@ def _decode_keys(raw: str) -> list[bytes]:
     """Десериализовать JSON-строку в список ключей."""
     data = json.loads(raw)
     if isinstance(data, str):
-        # Обратная совместимость: одиночный ключ как строка
         return [data.encode()]
     return [item.encode() for item in data]
 
@@ -188,7 +198,8 @@ def create_key(*, force: bool = False) -> bytes:
 def delete_key() -> None:
     """Удалить активный ключ и retired-ключ из keyring.
 
-    Используется прежде всего в тестах. Не вызывает ошибку, если ключ отсутствует.
+    Используется прежде всего в тестах.
+    Не вызывает ошибку, если ключ отсутствует.
     """
     _delete_raw(_ACTIVE_KEY)
     _delete_raw(_RETIRED_KEY)
@@ -200,7 +211,7 @@ def rotate_key() -> bytes:
     Raises:
         KeyNotFoundError: если активного ключа нет.
     """
-    current_keys = get_all_keys()  # выбросит KeyNotFoundError если нет ключа
+    current_keys = get_all_keys()
     new_key = generate_key()
     _set_raw(_RETIRED_KEY, _encode_keys(current_keys))
     _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
