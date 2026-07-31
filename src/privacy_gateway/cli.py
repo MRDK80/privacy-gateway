@@ -31,6 +31,9 @@ from privacy_gateway.models import (
 from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
+# Дефолтный путь к конфигу детектора (shared между detect и prepare)
+_DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
+
 
 def _build_parser():
     import argparse
@@ -117,18 +120,19 @@ def _build_parser():
 
 
 def _cmd_detect(args) -> int:
-    """Обработька команды detect."""
+    """Обработка команды detect."""
     from privacy_gateway.detector import detect_entities, load_config
 
+    # args.encoding может быть None (не задан); read_input ожидает str
+    read_kwargs = {"encoding": args.encoding} if args.encoding else {}
     try:
-        input_text = read_input(
-            args.file, encoding=args.encoding
-        )
+        input_text = read_input(args.file, **read_kwargs)
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
 
-    config_path = Path(args.config) if args.config else None
+    # load_config не принимает None; используем дефолтный путь если не задан
+    config_path = Path(args.config) if args.config else _DEFAULT_ENTITIES_CONFIG
     try:
         cfg = load_config(config_path)
     except ConfigurationError as exc:
@@ -148,10 +152,11 @@ def _cmd_detect(args) -> int:
 
 
 def _cmd_prepare(args) -> int:
-    """Обработька команды prepare."""
-    # --- Чтение входа ---
+    """Обработка команды prepare."""
+    # args.encoding может быть None; read_input ожидает str
+    read_kwargs = {"encoding": args.encoding} if args.encoding else {}
     try:
-        input_text = read_input(args.file, encoding=args.encoding)
+        input_text = read_input(args.file, **read_kwargs)
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
@@ -170,6 +175,7 @@ def _cmd_prepare(args) -> int:
     out_dir = Path(routing_cfg.output_dir)
     overwrite = args.overwrite or routing_cfg.overwrite
 
+    # Передаём None — pipeline сам выберет дефолтный путь
     entities_config_path = Path(args.config) if args.config else None
 
     # --- Получение ключа ---
@@ -179,9 +185,7 @@ def _cmd_prepare(args) -> int:
         print(f"Ошибка keystore: {exc}", file=sys.stderr)
         return 4
 
-    source_ref = (
-        input_text.path.name if input_text.path else "stdin"
-    )
+    source_ref = input_text.path.name if input_text.path else "stdin"
 
     # --- Запуск конвейера ---
     try:
@@ -204,7 +208,8 @@ def _cmd_prepare(args) -> int:
     # --- Вывод результата ---
     if result.status == ProcessingStatus.OK:
         print(
-            f"OK: {result.prompt_path} / {result.route_path} / {result.manifest_path}"
+            f"OK: {result.prompt_path} / "
+            f"{result.route_path} / {result.manifest_path}"
         )
         return 0
     elif result.status == ProcessingStatus.PENDING:
