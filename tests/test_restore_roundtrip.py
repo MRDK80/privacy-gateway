@@ -1,4 +1,4 @@
-"""Функциональные тесты восстановления — Этап Э7.
+"""Функциональные тесты восстановления — Этап Э7 / Э8.
 
 Покрывают API restore_text() и сквозной маршрут prepare → restore.
 
@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from privacy_gateway.crypto import generate_key
-from privacy_gateway.models import ConfigurationError
+from privacy_gateway.models import ConfigurationError, RestoreStrictError
 from privacy_gateway.restore import RestoreError, restore_text
 
 # ---------------------------------------------------------------------------
@@ -48,9 +48,9 @@ def fernet_key() -> bytes:
 
 @pytest.fixture()
 def mock_keyring(fernet_key: bytes):
-    """Подменяет get_key в pipeline и restore без обращения к реальному keyring."""
+    """Подменяет get_all_keys в pipeline и restore без обращения к реальному keyring."""
     with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key):
-        with patch("privacy_gateway.restore.get_key", return_value=fernet_key):
+        with patch("privacy_gateway.restore.get_all_keys", return_value=[fernet_key]):
             yield fernet_key
 
 
@@ -111,29 +111,26 @@ def test_roundtrip_unicode(tmp_path: Path, mock_keyring: bytes) -> None:
 
     assert result.restored_text is not None
     assert result.restored_text == SYNTH_UNICODE
-    # Нет утечки plaintext в отчёт
     assert SYNTH_EMAIL not in " ".join(result.warnings)
 
 
 # ---------------------------------------------------------------------------
-# 3. Неизвестный токен — строгий режим завершается отказом
+# 3. Неизвестный токен — строгий режим → RestoreStrictError (ADR-21)
 # ---------------------------------------------------------------------------
 
 
 def test_unknown_token_strict_fails(tmp_path: Path, mock_keyring: bytes) -> None:
-    """Корректно оформленный, но отсутствующий в манифесте токен → RestoreError."""
+    """Корректный формат, но отсутствующий токен → RestoreStrictError."""
     key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
     prompt = (out_dir / "prompt.txt").read_text(encoding="utf-8")
-    # Добавляем несуществующий токен
     llm_reply = prompt + " [EMAIL_99]"
     route_path = out_dir / "route.json"
 
-    with pytest.raises(RestoreError) as exc_info:
+    with pytest.raises(RestoreStrictError) as exc_info:
         restore_text(llm_reply, route_path, strict=True)
 
     msg = str(exc_info.value)
-    # Токен упоминается в ошибке — plaintext не должен
     assert "EMAIL_99" in msg
     assert SYNTH_EMAIL not in msg
     assert SYNTH_IP not in msg
@@ -141,7 +138,7 @@ def test_unknown_token_strict_fails(tmp_path: Path, mock_keyring: bytes) -> None
 
 
 # ---------------------------------------------------------------------------
-# 4. Искажённые кандидаты фиксируются
+# 4. Искажённые кандидаты фиксируются → RestoreStrictError
 # ---------------------------------------------------------------------------
 
 
@@ -151,14 +148,12 @@ def test_malformed_token_detected(tmp_path: Path, mock_keyring: bytes) -> None:
     out_dir = _run_prepare(tmp_path, key)
     route_path = out_dir / "route.json"
 
-    # Искажённые: нет суффикса, пробел, строчные буквы
     malformed_candidates = ["EMAIL", "EMAIL 1", "email_1"]
     llm_reply = " ".join(f"[{c}]" for c in malformed_candidates)
 
-    with pytest.raises(RestoreError):
+    with pytest.raises(RestoreStrictError):
         restore_text(llm_reply, route_path, strict=True)
 
-    # Мягкий режим — посмотреть на классификацию
     result = restore_text(llm_reply, route_path, strict=False)
     assert len(result.tokens_malformed) == len(malformed_candidates)
     for candidate in malformed_candidates:
@@ -179,11 +174,9 @@ def test_missing_token_reported(tmp_path: Path, mock_keyring: bytes) -> None:
     route_path = out_dir / "route.json"
     prompt = (out_dir / "prompt.txt").read_text(encoding="utf-8")
 
-    # Найти хотя бы один токен из prompt
     tokens_in_prompt = re.findall(r"\[[A-Z][A-Z0-9]*_[1-9][0-9]*\]", prompt)
     assert tokens_in_prompt, "В prompt.txt не нашли токенов — тест некорректен"
 
-    # Удалить первый токен из ответа
     first_token = tokens_in_prompt[0]
     llm_reply = prompt.replace(first_token, "", 1)
 
@@ -191,7 +184,6 @@ def test_missing_token_reported(tmp_path: Path, mock_keyring: bytes) -> None:
 
     assert result.restored_text is not None
     assert first_token.strip("[]") in result.tokens_missing
-    # Предупреждение есть, но не строгая ошибка
     assert any(first_token.strip("[]") in w for w in result.warnings)
 
 
@@ -213,7 +205,6 @@ def test_duplicated_token_behaviour(tmp_path: Path, mock_keyring: bytes) -> None
     assert tokens_in_prompt
 
     first_token = tokens_in_prompt[0]
-    # Добавить ещё одно вхождение
     llm_reply = prompt + f" {first_token}"
 
     result = restore_text(llm_reply, route_path, strict=True)
@@ -221,7 +212,6 @@ def test_duplicated_token_behaviour(tmp_path: Path, mock_keyring: bytes) -> None
     assert result.restored_text is not None
     token_key = first_token.strip("[]")
     assert token_key in result.tokens_duplicated
-    # Оба вхождения заменены — токен не остался в тексте
     assert first_token not in result.restored_text
 
 
@@ -237,8 +227,8 @@ def test_lenient_mode_requires_flag(tmp_path: Path, mock_keyring: bytes) -> None
     route_path = out_dir / "route.json"
     llm_reply = "Результат: [EMAIL_99] готово"
 
-    # Строгий — ошибка
-    with pytest.raises(RestoreError):
+    # Строгий — RestoreStrictError (ADR-21)
+    with pytest.raises(RestoreStrictError):
         restore_text(llm_reply, route_path)  # strict=True по умолчанию
 
     # Мягкий — успех, токен оставлен как есть
@@ -302,7 +292,7 @@ def test_accepts_format_version_1_0(tmp_path: Path, fernet_key: bytes) -> None:
     route_path = out_dir / "route.json"
     route_path.write_text(json.dumps(route_data), encoding="utf-8")
 
-    with patch("privacy_gateway.restore.get_key", return_value=key):
+    with patch("privacy_gateway.restore.get_all_keys", return_value=[key]):
         result = restore_text("Contact: [EMAIL_1]", route_path)
 
     assert result.restored_text is not None
@@ -350,23 +340,22 @@ def test_rejects_unknown_format_version(tmp_path: Path) -> None:
 def test_integrity_checked_before_decrypt(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """При ошибке целостности get_key и load_manifest не вызываются."""
+    """При ошибке целостности get_all_keys и load_manifest не вызываются."""
     key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
 
-    # Повредить манифест
     manifest_path = out_dir / "manifest.json"
     with manifest_path.open("ab") as f:
         f.write(b" ")
 
     route_path = out_dir / "route.json"
 
-    get_key_called = []
+    get_all_keys_called = []
     load_manifest_called = []
 
     with patch(
-        "privacy_gateway.restore.get_key",
-        side_effect=lambda: get_key_called.append(True) or key,
+        "privacy_gateway.restore.get_all_keys",
+        side_effect=lambda: get_all_keys_called.append(True) or [key],
     ):
         with patch(
             "privacy_gateway.restore.load_manifest",
@@ -375,8 +364,8 @@ def test_integrity_checked_before_decrypt(
             with pytest.raises(ConfigurationError):
                 restore_text("любой текст", route_path)
 
-    assert not get_key_called, (
-        "get_key не должен вызываться при ошибке целостности"
+    assert not get_all_keys_called, (
+        "get_all_keys не должен вызываться при ошибке целостности"
     )
     assert not load_manifest_called, (
         "load_manifest не должен вызываться при ошибке целостности"
@@ -427,7 +416,6 @@ def test_manifest_path_resolution(tmp_path: Path, fernet_key: bytes) -> None:
     values = [SYNTH_EMAIL]
     entries = build_manifest(records, values, key)
 
-    # Разместить route.json и manifest.json в подкаталоге
     sub = tmp_path / "subdir"
     sub.mkdir()
     manifest_path = sub / "manifest.json"
@@ -437,18 +425,17 @@ def test_manifest_path_resolution(tmp_path: Path, fernet_key: bytes) -> None:
     route_data = {
         "format_version": "1.1",
         "status": "OK",
-        "manifest_path": "manifest.json",  # относительный
+        "manifest_path": "manifest.json",
         "manifest_sha256": sha,
         "timestamp": "2026-01-01T00:00:00Z",
     }
     route_path = sub / "route.json"
     route_path.write_text(json.dumps(route_data), encoding="utf-8")
 
-    # Сменить cwd — относительный путь от cwd не должен работать
     original_cwd = Path.cwd()
     try:
         os.chdir(tmp_path)  # cwd ≠ sub
-        with patch("privacy_gateway.restore.get_key", return_value=key):
+        with patch("privacy_gateway.restore.get_all_keys", return_value=[key]):
             result = restore_text("[EMAIL_1]", route_path)
     finally:
         os.chdir(original_cwd)
@@ -471,18 +458,15 @@ def test_wrong_key_readable_error(tmp_path: Path, mock_keyring: bytes) -> None:
 
     wrong_key = generate_key()
 
-    with patch("privacy_gateway.restore.get_key", return_value=wrong_key):
+    with patch("privacy_gateway.restore.get_all_keys", return_value=[wrong_key]):
         with pytest.raises(ConfigurationError) as exc_info:
             restore_text(prompt, route_path)
 
     msg = str(exc_info.value)
-    # Читаемое сообщение
     assert msg.strip()
-    # Нет утечки значений
     assert SYNTH_EMAIL not in msg
     assert SYNTH_IP not in msg
     assert SYNTH_PHONE not in msg
-    # Нет сырых байт шифротекста в сообщении об ошибке
     manifest_raw = (out_dir / "manifest.json").read_text(encoding="utf-8")
     for fragment in json.loads(manifest_raw):
         assert fragment.get("encrypted_value", "")[:20] not in msg

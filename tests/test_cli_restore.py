@@ -41,9 +41,9 @@ def fernet_key() -> bytes:
 
 @pytest.fixture()
 def mock_keyring(fernet_key: bytes):
-    """Подменяет get_key в pipeline и restore без обращения к реальному keyring."""
+    """Подменяет get_all_keys в pipeline и restore без обращения к реальному keyring."""
     with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key):
-        with patch("privacy_gateway.restore.get_key", return_value=fernet_key):
+        with patch("privacy_gateway.restore.get_all_keys", return_value=[fernet_key]):
             yield fernet_key
 
 
@@ -78,11 +78,6 @@ def _run_cli(*args: str) -> int:
 
 # ---------------------------------------------------------------------------
 # Тест 1: test_no_output_on_failure
-#
-# При любой ошибке выходной файл полностью отсутствует —
-# ни целевой, ни временный (.pgw_restore_*).
-# Покрыты три причины отказа: неизвестный токен (строгий режим),
-# нарушение целостности манифеста, недоступный ключ.
 # ---------------------------------------------------------------------------
 
 
@@ -136,7 +131,7 @@ def test_no_output_on_failure(
     else:  # missing_key
         llm_reply_path = out_dir / "prompt.txt"
         with patch(
-            "privacy_gateway.restore.get_key",
+            "privacy_gateway.restore.get_all_keys",
             side_effect=KeyNotFoundError("no key"),
         ):
             code = _run_cli(
@@ -160,10 +155,6 @@ def test_no_output_on_failure(
 
 # ---------------------------------------------------------------------------
 # Тест 2: test_report_does_not_leak_values
-#
-# На успешном пути:
-# — восстановленный файл содержит исходные значения;
-# — stdout (отчёт pgw restore) не содержит ни одного синтетического значения.
 # ---------------------------------------------------------------------------
 
 
@@ -205,9 +196,6 @@ def test_report_does_not_leak_values(
 
 # ---------------------------------------------------------------------------
 # Тест 3: CLI успешного restore
-#
-# Через реальную точку входа CLI: код 0, файл создан,
-# содержимое совпадает с исходным текстом побайтово.
 # ---------------------------------------------------------------------------
 
 
@@ -237,10 +225,7 @@ def test_cli_restore_success(
 
 
 # ---------------------------------------------------------------------------
-# Тест 4: CLI строгого отказа
-#
-# Через CLI: неизвестный токен → ненулевой код (3),
-# выходной файл отсутствует, stderr не содержит исходных значений.
+# Тест 4: CLI строгого отказа → код 5 (ADR-21)
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +233,7 @@ def test_cli_restore_strict_failure(
     tmp_path: Path, mock_keyring: bytes, capsys: pytest.CaptureFixture
 ) -> None:
     """
-    pgw restore: неизвестный токен → ненулевой код,
+    pgw restore: неизвестный токен → код 5 (RestoreStrictError, ADR-21),
     файл отсутствует, значения не утекают.
     """
     key = mock_keyring
@@ -270,7 +255,8 @@ def test_cli_restore_strict_failure(
         "--out", str(result_path),
     )
 
-    assert code != 0, f"Ожидался ненулевой код, получен {code}"
+    # Код 5 — строгий отказ по токену (ADR-21)
+    assert code == 5, f"Ожидался код 5, получен {code}"
     assert not result_path.exists(), "При строгом отказе файл не должен создаваться"
 
     captured = capsys.readouterr()
