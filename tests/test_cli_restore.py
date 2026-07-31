@@ -107,7 +107,6 @@ def test_no_output_on_failure(
     result_dir = tmp_path
 
     if failure_mode == "unknown_token":
-        # Добавить несуществующий токен к prompt
         llm_reply_path = tmp_path / "llm_reply.txt"
         original_prompt = (out_dir / "prompt.txt").read_text(encoding="utf-8")
         llm_reply_path.write_text(
@@ -122,7 +121,6 @@ def test_no_output_on_failure(
         )
 
     elif failure_mode == "tampered_manifest":
-        # Подменить manifest.json данными от другого запуска
         out_dir2 = _prepare_artifacts(tmp_path / "out2", key)
         (out_dir / "manifest.json").write_bytes(
             (out_dir2 / "manifest.json").read_bytes()
@@ -150,12 +148,10 @@ def test_no_output_on_failure(
 
     assert code != 0, f"[{failure_mode}] ожидался ненулевой код, получен {code}"
 
-    # Целевой файл отсутствует
     assert not result_path.exists(), (
         f"[{failure_mode}] выходной файл не должен существовать: {result_path}"
     )
 
-    # Временные файлы отсутствуют
     tmp_leftovers = list(result_dir.glob(".pgw_restore_*"))
     assert not tmp_leftovers, (
         f"[{failure_mode}] найдены временные файлы: {tmp_leftovers}"
@@ -189,13 +185,11 @@ def test_report_does_not_leak_values(
 
     assert code == 0
 
-    # Восстановленный файл содержит исходные значения
     restored = result_path.read_text(encoding="utf-8")
     assert SYNTH_EMAIL in restored
     assert SYNTH_IP in restored
     assert SYNTH_PHONE in restored
 
-    # stdout/stderr отчёта НЕ содержит расшифрованных значений
     captured = capsys.readouterr()
     report_output = captured.out + captured.err
     assert SYNTH_EMAIL not in report_output, (
@@ -239,7 +233,6 @@ def test_cli_restore_success(
     assert SYNTH_EMAIL in restored
     assert SYNTH_IP in restored
     assert SYNTH_PHONE in restored
-    # побайтовое совпадение с исходным текстом
     assert restored == SYNTH_TEXT
 
 
@@ -254,7 +247,10 @@ def test_cli_restore_success(
 def test_cli_restore_strict_failure(
     tmp_path: Path, mock_keyring: bytes, capsys: pytest.CaptureFixture
 ) -> None:
-    """pgw restore: неизвестный токен → ненулевой код, файл отсутствует, значения не утекают."""
+    """
+    pgw restore: неизвестный токен → ненулевой код,
+    файл отсутствует, значения не утекают.
+    """
     key = mock_keyring
     out_dir = _prepare_artifacts(tmp_path, key)
     route_path = out_dir / "route.json"
@@ -279,9 +275,11 @@ def test_cli_restore_strict_failure(
 
     captured = capsys.readouterr()
     error_output = captured.out + captured.err
-    # Сообщение читаемое (содержит описание проблемы)
-    assert "EMAIL_99" in error_output or "токен" in error_output.lower() or "token" in error_output.lower()
-    # Значения не утекают
+    assert (
+        "EMAIL_99" in error_output
+        or "токен" in error_output.lower()
+        or "token" in error_output.lower()
+    )
     assert SYNTH_EMAIL not in error_output
     assert SYNTH_IP not in error_output
     assert SYNTH_PHONE not in error_output
