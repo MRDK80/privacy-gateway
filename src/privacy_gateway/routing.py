@@ -2,6 +2,7 @@
 
 Публичный контракт:
     load_routing_config(path: Path | None) -> RoutingConfig
+    verify_manifest_integrity(route_data: dict, manifest_path: Path) -> None  [Э7]
 
 Загрузка YAML производится ТОЛЬКО через yaml.safe_load.
 Неизвестные ключи верхнего уровня и секции rules — явная ошибка.
@@ -29,6 +30,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,6 +44,9 @@ from privacy_gateway.models import ConfigurationError, EntityType
 _ALLOWED_TOP_KEYS: frozenset[str] = frozenset({"output_dir", "overwrite", "rules"})
 # Ключи, разрешённые внутри секции rules
 _ALLOWED_RULES_KEYS: frozenset[str] = frozenset({"tokenize", "block_unconditionally"})
+
+# Известные версии формата route.json
+_KNOWN_VERSIONS: frozenset[str] = frozenset({"1.0", "1.1"})
 
 # Безопасные умолчания
 _DEFAULT_OUTPUT_DIR = "./pgw_out"
@@ -207,3 +213,77 @@ def load_routing_config(path: Path | None) -> RoutingConfig:
             )
 
     return cfg
+
+
+def verify_manifest_integrity(
+    route_data: dict,  # type: ignore[type-arg]
+    manifest_path: Path,
+) -> None:
+    """Проверить соответствие manifest.json контрольной сумме в route.json.
+
+    Функция предназначена для вызова из команды restore (Э7) перед
+    расшифровкой манифеста. Обнаруживает рассинхронизацию пары артефактов
+    (route.json и manifest.json от разных запусков prepare) и повреждение
+    файла манифеста целиком.
+
+    Поведение по версии:
+    - "1.1", поле есть, сумма совпадает  → возвращает None молча.
+    - "1.1", поле есть, сумма не совпадает → ConfigurationError.
+    - "1.1", поля manifest_sha256 нет      → ConfigurationError (ошибка формата).
+    - "1.0"                                → проверка пропускается без ошибки.
+    - Неизвестная версия                   → ConfigurationError.
+
+    Сообщения об ошибках не раскрывают содержимое манифеста.
+    Допустимо: путь, ожидаемая и фактическая суммы, версия формата.
+
+    Args:
+        route_data:    Словарь, загруженный из route.json.
+        manifest_path: Путь к файлу manifest.json на диске.
+
+    Raises:
+        ConfigurationError: Несовпадение суммы, отсутствие обязательного поля,
+                            неизвестная версия формата или отсутствие файла.
+    """
+    version = route_data.get("format_version", "")
+
+    if version not in _KNOWN_VERSIONS:
+        raise ConfigurationError(
+            f"Unknown route.json format_version: {version!r}. "
+            f"Supported versions: {sorted(_KNOWN_VERSIONS)}"
+        )
+
+    if version == "1.0":
+        # Обратная совместимость: v1.0 не содержит manifest_sha256
+        return
+
+    # version == "1.1"
+    if "manifest_sha256" not in route_data:
+        raise ConfigurationError(
+            "route.json format_version is \"1.1\" but field manifest_sha256 "
+            "is missing. The file may be malformed or truncated."
+        )
+
+    expected_hex: str = route_data["manifest_sha256"]
+
+    if not manifest_path.exists():
+        raise ConfigurationError(
+            f"manifest.json not found at path: {manifest_path}. "
+            f"The file may have been moved or deleted."
+        )
+
+    try:
+        actual_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise ConfigurationError(
+            f"Cannot read manifest file at {manifest_path}: {exc}"
+        ) from exc
+
+    actual_hex = hashlib.sha256(actual_bytes).hexdigest()
+
+    if not hmac.compare_digest(actual_hex, expected_hex):
+        raise ConfigurationError(
+            f"manifest.json integrity check failed for {manifest_path}. "
+            f"Expected SHA-256: {expected_hex}, "
+            f"actual SHA-256: {actual_hex}. "
+            f"The manifest may have been modified or replaced after prepare."
+        )

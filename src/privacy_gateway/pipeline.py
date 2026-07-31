@@ -1,4 +1,4 @@
-"""Конвейер prepare — Этап Э6.
+"""Conveyor prepare — Этап Э6.
 
 Публичный контракт:
     prepare_pipeline(text, source_ref, routing_cfg, key, out_dir, overwrite)
@@ -21,10 +21,18 @@
     При BLOCKED или PENDING ни одного файла не создаётся.
     Используется запись во временный файл с последующим rename
     для обеспечения атомарности в пределах одной файловой системы.
+
+Отклонение от хендовера (pipeline.py вместо routing.py):
+    ROUTE_FORMAT_VERSION и формирование route.json фактически
+    находятся здесь, а не в routing.py. Поэтому изменение версии и
+    порядок записи manifest_sha256 требуют правки здесь.
+    Изменения минимальны: только версия, порядок записи артефактов
+    и добавление поля manifest_sha256 в route_data.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -52,7 +60,8 @@ from privacy_gateway.tokenizer import tokenize
 from privacy_gateway.validator import validate
 
 # Версия формата route.json — Э7 читает этот файл, версия обязательна
-ROUTE_FORMAT_VERSION = "1.0"
+# Поднята до 1.1: добавлено поле manifest_sha256 (связывание route.json и manifest.json)
+ROUTE_FORMAT_VERSION = "1.1"
 
 # Права доступа к манифесту: только владелец (rw-------)
 _MANIFEST_MODE = stat.S_IRUSR | stat.S_IWUSR
@@ -135,6 +144,12 @@ def prepare_pipeline(
     Порядок: детектор → жёсткая блокировка секретов → фильтрация по routing_cfg
     → токенизатор → манифест → валидатор → запись артефактов.
 
+    Запись артефактов при OK (в порядке):
+    1. manifest.json — атомарно через save_manifest + chmod
+    2. SHA-256 читается из финального пути manifest_path
+    3. prompt.txt — атомарно
+    4. route.json с manifest_sha256 — атомарно
+
     Args:
         text:                 Входной текст.
         source_ref:           Строка-ссылка на источник.
@@ -187,8 +202,6 @@ def prepare_pipeline(
     entities = detect_entities(text, detector_cfg)
 
     # --- Жёсткая блокировка секретов (fail closed, ADR-11) ---
-    # Сущности с secret_kind != None блокируют БЕЗУСЛОВНО.
-    # Конфиг не может снять эту защиту.
     secret_entities = [e for e in entities if e.secret_kind is not None]
     if secret_entities:
         summary = [
@@ -278,26 +291,33 @@ def prepare_pipeline(
 
     timestamp = datetime.now(tz=UTC).isoformat()
 
-    route_data: dict[str, Any] = {
-        "format_version": ROUTE_FORMAT_VERSION,
-        "status": ProcessingStatus.OK.value,
-        "timestamp": timestamp,
-        "source_ref": source_ref,
-        "manifest_path": str(manifest_path),
-        "token_count": len(token_records),
-        "token_counts_by_type": token_counts,
-        "entity_count_detected": len(entities),
-        "entity_count_tokenized": len(token_records),
-    }
-    route_json = json.dumps(route_data, ensure_ascii=False, indent=2)
-
+    # Шаг 1: атомарная запись manifest.json (через save_manifest, ADR-12)
     save_manifest(manifest_entries, manifest_path)
     try:
         os.chmod(manifest_path, _MANIFEST_MODE)
     except OSError:
         pass  # Windows не поддерживает chmod
 
+    # Шаг 2: читаем SHA-256 из финального файла (после rename)
+    manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+    # Шаг 3: prompt.txt
     _write_atomic(prompt_path, tokenized_text)
+
+    # Шаг 4: route.json с manifest_sha256 (атомарно)
+    route_data: dict[str, Any] = {
+        "format_version": ROUTE_FORMAT_VERSION,
+        "status": ProcessingStatus.OK.value,
+        "timestamp": timestamp,
+        "source_ref": source_ref,
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": manifest_sha256,
+        "token_count": len(token_records),
+        "token_counts_by_type": token_counts,
+        "entity_count_detected": len(entities),
+        "entity_count_tokenized": len(token_records),
+    }
+    route_json = json.dumps(route_data, ensure_ascii=False, indent=2)
     _write_atomic(route_path, route_json)
 
     return PipelineResult(
