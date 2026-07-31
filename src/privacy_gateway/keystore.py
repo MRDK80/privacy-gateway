@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
+from typing import Protocol, cast
 
 import keyring
 
@@ -93,7 +93,7 @@ def _get_backend() -> _KeyringBackend:
             "Configure a secure system keyring (SecretService, macOS Keychain, "
             "Windows Credential Vault)."
         )
-    return backend  # type: ignore[return-value]
+    return cast(_KeyringBackend, backend)
 
 
 def _get_raw(name: str) -> str | None:
