@@ -5,19 +5,23 @@
         -> PipelineResult
 
 Порядок конвейера:
-    ввод → детектор → токенизатор → манифест → валидатор → запись артефактов
+    ввод → детектор → жёсткая блокировка секретов → фильтрация по routing_cfg
+    → токенизатор → манифест → валидатор → запись артефактов
 
-Атомарность:
-    Артефакты записываются ТОЛЬКО при статусе OK.
-    При BLOCKED или PENDING ни одного файла не создаётся.
-    Используется запись во временный файл с последующим переименованием
-    для обеспечения атомарности в пределах одной файловой системы.
-
-Безопасность:
+Безопасность (fail closed):
+    - Сущности с secret_kind != None блокируют обработку БЕЗУСЛОВНО,
+      независимо от routing_cfg.block_unconditionally.
+      Конфиг не может снять эту защиту (ADR-11).
     - prompt.txt не содержит исходных значений
     - route.json содержит только метаданные и счётчики — никаких
       исходных значений, ключа, соли, расшифрованных фрагментов
     - манифест зашифрован ключом из keyring
+
+Атомарность:
+    Артефакты записываются ТОЛЬКО при статусе OK.
+    При BLOCKED или PENDING ни одного файла не создаётся.
+    Используется запись во временный файл с последующим rename
+    для обеспечения атомарности в пределах одной файловой системы.
 """
 
 from __future__ import annotations
@@ -36,7 +40,6 @@ from privacy_gateway.keystore import get_key  # top-level import — required fo
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
-    EntityType,
     ProcessingStatus,
 )
 from privacy_gateway.routing import RoutingConfig
@@ -122,7 +125,8 @@ def prepare_pipeline(
 ) -> PipelineResult:
     """Выполнить полный конвейер подготовки текста.
 
-    Порядок: детектор → токенизатор → манифест → валидатор → запись артефактов.
+    Порядок: детектор → жёсткая блокировка секретов → фильтрация по routing_cfg
+    → токенизатор → манифест → валидатор → запись артефактов.
 
     Args:
         text:                 Входной текст.
@@ -175,14 +179,30 @@ def prepare_pipeline(
     # --- Детектор ---
     entities = detect_entities(text, detector_cfg)
 
-    # --- Фильтрация по routing_cfg (только разрешённые типы токенизировать) ---
-    allowed_types = frozenset(routing_cfg.tokenize_types)
-    blocked_types = frozenset(routing_cfg.block_unconditionally)
+    # --- Жёсткая блокировка секретов (fail closed, ADR-11) ---
+    # Сущности с secret_kind != None блокируют БЕЗУСЛОВНО,
+    # независимо от routing_cfg.block_unconditionally.
+    # Конфиг не может снять эту защиту.
+    secret_entities = [e for e in entities if e.secret_kind is not None]
+    if secret_entities:
+        summary = [
+            {"type": e.entity_type.value, "secret_kind": e.secret_kind, "start": e.start}
+            for e in secret_entities
+        ]
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message=(
+                f"Found {len(secret_entities)} secret(s) in input. "
+                "Processing aborted (fail closed)."
+            ),
+            findings_summary=summary,
+        )
 
-    # Проверка безусловно-блокирующих типов
-    found_blocked = [
-        e for e in entities if e.entity_type.value in blocked_types
-    ]
+    # --- Блокировка по routing_cfg.block_unconditionally ---
+    blocked_types = frozenset(routing_cfg.block_unconditionally)
+    allowed_types = frozenset(routing_cfg.tokenize_types)
+
+    found_blocked = [e for e in entities if e.entity_type.value in blocked_types]
     if found_blocked:
         summary = [
             {"type": e.entity_type.value, "start": e.start}
@@ -192,17 +212,16 @@ def prepare_pipeline(
             status=ProcessingStatus.BLOCKED,
             message=(
                 f"Found {len(found_blocked)} entity(ies) of unconditionally "
-                f"blocked type(s). Processing aborted."
+                "blocked type(s). Processing aborted."
             ),
             findings_summary=summary,
         )
 
-    # Оставить только разрешённые для токенизации
+    # --- Фильтрация: только разрешённые типы ---
     entities_to_tokenize = [
         e for e in entities if e.entity_type.value in allowed_types
     ]
 
-    # Исходные значения для манифеста
     original_values = [text[e.start:e.end] for e in entities_to_tokenize]
 
     # --- Токенизатор ---
@@ -210,20 +229,17 @@ def prepare_pipeline(
         text, entities_to_tokenize, original_values
     )
 
-    # --- Манифест (строим до валидатора — нужен для записи при OK) ---
+    # --- Манифест ---
     fp_to_value: dict[str, str] = {
         e.fingerprint: text[e.start:e.end]
         for e in entities_to_tokenize
     }
-    manifest_values = [
-        fp_to_value.get(r.fingerprint, "") for r in token_records
-    ]
+    manifest_values = [fp_to_value.get(r.fingerprint, "") for r in token_records]
     manifest_entries = build_manifest(token_records, manifest_values, key)
 
-    # --- Валидатор (второй рубеж, после токенизатора) ---
+    # --- Валидатор ---
     validation = validate(tokenized_text)
 
-    # Статистика токенов по типам
     token_counts: dict[str, int] = {}
     for r in token_records:
         token_counts[r.entity_type.value] = (
@@ -236,8 +252,7 @@ def prepare_pipeline(
         if validation.findings:
             rules_hit = sorted({f.rule for f in validation.findings})
             msg = (
-                f"Validation {status_word}: rules triggered: "
-                f"{rules_hit}. "
+                f"Validation {status_word}: rules triggered: {rules_hit}. "
                 "Check type and position in findings_summary "
                 "(no original values disclosed)."
             )
@@ -267,12 +282,11 @@ def prepare_pipeline(
     }
     route_json = json.dumps(route_data, ensure_ascii=False, indent=2)
 
-    # Запись манифеста с ограниченными правами
     save_manifest(manifest_entries, manifest_path)
     try:
         os.chmod(manifest_path, _MANIFEST_MODE)
     except OSError:
-        pass  # Windows не поддерживает chmod — игнорируем
+        pass  # Windows не поддерживает chmod
 
     _write_atomic(prompt_path, tokenized_text)
     _write_atomic(route_path, route_json)
