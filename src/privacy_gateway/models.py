@@ -274,3 +274,16 @@ class EncodingError(InputError):
 
 class ConfigurationError(Exception):
     """Ошибка загрузки или валидации конфигурации."""
+
+
+class RestoreStrictError(Exception):
+    """Строгий отказ restore по неизвестному или искажённому токену (ADR-21).
+
+    Отличие от RestoreError (ошибка конфигурации / целостности):
+    RestoreStrictError означает, что структура артефактов корректна,
+    но LLM вернула токен, которого нет в манифесте, либо токен искажён.
+    Это другой класс проблем — реакция оператора иная:
+      - RestoreError (код 3): проверить пару артефактов route/manifest.
+      - RestoreStrictError (код 5): проверить ответ LLM, возможно повторить запрос.
+    Зафиксировано в ADR-21.
+    """
