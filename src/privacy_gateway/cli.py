@@ -309,7 +309,10 @@ def _cmd_restore(args: argparse.Namespace) -> int:
 
     # Отчёт о восстановлении (только счётчики, без значений)
     report_lines = [
-        f"Восстановлено: {result.tokens_found_count}/{result.tokens_expected_count} токенов",
+        (
+            f"Восстановлено: {result.tokens_found_count}/"
+            f"{result.tokens_expected_count} токенов"
+        ),
     ]
     if result.tokens_missing_count:
         report_lines.append(
