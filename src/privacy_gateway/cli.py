@@ -4,7 +4,7 @@
     python -m privacy_gateway <command> [options]
 
 Команды:
-    detect   Диагностика сущностей (без шифрования)
+    detect   Диагностика сущноႉтей (без шифрования)
     prepare  Подготовка текста: детекция, токенизация, шифрование (Э6)
     restore  Восстановление ответа (заглушка, реализация в Э7)
 
@@ -34,7 +34,6 @@ from privacy_gateway.models import (
 from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
-# Дефолтный путь к конфигу детектора
 _DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
 
 
@@ -108,13 +107,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         default=False,
-        help="Перезаписывать существующие артефакты.",
+        help="Перезаписывать сущеႉтвующие артефакты.",
     )
 
     # --- restore ---
     sub.add_parser(
         "restore",
-        help="Восстановление исходных значений (заглушка, реализация в Э7).",
+        help="Восႉтановление исходных значений (заглушка, реализация в Э7).",
     )
 
     return parser
@@ -134,11 +133,12 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     """Обработка команды detect."""
     from privacy_gateway.detector import detect_entities, load_config
 
-    read_kwargs: dict[str, str] = (
-        {"encoding": args.encoding} if args.encoding else {}
-    )
     try:
-        input_text = read_input(args.file, **read_kwargs)
+        input_text = (
+            read_input(args.file, encoding=args.encoding)
+            if args.encoding
+            else read_input(args.file)
+        )
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
@@ -147,7 +147,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     try:
         cfg = load_config(config_path)
     except ConfigurationError as exc:
-        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
+        print(f"Ошибка конфигуႈации: {exc}", file=sys.stderr)
         return 3
 
     entities = detect_entities(input_text.text, cfg)
@@ -163,12 +163,13 @@ def _cmd_detect(args: argparse.Namespace) -> int:
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:
-    """Обработка команды prepare."""
-    read_kwargs: dict[str, str] = (
-        {"encoding": args.encoding} if args.encoding else {}
-    )
+    """Обႈаботка команды prepare."""
     try:
-        input_text = read_input(args.file, **read_kwargs)
+        input_text = (
+            read_input(args.file, encoding=args.encoding)
+            if args.encoding
+            else read_input(args.file)
+        )
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
