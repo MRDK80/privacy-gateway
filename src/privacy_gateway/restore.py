@@ -1,4 +1,4 @@
-"""Модуль восстановления — Этап Э7.
+"""Модуль восстановления — Этап Э7 / Э8.
 
 Публичный контракт:
     restore_text(
@@ -12,14 +12,14 @@
     1. Прочитать и разобрать route.json, проверить поддерживаемую версию.
     2. Разрешить manifest_path относительно каталога route.json (ADR-15).
     3. Вызвать verify_manifest_integrity — до загрузки, расшифровки, обработки.
-    4. Загрузить манифест, получить ключ из keyring, расшифровать записи.
+    4. Загрузить манифест, получить ключи из keyring, расшифровать записи.
     5. Классифицировать токены в ответе LLM, применить подстановку.
     6. Атомарно записать результат (ADR-12).
 
 Классификация токенов:
     - Известный       — подставить значение во все вхождения.
-    - Неизвестный     — строгий режим: ошибка; мягкий: предупреждение + плейсхолдер.
-    - Искажённый      — строгий режим: ошибка; мягкий: предупреждение + плейсхолдер.
+    - Неизвестный     — строгий режим: RestoreStrictError (5); мягкий: предупреждение.
+    - Искажённый      — строгий режим: RestoreStrictError (5); мягкий: предупреждение.
     - Пропавший       — всегда предупреждение, не ошибка (ADR-17).
     - Дублированный   — подстановка во все вхождения, счётчик в отчёт (ADR-18).
 
@@ -27,10 +27,11 @@
 
 ADR-15: manifest_path разрешается относительно каталога route.json.
 ADR-16: Строгий режим по умолчанию; мягкий — только по явному флагу --lenient.
-Кандидаты классифицируются по пяти категориям.
 ADR-17: Пропавший токен — предупреждение, не ошибка.
 ADR-18: Дублированный токен — подстановка во все вхождения.
 ADR-19: Чувствительность к регистру — токены регистрозависимы ([EMAIL_1] ≠ [email_1]).
+ADR-21: Разведение кодов 3 и 5 — строгий токенный отказ → RestoreStrictError (5).
+ADR-23: MultiFernet обеспечивает чтение манифестов, созданных до ротации.
 """
 
 from __future__ import annotations
@@ -42,10 +43,10 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from privacy_gateway.crypto import DecryptionError
-from privacy_gateway.keystore import KeyNotFoundError, KeystoreError, get_key
-from privacy_gateway.manifest import decrypt_manifest_entry, load_manifest
-from privacy_gateway.models import ConfigurationError, ManifestEntry
+from privacy_gateway.crypto import DecryptionError, decrypt_multi
+from privacy_gateway.keystore import KeyNotFoundError, KeystoreError, get_all_keys
+from privacy_gateway.manifest import load_manifest
+from privacy_gateway.models import ConfigurationError, ManifestEntry, RestoreStrictError
 from privacy_gateway.routing import verify_manifest_integrity
 
 # Регулярное выражение для поиска кандидатов на токены (включая искажённые).
@@ -105,7 +106,7 @@ class RestoreResult:
 
 
 class RestoreError(Exception):
-    """Ошибка восстановления: неизвестный/искажённый токен в строгом режиме."""
+    """Ошибка восстановления: ошибка конфигурации / целостности → код 3 (ADR-21)."""
 
 
 def _resolve_manifest_path(
@@ -197,7 +198,6 @@ def _substitute(
     Обрабатывает дубли — все вхождения заменяются.
     Работает справа налево, чтобы не сдвигать позиции.
     """
-    # Плоский список (start, end, token), сортировка по убыванию start
     spans: list[tuple[int, int, str]] = []
     for token, positions in known.items():
         for start, end in positions:
@@ -221,6 +221,9 @@ def restore_text(
     Порядок проверок строго соблюдается (ADR-14, ADR-15):
     verify_manifest_integrity вызывается до любой работы с манифестом.
 
+    Расшифровка через MultiFernet (ADR-23): манифесты, созданные до
+    ротации ключа, остаются читаемы без ручных действий.
+
     Args:
         llm_response:           Текст ответа LLM.
         route_path:             Путь к route.json.
@@ -231,9 +234,10 @@ def restore_text(
         RestoreResult. При строгом отказе restored_text is None.
 
     Raises:
-        ConfigurationError: Ошибка формата route.json или нарушение целостности.
-        KeystoreError:      Ключ не найден или backend небезопасен.
-        RestoreError:       Неизвестный/искажённый токен в строгом режиме.
+        ConfigurationError:  Ошибка формата route.json или нарушение целостности.
+        KeystoreError:       Ключ не найден или backend небезопасен.
+        RestoreError:        Ошибка конфигурации/целостности → код 3.
+        RestoreStrictError:  Строгий отказ по неизвестному/искажённому токену → код 5.
     """
     result = RestoreResult(strict=strict)
 
@@ -260,9 +264,9 @@ def restore_text(
     # --- 3. verify_manifest_integrity — ДО любой загрузки/расшифровки ---
     verify_manifest_integrity(route_data, manifest_path)
 
-    # --- 4. Получить ключ, загрузить и расшифровать манифест ---
+    # --- 4. Получить все ключи, загрузить и расшифровать манифест ---
     try:
-        key = get_key()
+        keys = get_all_keys()
     except KeyNotFoundError as exc:
         raise KeystoreError(
             f"Ключ Fernet не найден в keyring. "
@@ -270,20 +274,26 @@ def restore_text(
         ) from exc
 
     try:
-        entries: list[ManifestEntry] = load_manifest(manifest_path, key)
+        entries: list[ManifestEntry] = load_manifest(manifest_path, keys[0])
     except DecryptionError as exc:
         raise ConfigurationError(
-            f"Не удалось расшифровать манифест {manifest_path}. "
+            f"Не удалось загрузить манифест {manifest_path}. "
             f"Возможно, манифест зашифрован другим ключом или повреждён. "
             f"Детали: {exc}"
         ) from exc
 
-    # Построить словарь token -> plaintext_value
+    # Построить словарь token -> plaintext через MultiFernet (ADR-23)
     value_map: dict[str, str] = {}
     for entry in entries:
         token_key = entry.token.strip("[]")
-        value_map[token_key] = decrypt_manifest_entry(entry, key)
-        
+        try:
+            value_map[token_key] = decrypt_multi(entry.encrypted_value, keys)
+        except DecryptionError as exc:
+            raise ConfigurationError(
+                f"Не удалось расшифровать запись манифеста для токена {entry.token!r}. "
+                f"Детали: {exc}"
+            ) from exc
+
     manifest_tokens = set(value_map.keys())
     result.tokens_expected = set(manifest_tokens)
 
@@ -304,18 +314,14 @@ def restore_text(
     for token in sorted(result.tokens_missing):
         result.warnings.append(f"Токен отсутствует в ответе LLM: {token}")
 
-    # Строгий режим: неизвестные и искажённые — ошибка
+    # Строгий режим: неизвестные и искажённые — RestoreStrictError (код 5, ADR-21)
     if strict and (unknown or malformed):
         issues: list[str] = []
         if unknown:
-            issues.append(
-                f"Неизвестные токены: {sorted(unknown)}"
-            )
+            issues.append(f"Неизвестные токены: {sorted(unknown)}")
         if malformed:
-            issues.append(
-                f"Искажённые кандидаты на токены: {malformed}"
-            )
-        raise RestoreError(
+            issues.append(f"Искажённые кандидаты на токены: {malformed}")
+        raise RestoreStrictError(
             "Строгий режим: в ответе LLM обнаружены недопустимые токены. "
             + "; ".join(issues)
         )
@@ -350,7 +356,7 @@ def write_restored(
         overwrite: Перезаписывать ли существующий файл.
 
     Raises:
-        FileExistsError:  Файл уже существует и overwrite=False.
+        FileExistsError:    Файл уже существует и overwrite=False.
         ConfigurationError: Ошибка записи.
     """
     if out_path.exists() and not overwrite:
