@@ -1,4 +1,4 @@
-"""Базовые smoke-тесты CLI Privacy Gateway — Этап Э1."""
+"""Базовые smoke-тесты CLI Privacy Gateway — Этапы Э1/Э6."""
 
 from __future__ import annotations
 
@@ -41,23 +41,25 @@ def test_help_contains_product_name() -> None:
 
 
 def test_prepare_subcommand_visible_in_help() -> None:
-    """Команда 'prepare' должна быть видна в общем help как будущая команда."""
+    """Команда 'prepare' должна быть видна в общем help."""
     result = _run("--help")
     assert "prepare" in result.stdout
 
 
-def test_prepare_returns_nonzero_in_e1() -> None:
-    """Вызов 'prepare' на этапе Э1 должен завершаться с ненулевым кодом."""
+def test_prepare_without_args_returns_nonzero() -> None:
+    """Вызов 'prepare' без аргументов завершается с ненулевым кодом (Э6+)."""
     result = _run("prepare")
     assert result.returncode != 0
-    assert "Э1" in result.stderr
+    # Э6: argparse требует ФАЙЛ — ошибка в stderr
+    assert "ФАЙЛ" in result.stderr or "required" in result.stderr
 
 
-def test_restore_returns_nonzero_in_e1() -> None:
-    """Вызов 'restore' на этапе Э1 должен завершаться с ненулевым кодом."""
+def test_restore_returns_nonzero() -> None:
+    """Вызов 'restore' завершается с ненулевым кодом (заглушка Э7+)."""
     result = _run("restore")
     assert result.returncode != 0
-    assert "Э1" in result.stderr
+    # Э6: сообщение о недоступности restore
+    assert "restore" in result.stderr.lower() or "Э7" in result.stderr
 
 
 @pytest.mark.parametrize("subcommand", ["prepare", "restore"])

@@ -5,6 +5,55 @@
 
 ## [Unreleased]
 
+## [0.2.0] — Этап Э6
+
+### Добавлено (Э6 — YAML-маршрутизация и конвейер prepare)
+
+- `routing.py` — загрузка и валидация YAML-конфига маршрутизации:
+  - `load_routing_config(path: Path | None) -> RoutingConfig`
+  - Загрузка только через `yaml.safe_load` (защита от deserialization-атак)
+  - Явная ошибка при неизвестных ключах верхнего уровня и в секции `rules`
+  - Явная ошибка при конфликте `tokenize` / `block_unconditionally`
+  - Безопасные умолчания при отсутствии файла (не ошибка)
+
+- `pipeline.py` — сквозной конвейер подготовки текста:
+  - `prepare_pipeline(text, source_ref, routing_cfg, key, out_dir, overwrite) -> PipelineResult`
+  - Порядок: детектор → фильтрация по RoutingConfig → токенизатор → манифест → валидатор → запись артефактов
+  - Атомарная запись `prompt.txt` и `route.json` через временный файл + `rename`
+  - Артефакты создаются **только** при статусе OK
+  - `route.json` содержит `format_version: "1.0"` для Э7
+  - `manifest.json` создаётся с правами `rw-------`
+  - `PipelineResult` — публичный контракт результата конвейера
+
+- `cli.py` — полная реализация команды `pgw prepare`:
+  - Флаги: `--out`, `--routing`, `--config`, `--encoding`, `--overwrite`
+  - Коды завершения: 0=OK, 2=PENDING, 3=BLOCKED/config, 4=keystore, 1=unexpected
+  - Сообщения об ошибках без исходных значений
+
+- `tests/test_routing.py` — тесты YAML-маршрутизации:
+  - Защита от YAML-инъекции (`!!python/object/apply`)
+  - Неизвестные ключи верхнего уровня и в rules
+  - Конфликт tokenize/block_unconditionally
+  - Битый YAML, отсутствующий файл, None-путь
+  - Валидный конфиг, невалидный тип сущности
+
+- `tests/test_cli_prepare.py` — сквозные тесты команды prepare:
+  - Создание артефактов при OK
+  - `prompt.txt` не содержит исходных значений
+  - `route.json` не содержит чувствительных данных, содержит `format_version`
+  - `manifest.json` создан и зашифрован
+  - Режим stdin (`source_ref="stdin"`)
+  - BLOCKED: ненулевой код, файлы не созданы, сообщение без утечки значений
+  - PENDING: код отличается от BLOCKED
+  - Пустой ввод, защита от перезаписи без `--overwrite`
+  - Понятное сообщение при `KeyNotFoundError`
+
+### Обновлено (Э6)
+- `docs/ARCHITECTURE.md` — добавлены `routing.py`, `pipeline.py`, форматы артефактов, атомарность записи
+- `docs/DECISIONS.md` — добавлены ADR-10 (safe_load), ADR-11 (fail closed конфиг), ADR-12 (атомарность), ADR-13 (format_version)
+- `docs/SECURITY.md` — добавлены разделы по безопасности YAML-конфига и содержимому route.json
+- `README.md` — статус Э6 обновлён, добавлен раздел по команде prepare
+
 ## [0.1.0] — Этапы Э1–Э5
 
 ### Добавлено (Э1 — каркас)
@@ -54,4 +103,5 @@
 - Семантика `PENDING` задокументирована в `models.py` и `validator.py`
 - `ProcessingStatus` в `models.py` расширен docstring'ом с полной семантикой
 
+[0.2.0]: https://github.com/MRDK80/privacy-gateway/compare/v0.1.0...feat/e6-routing
 [0.1.0]: https://github.com/MRDK80/privacy-gateway/commits/main
