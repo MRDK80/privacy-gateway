@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -110,7 +109,6 @@ def test_route_json_has_no_sensitive_data(tmp_path, mock_keyring):
     raw = (out_dir / "route.json").read_bytes()
     assert SYNTH_EMAIL.encode() not in raw
     assert SYNTH_IP.encode() not in raw
-    # ключ не должен появляться в route.json
     assert key not in raw
 
 
@@ -134,13 +132,12 @@ def test_manifest_created_and_encrypted(tmp_path, mock_keyring):
     entries = json.loads(manifest_path.read_text(encoding="utf-8"))
     for entry in entries:
         assert "encrypted_value" in entry
-        # encrypted_value — hex, не открытый текст
         assert SYNTH_EMAIL not in entry["encrypted_value"]
         assert SYNTH_IP not in entry["encrypted_value"]
 
 
 def test_prepare_from_stdin(tmp_path, mock_keyring):
-    """Проверяем pipeline напрямую с source_ref=stdin (имитация stdin)."""
+    """Проверяем pipeline напрямую с source_ref=stdin."""
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.routing import load_routing_config
 
@@ -172,7 +169,7 @@ def test_blocked_returns_nonzero(tmp_path, mock_keyring):
 
 
 def test_pending_returns_distinct_code(tmp_path, mock_keyring):
-    """PENDING возвращает код, отличный от BLOCKED."""
+    """APENDING возвращает код, отличный от BLOCKED."""
     from privacy_gateway.models import ProcessingStatus
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.routing import load_routing_config
@@ -216,12 +213,9 @@ def test_no_artifacts_on_blocked(tmp_path, mock_keyring):
     blocked_text = SYNTH_SECRET_KW + "\n"
     code, out_dir = _run_prepare(tmp_path, blocked_text, key)
     assert code != 0
-    prompt = out_dir / "prompt.txt"
-    route = out_dir / "route.json"
-    manifest = out_dir / "manifest.json"
-    assert not prompt.exists()
-    assert not route.exists()
-    assert not manifest.exists()
+    assert not (out_dir / "prompt.txt").exists()
+    assert not (out_dir / "route.json").exists()
+    assert not (out_dir / "manifest.json").exists()
 
 
 def test_error_message_does_not_leak_value(tmp_path, mock_keyring):
@@ -239,7 +233,6 @@ def test_error_message_does_not_leak_value(tmp_path, mock_keyring):
         key=key,
         out_dir=out_dir,
     )
-    # hunter2hunter2 не должен появляться в message
     assert "hunter2" not in result.message  # pragma: allowlist secret
     assert SYNTH_EMAIL not in result.message
 
@@ -277,27 +270,22 @@ def test_existing_output_not_overwritten(tmp_path, mock_keyring):
     )
     from privacy_gateway.models import ProcessingStatus
     assert result.status != ProcessingStatus.OK
-    # Файл не должен быть перезаписан
     assert existing.read_text(encoding="utf-8") == "original"
 
 
 def test_missing_keyring_key_message(tmp_path):
     """При отсутствии ключа — понятное сообщение, не трассировка."""
     from privacy_gateway.keystore import KeyNotFoundError
-    from privacy_gateway.pipeline import prepare_pipeline
-    from privacy_gateway.routing import load_routing_config
-
-    out_dir = tmp_path / "out_nokey"
-    cfg = load_routing_config(None)
 
     with patch(
         "privacy_gateway.pipeline.get_key",
-        side_effect=KeyNotFoundError("No key found. Run 'pgw key create' first."),
+        side_effect=KeyNotFoundError(
+            "No key found. Run 'pgw key create' first."
+        ),
     ):
-        # pipeline не вызывает get_key сам — ключ передаётся снаружи
-        # Проверяем через CLI-уровень
+        # pipeline не вызывает get_key сам — ключ передаётся снаружи.
+        # Проверяем, что исключение содержит понятное сообщение.
         pass
 
-    # Проверяем, что KeyNotFoundError содержит понятное сообщение
     exc = KeyNotFoundError("No key found. Run 'pgw key create' first.")
     assert "pgw key create" in str(exc)

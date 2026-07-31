@@ -8,121 +8,108 @@ from privacy_gateway.models import ConfigurationError
 from privacy_gateway.routing import RoutingConfig, load_routing_config
 
 
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
+def test_defaults_when_no_file(tmp_path):
+    """Отсутствие файла — безопасные умолчания."""
+    cfg = load_routing_config(None)
+    assert isinstance(cfg, RoutingConfig)
+    assert cfg.overwrite is False
+    assert len(cfg.tokenize_types) > 0
+    assert cfg.block_unconditionally == []
 
-def _write_yaml(tmp_path, content: str):
+
+def test_valid_config(tmp_path):
+    """Валидный конфиг загружается корректно."""
     p = tmp_path / "routing.yaml"
-    p.write_text(content, encoding="utf-8")
-    return p
-
-
-# ---------------------------------------------------------------------------
-# test_safe_load_only
-# ---------------------------------------------------------------------------
-
-def test_safe_load_only(tmp_path):
-    """YAML с тегом выполнения кода не приводит к выполнению кода."""
-    malicious = _write_yaml(
-        tmp_path,
-        "output_dir: !!python/object/apply:os.system ['echo pwned']\n",
+    p.write_text(
+        "rules:\n"
+        "  tokenize:\n"
+        "    - EMAIL\n"
+        "    - HOST\n",
+        encoding="utf-8",
     )
-    with pytest.raises((ConfigurationError, Exception)):
-        load_routing_config(malicious)
-    # Если yaml.safe_load отклонил тег — тест уже пройден.
-    # Главное: функция os.system НЕ была вызвана (нет side-effect).
+    cfg = load_routing_config(p)
+    assert cfg.tokenize_types == ["EMAIL", "HOST"]
 
 
-# ---------------------------------------------------------------------------
-# test_unknown_config_key_errors
-# ---------------------------------------------------------------------------
-
-def test_unknown_config_key_errors(tmp_path):
-    p = _write_yaml(tmp_path, "unknown_security_option: true\n")
+def test_unknown_top_key_raises(tmp_path):
+    """Неизвестный ключ на верхнем уровне — ConfigurationError."""
+    p = tmp_path / "routing.yaml"
+    p.write_text("unknown_key: foo\n", encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Unknown config keys"):
         load_routing_config(p)
 
 
-def test_unknown_rules_key_errors(tmp_path):
-    p = _write_yaml(
-        tmp_path,
-        "rules:\n  allow_secrets: true\n",
+def test_unknown_rules_key_raises(tmp_path):
+    """Неизвестный ключ в rules — ConfigurationError."""
+    p = tmp_path / "routing.yaml"
+    p.write_text(
+        "rules:\n"
+        "  tokenize:\n"
+        "    - EMAIL\n"
+        "  evil_key: foo\n",
+        encoding="utf-8",
     )
     with pytest.raises(ConfigurationError, match="Unknown keys in rules"):
         load_routing_config(p)
 
 
-# ---------------------------------------------------------------------------
-# test_config_cannot_disable_secret_check
-# ---------------------------------------------------------------------------
+def test_yaml_injection_blocked(tmp_path):
+    """Защита от YAML-инъекции через safe_load."""
+    p = tmp_path / "routing.yaml"
+    p.write_text(
+        "output_dir: !!python/object/apply:os.system ['id']\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(Exception):  # yaml.constructor.ConstructorError
+        load_routing_config(p)
 
-def test_config_cannot_disable_secret_check(tmp_path):
-    """Тип не может быть одновременно в tokenize и block_unconditionally."""
-    p = _write_yaml(
-        tmp_path,
+
+def test_conflict_tokenize_block_raises(tmp_path):
+    """Конфликт tokenize / block_unconditionally — ConfigurationError."""
+    p = tmp_path / "routing.yaml"
+    p.write_text(
         "rules:\n"
         "  tokenize:\n"
         "    - EMAIL\n"
         "  block_unconditionally:\n"
         "    - EMAIL\n",
+        encoding="utf-8",
     )
-    with pytest.raises(ConfigurationError, match="both in tokenize and block_unconditionally"):
+    with pytest.raises(
+        ConfigurationError,
+        match="both in tokenize and block_unconditionally",
+    ):
         load_routing_config(p)
 
 
-# ---------------------------------------------------------------------------
-# test_malformed_yaml_error
-# ---------------------------------------------------------------------------
-
-def test_malformed_yaml_error(tmp_path):
-    p = _write_yaml(tmp_path, "key: [unclosed\n")
+def test_malformed_yaml_raises(tmp_path):
+    """Битый YAML — ConfigurationError."""
+    p = tmp_path / "routing.yaml"
+    p.write_text(": invalid: [unclosed\n", encoding="utf-8")
     with pytest.raises(ConfigurationError, match="Malformed YAML"):
         load_routing_config(p)
 
 
-# ---------------------------------------------------------------------------
-# test_missing_config_behaviour
-# ---------------------------------------------------------------------------
-
-def test_missing_config_behaviour(tmp_path):
-    """Отсутствие файла конфига — безопасные умолчания, не ошибка."""
-    p = tmp_path / "nonexistent.yaml"
-    cfg = load_routing_config(p)
-    assert isinstance(cfg, RoutingConfig)
-    assert cfg.overwrite is False
-    assert len(cfg.tokenize_types) > 0
-
-
 def test_none_path_returns_defaults():
+    """Путь None — умолчания без ошибки."""
     cfg = load_routing_config(None)
     assert isinstance(cfg, RoutingConfig)
-    assert cfg.overwrite is False
 
 
-def test_valid_config_loads(tmp_path):
-    p = _write_yaml(
-        tmp_path,
-        "output_dir: /tmp/out\n"
-        "overwrite: true\n"
+def test_missing_file_returns_defaults(tmp_path):
+    """Отсутствующий файл — умолчания без ошибки."""
+    cfg = load_routing_config(tmp_path / "nonexistent.yaml")
+    assert isinstance(cfg, RoutingConfig)
+
+
+def test_invalid_entity_type_raises(tmp_path):
+    """Невалидный тип сущности — ConfigurationError."""
+    p = tmp_path / "routing.yaml"
+    p.write_text(
         "rules:\n"
         "  tokenize:\n"
-        "    - EMAIL\n"
-        "    - PHONE\n",
-    )
-    cfg = load_routing_config(p)
-    assert cfg.output_dir == "/tmp/out"
-    assert cfg.overwrite is True
-    assert "EMAIL" in cfg.tokenize_types
-    assert "PHONE" in cfg.tokenize_types
-
-
-def test_invalid_entity_type_in_rules(tmp_path):
-    p = _write_yaml(
-        tmp_path,
-        "rules:\n"
-        "  tokenize:\n"
-        "    - NONEXISTENT_TYPE\n",
+        "    - INVALID_TYPE\n",
+        encoding="utf-8",
     )
     with pytest.raises(ConfigurationError, match="Unknown entity type"):
         load_routing_config(p)

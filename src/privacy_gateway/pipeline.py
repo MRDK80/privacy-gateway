@@ -13,8 +13,7 @@
       независимо от routing_cfg.block_unconditionally.
       Конфиг не может снять эту защиту (ADR-11).
     - prompt.txt не содержит исходных значений
-    - route.json содержит только метаданные и счётчики — никаких
-      исходных значений, ключа, соли, расшифрованных фрагментов
+    - route.json содержит только метаданные и счётчики
     - манифест зашифрован ключом из keyring
 
 Атомарность:
@@ -31,12 +30,16 @@ import os
 import stat
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from privacy_gateway.detector import DetectorConfig, detect_entities, load_config
-from privacy_gateway.keystore import get_key  # top-level import — required for patch()
+from privacy_gateway.detector import (
+    DetectorConfig,
+    detect_entities,
+    load_config,
+)
+from privacy_gateway.keystore import get_key as get_key  # noqa: F401 — needed for patch()
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
@@ -86,7 +89,9 @@ def _safe_findings_summary(findings: list[Any]) -> list[dict[str, Any]]:
     ]
 
 
-def _write_atomic(path: Path, content: str | bytes, mode: int | None = None) -> None:
+def _write_atomic(
+    path: Path, content: str | bytes, mode: int | None = None
+) -> None:
     """Записать файл атомарно через временный файл в той же директории."""
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -130,19 +135,19 @@ def prepare_pipeline(
 
     Args:
         text:                 Входной текст.
-        source_ref:           Строка-ссылка на источник (имя файла или 'stdin').
+        source_ref:           Строка-ссылка на источник.
         routing_cfg:          Конфигурация маршрутизации.
-        key:                  Fernet-ключ для манифеста.
+        key:                  Fernet-ключ.
         out_dir:              Каталог для артефактов.
-        overwrite:            Разрешить перезапись существующих файлов.
-        entities_config_path: Путь к конфигу детектора (или None = умолчания).
+        overwrite:            Разрешить перезапись.
+        entities_config_path: Путь к конфигу детектора.
 
     Returns:
-        PipelineResult с итоговым статусом и путями артефактов (при OK).
+        PipelineResult с итоговым статусом.
 
     Raises:
-        ConfigurationError: Ошибка конфигурации детектора.
-        OSError:            Ошибка записи файлов.
+        ConfigurationError: Ошибка конфигурации.
+        OSError:            Ошибка записи.
     """
     # --- Пустой ввод ---
     if not text.strip():
@@ -151,7 +156,7 @@ def prepare_pipeline(
             message="Input text is empty or contains only whitespace.",
         )
 
-    # --- Проверка существующих артефактов (до обработки) ---
+    # --- Проверка существующих артефактов ---
     prompt_path = out_dir / "prompt.txt"
     route_path = out_dir / "route.json"
     manifest_path = out_dir / "manifest.json"
@@ -180,13 +185,16 @@ def prepare_pipeline(
     entities = detect_entities(text, detector_cfg)
 
     # --- Жёсткая блокировка секретов (fail closed, ADR-11) ---
-    # Сущности с secret_kind != None блокируют БЕЗУСЛОВНО,
-    # независимо от routing_cfg.block_unconditionally.
+    # Сущности с secret_kind != None блокируют БЕЗУСЛОВНО.
     # Конфиг не может снять эту защиту.
     secret_entities = [e for e in entities if e.secret_kind is not None]
     if secret_entities:
         summary = [
-            {"type": e.entity_type.value, "secret_kind": e.secret_kind, "start": e.start}
+            {
+                "type": e.entity_type.value,
+                "secret_kind": e.secret_kind,
+                "start": e.start,
+            }
             for e in secret_entities
         ]
         return PipelineResult(
@@ -231,8 +239,7 @@ def prepare_pipeline(
 
     # --- Манифест ---
     fp_to_value: dict[str, str] = {
-        e.fingerprint: text[e.start:e.end]
-        for e in entities_to_tokenize
+        e.fingerprint: text[e.start:e.end] for e in entities_to_tokenize
     }
     manifest_values = [fp_to_value.get(r.fingerprint, "") for r in token_records]
     manifest_entries = build_manifest(token_records, manifest_values, key)
@@ -267,7 +274,7 @@ def prepare_pipeline(
     # --- Запись артефактов (только при OK) ---
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now(tz=timezone.utc).isoformat()
+    timestamp = datetime.now(tz=UTC).isoformat()
 
     route_data: dict[str, Any] = {
         "format_version": ROUTE_FORMAT_VERSION,
