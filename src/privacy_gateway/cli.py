@@ -4,7 +4,7 @@
     python -m privacy_gateway <command> [options]
 
 Команды:
-    detect   Диагностика сущноႉтей (без шифрования)
+    detect   Диагностика сущностей (без шифрования)
     prepare  Подготовка текста: детекция, токенизация, шифрование (Э6)
     restore  Восстановление ответа (заглушка, реализация в Э7)
 
@@ -107,13 +107,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         default=False,
-        help="Перезаписывать сущеႉтвующие артефакты.",
+        help="Перезаписывать существующие артефакты.",
     )
 
     # --- restore ---
     sub.add_parser(
         "restore",
-        help="Восႉтановление исходных значений (заглушка, реализация в Э7).",
+        help="Восстановление исходных значений (заглушка, реализация в Э7).",
     )
 
     return parser
@@ -147,7 +147,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     try:
         cfg = load_config(config_path)
     except ConfigurationError as exc:
-        print(f"Ошибка конфигуႈации: {exc}", file=sys.stderr)
+        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 3
 
     entities = detect_entities(input_text.text, cfg)
@@ -163,7 +163,7 @@ def _cmd_detect(args: argparse.Namespace) -> int:
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:
-    """Обႈаботка команды prepare."""
+    """Обработка команды prepare."""
     try:
         input_text = (
             read_input(args.file, encoding=args.encoding)
