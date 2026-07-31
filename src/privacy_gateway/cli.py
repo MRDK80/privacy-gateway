@@ -1,4 +1,4 @@
-"""Точка входа CLI Privacy Gateway — Этапы Э1–Э6.
+"""Точка входа CLI Privacy Gateway — Этапы Э1–Э7.
 
 Публичный контракт:
     python -m privacy_gateway <command> [options]
@@ -6,10 +6,10 @@
 Команды:
     detect   Диагностика сущностей (без шифрования)
     prepare  Подготовка текста: детекция, токенизация, шифрование (Э6)
-    restore  Восстановление ответа (заглушка, реализация в Э7)
+    restore  Восстановление исходного текста из ответа LLM (Э7)
 
-Коды завершения (prepare):
-    0  OK — артефакты созданы
+Коды завершения (prepare / restore):
+    0  OK — артефакты созданы / текст восстановлен
     2  PENDING — требуется ручное одобрение
     3  BLOCKED или ошибка входа/конфигурации
     4  Ошибка keystore (ключ не найден или небезопасный backend)
@@ -111,9 +111,50 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # --- restore ---
-    sub.add_parser(
+    restore_parser = sub.add_parser(
         "restore",
-        help="Восстановление исходных значений (заглушка, реализация в Э7).",
+        help="Восстановление исходных значений из ответа LLM.",
+    )
+    restore_parser.add_argument(
+        "file",
+        metavar="ФАЙЛ",
+        help="Путь к файлу с ответом LLM или '-' для stdin.",
+    )
+    restore_parser.add_argument(
+        "--route",
+        metavar="ROUTE_JSON",
+        required=True,
+        help="Путь к route.json от соответствующего запуска prepare.",
+    )
+    restore_parser.add_argument(
+        "--out",
+        metavar="ФАЙЛ",
+        default=None,
+        help="Путь к файлу результата. Если не указан — вывод в stdout.",
+    )
+    restore_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        default=False,
+        help="Перезаписывать существующий файл результата.",
+    )
+    restore_parser.add_argument(
+        "--manifest",
+        metavar="MANIFEST_JSON",
+        default=None,
+        help=(
+            "Явный путь к manifest.json. По умолчанию разрешается "
+            "относительно каталога route.json (ADR-15)."
+        ),
+    )
+    restore_parser.add_argument(
+        "--lenient",
+        action="store_true",
+        default=False,
+        help=(
+            "Мягкий режим: неизвестные и искажённые токены дают предупреждение, "
+            "а не ошибку. По умолчанию применяется строгий режим (ADR-16)."
+        ),
     )
 
     return parser
@@ -227,6 +268,91 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
         return 3
 
 
+def _cmd_restore(args: argparse.Namespace) -> int:
+    """Обработка команды restore."""
+    from privacy_gateway.restore import RestoreError, restore_text, write_restored
+
+    # Прочитать ответ LLM из файла или stdin
+    try:
+        input_text = read_input(args.file)
+    except InputError as exc:
+        print(f"Ошибка чтения ответа LLM: {exc}", file=sys.stderr)
+        return 3
+
+    route_path = Path(args.route)
+    manifest_override = Path(args.manifest) if args.manifest else None
+    strict = not args.lenient
+
+    try:
+        result = restore_text(
+            llm_response=input_text.text,
+            route_path=route_path,
+            manifest_path_override=manifest_override,
+            strict=strict,
+        )
+    except ConfigurationError as exc:
+        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
+        return 3
+    except KeystoreError as exc:
+        print(f"Ошибка keystore: {exc}", file=sys.stderr)
+        return 4
+    except RestoreError as exc:
+        print(f"Ошибка восстановления: {exc}", file=sys.stderr)
+        return 3
+    except Exception as exc:  # noqa: BLE001
+        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
+        return 1
+
+    # Вывести предупреждения (мягкий режим, пропавшие токены)
+    for warning in result.warnings:
+        print(f"ПРЕДУПРЕЖДЕНИЕ: {warning}", file=sys.stderr)
+
+    # Отчёт о восстановлении (только счётчики, без значений)
+    report_lines = [
+        f"Восстановлено: {result.tokens_found_count}/{result.tokens_expected_count} токенов",
+    ]
+    if result.tokens_missing_count:
+        report_lines.append(
+            f"  Не найдено в ответе: {result.tokens_missing_count} "
+            f"({sorted(result.tokens_missing)})"
+        )
+    if result.tokens_unknown_count:
+        report_lines.append(
+            f"  Неизвестных токенов: {result.tokens_unknown_count} "
+            f"({sorted(result.tokens_unknown)})"
+        )
+    if result.tokens_malformed_count:
+        report_lines.append(
+            f"  Искажённых кандидатов: {result.tokens_malformed_count} "
+            f"({result.tokens_malformed})"
+        )
+    if result.tokens_duplicated:
+        report_lines.append(
+            f"  Дублированных токенов: {len(result.tokens_duplicated)} "
+            f"({sorted(result.tokens_duplicated)})"
+        )
+    for line in report_lines:
+        print(line, file=sys.stderr)
+
+    # Записать или вывести результат
+    assert result.restored_text is not None  # строгий режим уже поднял бы исключение
+    if args.out:
+        out_path = Path(args.out)
+        try:
+            write_restored(result.restored_text, out_path, overwrite=args.overwrite)
+        except FileExistsError as exc:
+            print(f"Ошибка: {exc}", file=sys.stderr)
+            return 3
+        except ConfigurationError as exc:
+            print(f"Ошибка записи: {exc}", file=sys.stderr)
+            return 1
+        print(f"OK: {out_path}")
+    else:
+        print(result.restored_text, end="")
+
+    return 0
+
+
 def main() -> None:
     """Точка входа CLI."""
     parser = _build_parser()
@@ -237,11 +363,7 @@ def main() -> None:
     elif args.command == "prepare":
         sys.exit(_cmd_prepare(args))
     elif args.command == "restore":
-        print(
-            "Команда restore недоступна на текущем этапе (Э7+).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        sys.exit(_cmd_restore(args))
     else:
         parser.print_help()
         sys.exit(1)
