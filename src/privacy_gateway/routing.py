@@ -259,8 +259,8 @@ def verify_manifest_integrity(
     # version == "1.1"
     if "manifest_sha256" not in route_data:
         raise ConfigurationError(
-            f"route.json format_version is \"1.1\" but field manifest_sha256 "
-            f"is missing. The file may be malformed or truncated."
+            "route.json format_version is \"1.1\" but field manifest_sha256 "
+            "is missing. The file may be malformed or truncated."
         )
 
     expected_hex: str = route_data["manifest_sha256"]

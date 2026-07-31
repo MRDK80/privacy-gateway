@@ -168,7 +168,10 @@ def test_verify_unknown_version_errors(tmp_path: Path) -> None:
 
 
 def test_verify_missing_manifest_file(tmp_path: Path, mock_keyring: tuple) -> None:
-    """Missing manifest.json must raise ConfigurationError with path info, no traceback."""
+    """Missing manifest.json must raise ConfigurationError.
+
+    The error includes path information but no raw traceback.
+    """
     _, key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
     route_data = json.loads((out_dir / "route.json").read_text(encoding="utf-8"))
