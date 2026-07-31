@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from privacy_gateway.input_parser import read_input
-from privacy_gateway.keystore import KeyExistsError, KeystoreError, get_key
+from privacy_gateway.keystore import KeystoreError, get_key
 from privacy_gateway.models import (
     ConfigurationError,
     InputError,
@@ -196,7 +196,10 @@ def _build_parser() -> argparse.ArgumentParser:
     # key rotate
     key_sub.add_parser(
         "rotate",
-        help="Ротация ключа: новый становится активным, старый остаётся для чтения манифестов.",
+        help=(
+            "Ротация ключа: новый становится активным, "
+            "старый остаётся для чтения манифестов."
+        ),
     )
 
     return parser

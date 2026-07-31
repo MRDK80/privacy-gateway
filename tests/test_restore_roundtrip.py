@@ -17,7 +17,7 @@ import pytest
 
 from privacy_gateway.crypto import generate_key
 from privacy_gateway.models import ConfigurationError, RestoreStrictError
-from privacy_gateway.restore import RestoreError, restore_text
+from privacy_gateway.restore import restore_text
 
 # ---------------------------------------------------------------------------
 # Synthetic test data (not real PII)
@@ -227,11 +227,9 @@ def test_lenient_mode_requires_flag(tmp_path: Path, mock_keyring: bytes) -> None
     route_path = out_dir / "route.json"
     llm_reply = "Результат: [EMAIL_99] готово"
 
-    # Строгий — RestoreStrictError (ADR-21)
     with pytest.raises(RestoreStrictError):
-        restore_text(llm_reply, route_path)  # strict=True по умолчанию
+        restore_text(llm_reply, route_path)
 
-    # Мягкий — успех, токен оставлен как есть
     result = restore_text(llm_reply, route_path, strict=False)
     assert result.restored_text is not None
     assert "[EMAIL_99]" in result.restored_text
@@ -434,7 +432,7 @@ def test_manifest_path_resolution(tmp_path: Path, fernet_key: bytes) -> None:
 
     original_cwd = Path.cwd()
     try:
-        os.chdir(tmp_path)  # cwd ≠ sub
+        os.chdir(tmp_path)
         with patch("privacy_gateway.restore.get_all_keys", return_value=[key]):
             result = restore_text("[EMAIL_1]", route_path)
     finally:

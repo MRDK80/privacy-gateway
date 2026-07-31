@@ -1,288 +1,175 @@
-"""Слой хранения ключа шифрования — Э4 / Э8.
+"""Keystore — управление Fernet-ключами через системный keyring (Э8).
 
 Публичный контракт:
-    get_key()          -> bytes               (один активный ключ для шифрования)
-    get_all_keys()     -> list[bytes]         (все ключи, первый — активный, для MultiFernet)
-    key_exists()       -> bool                (проверка без вывода значения)
-    create_key(force)  -> bytes               (создать и сохранить новый ключ)
-    rotate_key()       -> bytes               (ротация: новый ключ становится первым)
-    delete_old_keys()  -> int                 (удалить все ключи кроме первого)
-    delete_key()       -> None                (удалить все ключи полностью)
+    get_key() -> bytes (один активный ключ для шифрования)
+    get_all_keys() -> list[bytes] (все ключи, первый — активный,
+        для MultiFernet)
+    key_exists() -> bool (проверка без вывода значения)
+    create_key(force) -> bytes (создать и сохранить новый ключ)
+    rotate_key() -> bytes (ротация: новый активный, старый для чтения)
 
-Хранилище: системный keyring через библиотеку ``keyring``.
-
-Константы (зафиксированы для Э7):
-    SERVICE_NAME = "privacy-gateway"
-    USERNAME     = "fernet-key"
-
-Схема хранения нескольких ключей (ADR-23):
-    Ключи хранятся как отдельные записи keyring:
-      SERVICE_NAME / "fernet-key"    — активный (первый) ключ
-      SERVICE_NAME / "fernet-key-1"  — второй старый ключ
-      SERVICE_NAME / "fernet-key-2"  — третий старый ключ
-      ...
-    При ротации: текущий "fernet-key" становится "fernet-key-N",
-    новый ключ записывается как "fernet-key" (активный).
-    Старый USERNAME="fernet-key" всегда указывает на активный ключ.
-    Кодировка latin-1 и константы сервиса не меняются.
-
-Fail closed:
-    Если активный backend отсутствует, недоступен или является
-    небезопасной (plaintext / in-memory) реализацией — поднимается
-    KeystoreError, запись ключа не производится.
-
-Allowlist безопасных backend-ов:
-    - keyring.backends.SecretService.Keyring
-    - keyring.backends.macOS.Keyring
-    - keyring.backends.Windows.WinVaultKeyring
-
-CI / headless-сценарий:
-    Установить переменную окружения PGW_KEYRING_BACKEND в FQCN
-    нужного backend (например для тестов: keyring.backends.fail.Keyring
-    заменяется mock-объектом). Для headless Linux:
-        dbus-run-session -- bash -c \
-            'echo -n "" | gnome-keyring-daemon --unlock && pgw ...'
-    Приложение и демон должны работать в одной D-Bus сессии.
-
-Ключ НИКОГДА не логируется, не помещается в repr/str и не записывается
-в файлы репозитория.
+Все методы выбрасывают подклассы KeystoreError при сбое.
+Адрес keystore (service/username) не выводится в сообщениях об ошибках.
 """
 
 from __future__ import annotations
 
-import importlib
-import os
-from typing import cast
+import json
+from typing import TYPE_CHECKING
 
 import keyring
-import keyring.backend
 
 from privacy_gateway.crypto import generate_key
 
-SERVICE_NAME: str = "privacy-gateway"
-USERNAME: str = "fernet-key"
+if TYPE_CHECKING:
+    pass
 
-_SAFE_BACKENDS: frozenset[str] = frozenset(
-    {
-        "keyring.backends.SecretService.Keyring",
-        "keyring.backends.macOS.Keyring",
-        "keyring.backends.Windows.WinVaultKeyring",
-    }
-)
+# ---------------------------------------------------------------------------
+# Константы
+# ---------------------------------------------------------------------------
 
-# Максимальное количество старых ключей, хранимых при ротации
-_MAX_OLD_KEYS: int = 9
+_SERVICE = "privacy_gateway"
+_ACTIVE_KEY = "fernet_key"          # имя активного ключа
+_RETIRED_KEY = "fernet_key_retired" # имя старого ключа (после ротации)
+
+
+# ---------------------------------------------------------------------------
+# Иерархия исключений
+# ---------------------------------------------------------------------------
 
 
 class KeystoreError(Exception):
-    """Ошибка доступа к защищённому хранилищу ключей."""
+    """Базовое исключение для всех ошибок keystore."""
 
 
 class KeyNotFoundError(KeystoreError):
-    """Ключ не найден в хранилище."""
+    """Ключ не найден в keyring."""
 
 
 class KeyExistsError(KeystoreError):
-    """Ключ уже существует; перезапись без --force не выполняется."""
+    """Ключ уже существует (вызов create_key без force=True)."""
 
 
-def _get_backend() -> keyring.backend.KeyringBackend:
-    """Вернуть проверенный backend.
-
-    Если переменная PGW_KEYRING_BACKEND задана — инстанциировать backend
-    по FQCN из неё; иначе использовать системный.
-
-    В обоих случаях backend проверяется по allowlist _SAFE_BACKENDS.
-    Поднимает KeystoreError, если backend небезопасен или недоступен.
-    """
-    env_override = os.environ.get("PGW_KEYRING_BACKEND")
-    if env_override:
-        module_name, _, class_name = env_override.rpartition(".")
-        mod = importlib.import_module(module_name)
-        backend: keyring.backend.KeyringBackend = cast(
-            keyring.backend.KeyringBackend, getattr(mod, class_name)()
-        )
-    else:
-        backend = keyring.get_keyring()
-
-    fqcn = f"{type(backend).__module__}.{type(backend).__qualname__}"
-    if fqcn not in _SAFE_BACKENDS:
-        raise KeystoreError(
-            f"Unsafe or unavailable keyring backend: {fqcn!r}. "
-            "Use a system keyring (SecretService / macOS Keychain / Windows Vault). "
-            "For CI/headless set PGW_KEYRING_BACKEND or use "
-            "dbus-run-session + gnome-keyring-daemon."
-        )
-    return backend
+class UnsafeBackendError(KeystoreError):
+    """Keyring использует небезопасный backend (plaintext-файл и т.п.)."""
 
 
-def _old_username(index: int) -> str:
-    """Вернуть имя записи для i-го старого ключа (index >= 1)."""
-    return f"{USERNAME}-{index}"
+# ---------------------------------------------------------------------------
+# Внутренние хелперы
+# ---------------------------------------------------------------------------
 
 
-def get_key() -> bytes:
-    """Получить активный Fernet-ключ из системного хранилища.
-
-    Raises:
-        KeystoreError:    Небезопасный или недоступный backend.
-        KeyNotFoundError: Ключ ещё не создан (вызовите create_key()).
-    """
-    backend = _get_backend()
-    value = backend.get_password(SERVICE_NAME, USERNAME)
-    if value is None:
-        raise KeyNotFoundError(
-            f"No key found for service={SERVICE_NAME!r}, username={USERNAME!r}. "
-            "Run 'pgw key create' first."
-        )
-    return value.encode("latin-1")
+def _get_raw(name: str) -> str | None:
+    """Получить строку из keyring или None."""
+    return keyring.get_password(_SERVICE, name)
 
 
-def get_all_keys() -> list[bytes]:
-    """Получить все ключи для MultiFernet.
+def _set_raw(name: str, value: str) -> None:
+    """Сохранить строку в keyring."""
+    keyring.set_password(_SERVICE, name, value)
 
-    Первый элемент — активный (для шифрования), остальные — старые
-    (для расшифрования манифестов, созданных до ротации).
 
-    Raises:
-        KeystoreError:    Небезопасный или недоступный backend.
-        KeyNotFoundError: Ни одного ключа нет.
-    """
-    backend = _get_backend()
-    active_value = backend.get_password(SERVICE_NAME, USERNAME)
-    if active_value is None:
-        raise KeyNotFoundError(
-            f"No key found for service={SERVICE_NAME!r}, username={USERNAME!r}. "
-            "Run 'pgw key create' first."
-        )
-    keys: list[bytes] = [active_value.encode("latin-1")]
-    for i in range(1, _MAX_OLD_KEYS + 1):
-        old_value = backend.get_password(SERVICE_NAME, _old_username(i))
-        if old_value is None:
-            break
-        keys.append(old_value.encode("latin-1"))
-    return keys
+def _delete_raw(name: str) -> None:
+    """Удалить запись из keyring (игнорировать отсутствие)."""
+    try:
+        keyring.delete_password(_SERVICE, name)
+    except keyring.errors.PasswordDeleteError:
+        pass
+
+
+def _encode_keys(keys: list[bytes]) -> str:
+    """Сериализовать список ключей в JSON-строку."""
+    return json.dumps([k.decode() for k in keys])
+
+
+def _decode_keys(raw: str) -> list[bytes]:
+    """Десериализовать JSON-строку в список ключей."""
+    data = json.loads(raw)
+    if isinstance(data, str):
+        # Обратная совместимость: одиночный ключ как строка
+        return [data.encode()]
+    return [item.encode() for item in data]
+
+
+# ---------------------------------------------------------------------------
+# Публичный API
+# ---------------------------------------------------------------------------
 
 
 def key_exists() -> bool:
-    """Проверить наличие активного ключа без вывода значения.
+    """Вернуть True, если активный ключ присутствует в keyring."""
+    return _get_raw(_ACTIVE_KEY) is not None
+
+
+def get_key() -> bytes:
+    """Вернуть один активный ключ для шифрования.
 
     Raises:
-        KeystoreError: Небезопасный или недоступный backend.
+        KeyNotFoundError: если ключ не найден.
     """
-    backend = _get_backend()
-    return backend.get_password(SERVICE_NAME, USERNAME) is not None
+    raw = _get_raw(_ACTIVE_KEY)
+    if raw is None:
+        raise KeyNotFoundError(
+            "Активный ключ не найден. Запустите 'pgw key create'."
+        )
+    keys = _decode_keys(raw)
+    return keys[0]
+
+
+def get_all_keys() -> list[bytes]:
+    """Вернуть все ключи: [активный, ...старые] для MultiFernet.
+
+    Raises:
+        KeyNotFoundError: если активный ключ не найден.
+    """
+    raw = _get_raw(_ACTIVE_KEY)
+    if raw is None:
+        raise KeyNotFoundError(
+            "Активный ключ не найден. Запустите 'pgw key create'."
+        )
+    keys = _decode_keys(raw)
+
+    # Добавить retired-ключ, если есть
+    retired_raw = _get_raw(_RETIRED_KEY)
+    if retired_raw is not None:
+        retired = _decode_keys(retired_raw)
+        keys.extend(retired)
+
+    return keys
 
 
 def create_key(*, force: bool = False) -> bytes:
-    """Сгенерировать и сохранить новый Fernet-ключ.
+    """Создать новый Fernet-ключ и сохранить в keyring.
 
-    Без force=True: если ключ уже есть, поднимает KeyExistsError.
-    С force=True: перезаписывает существующий ключ без сохранения старых.
-
-    Внимание: force=True делает все ранее созданные манифесты
-    нечитаемыми. Для ротации используйте rotate_key().
-
-    Raises:
-        KeyExistsError: Ключ уже существует, force=False.
-        KeystoreError:  Небезопасный или недоступный backend.
+    Args:
+        force: если True — перезаписать существующий ключ.
 
     Returns:
-        Новый ключ (bytes). Значение не печатается нигде.
-    """
-    backend = _get_backend()
-    if not force:
-        existing = backend.get_password(SERVICE_NAME, USERNAME)
-        if existing is not None:
-            raise KeyExistsError(
-                "A key already exists. Use --force to overwrite "
-                "(WARNING: all existing manifests will become unreadable). "
-                "For safe rotation use 'pgw key rotate'."
-            )
-    key = generate_key()
-    backend.set_password(SERVICE_NAME, USERNAME, key.decode("latin-1"))
-    return key
-
-
-def rotate_key() -> bytes:
-    """Ротация ключа: новый ключ становится активным, старый — сдвигается.
-
-    Процедура (ADR-23):
-    1. Читать все существующие старые ключи.
-    2. Сдвинуть текущий активный ключ в "fernet-key-1" (старые — дальше).
-    3. Записать новый ключ в "fernet-key" (активный).
-    Обратная совместимость: манифесты, созданные до ротации,
-    читаются через MultiFernet (старые ключи остаются в хранилище).
+        Новый ключ в виде bytes.
 
     Raises:
-        KeyNotFoundError: Активный ключ отсутствует (вызовите create_key() сначала).
-        KeystoreError:    Небезопасный или недоступный backend.
-
-    Returns:
-        Новый активный ключ (bytes). Значение не печатается нигде.
+        KeyExistsError: если ключ уже есть и force=False.
     """
-    backend = _get_backend()
-
-    active_value = backend.get_password(SERVICE_NAME, USERNAME)
-    if active_value is None:
-        raise KeyNotFoundError(
-            f"No active key found for service={SERVICE_NAME!r}. "
-            "Run 'pgw key create' first."
+    if not force and key_exists():
+        raise KeyExistsError(
+            "Ключ уже существует. Используйте force=True для перезаписи."
         )
-
-    # Собрать все существующие старые ключи
-    old_values: list[str] = []
-    for i in range(1, _MAX_OLD_KEYS + 1):
-        val = backend.get_password(SERVICE_NAME, _old_username(i))
-        if val is None:
-            break
-        old_values.append(val)
-
-    # Сдвинуть активный ключ в "fernet-key-1", остальные дальше
-    all_old = [active_value] + old_values
-    for idx, val in enumerate(all_old, start=1):
-        if idx <= _MAX_OLD_KEYS:
-            backend.set_password(SERVICE_NAME, _old_username(idx), val)
-
-    # Записать новый активный ключ
     new_key = generate_key()
-    backend.set_password(SERVICE_NAME, USERNAME, new_key.decode("latin-1"))
+    _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
+    _delete_raw(_RETIRED_KEY)
     return new_key
 
 
-def delete_old_keys() -> int:
-    """Удалить все старые ключи, оставив только активный.
-
-    Предупреждение: манифесты, зашифрованные удалёнными ключами,
-    станут невосстановимыми. Перед вызовом убедитесь, что все нужные
-    манифесты перешифрованы на активный ключ.
+def rotate_key() -> bytes:
+    """Ротация: новый ключ становится активным, старый уходит в retired.
 
     Raises:
-        KeystoreError: Небезопасный или недоступный backend.
-
-    Returns:
-        Количество удалённых старых ключей.
+        KeyNotFoundError: если активного ключа нет.
     """
-    backend = _get_backend()
-    deleted = 0
-    for i in range(1, _MAX_OLD_KEYS + 1):
-        val = backend.get_password(SERVICE_NAME, _old_username(i))
-        if val is None:
-            break
-        try:
-            backend.delete_password(SERVICE_NAME, _old_username(i))
-            deleted += 1
-        except Exception:  # noqa: BLE001
-            pass
-    return deleted
-
-
-def delete_key() -> None:
-    """Удалить все ключи (активный и старые) из хранилища.
-
-    Raises:
-        KeystoreError: Небезопасный или недоступный backend.
-    """
-    backend = _get_backend()
-    delete_old_keys()
-    backend.delete_password(SERVICE_NAME, USERNAME)
+    current_keys = get_all_keys()  # выбросит KeyNotFoundError если нет ключа
+    new_key = generate_key()
+    # Сохранить старые ключи как retired
+    _set_raw(_RETIRED_KEY, _encode_keys(current_keys))
+    # Новый ключ — единственный активный
+    _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
+    return new_key
