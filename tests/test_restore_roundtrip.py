@@ -31,7 +31,8 @@ SYNTH_TEXT = (
     f"Связь: {SYNTH_EMAIL}, {SYNTH_IP}, {SYNTH_PHONE}\n"
 )
 SYNTH_UNICODE = (
-    "Получатель: Иван Иванов <user@example.com>, адрес: 192.0.2.10\n"  # pragma: allowlist secret
+    "Получатель: Иван Иванов <user@example.com>,"  # pragma: allowlist secret
+    " адрес: 192.0.2.10\n"
 )
 
 
@@ -48,11 +49,9 @@ def fernet_key() -> bytes:
 @pytest.fixture()
 def mock_keyring(fernet_key: bytes):
     """Подменяет get_key в pipeline и restore без обращения к реальному keyring."""
-    with (
-        patch("privacy_gateway.pipeline.get_key", return_value=fernet_key),
-        patch("privacy_gateway.restore.get_key", return_value=fernet_key),
-    ):
-        yield fernet_key
+    with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key):
+        with patch("privacy_gateway.restore.get_key", return_value=fernet_key):
+            yield fernet_key
 
 
 def _run_prepare(tmp_path: Path, key: bytes, text: str = SYNTH_TEXT) -> Path:
@@ -173,13 +172,14 @@ def test_malformed_token_detected(tmp_path: Path, mock_keyring: bytes) -> None:
 
 def test_missing_token_reported(tmp_path: Path, mock_keyring: bytes) -> None:
     """Известный токен, удалённый из ответа, попадает в tokens_missing."""
+    import re
+
     key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
     route_path = out_dir / "route.json"
     prompt = (out_dir / "prompt.txt").read_text(encoding="utf-8")
 
     # Найти хотя бы один токен из prompt
-    import re
     tokens_in_prompt = re.findall(r"\[[A-Z][A-Z0-9]*_[1-9][0-9]*\]", prompt)
     assert tokens_in_prompt, "В prompt.txt не нашли токенов — тест некорректен"
 
@@ -202,12 +202,13 @@ def test_missing_token_reported(tmp_path: Path, mock_keyring: bytes) -> None:
 
 def test_duplicated_token_behaviour(tmp_path: Path, mock_keyring: bytes) -> None:
     """Дубль известного токена — все вхождения заменяются, токен в tokens_duplicated."""
+    import re
+
     key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
     route_path = out_dir / "route.json"
     prompt = (out_dir / "prompt.txt").read_text(encoding="utf-8")
 
-    import re
     tokens_in_prompt = re.findall(r"\[[A-Z][A-Z0-9]*_[1-9][0-9]*\]", prompt)
     assert tokens_in_prompt
 
@@ -220,7 +221,7 @@ def test_duplicated_token_behaviour(tmp_path: Path, mock_keyring: bytes) -> None
     assert result.restored_text is not None
     token_key = first_token.strip("[]")
     assert token_key in result.tokens_duplicated
-    # Оба вхождения заменены — токен не должен остаться в тексте
+    # Оба вхождения заменены — токен не остался в тексте
     assert first_token not in result.restored_text
 
 
@@ -271,13 +272,12 @@ def test_accepts_format_version_1_1(tmp_path: Path, mock_keyring: bytes) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_accepts_format_version_1_0(tmp_path: Path, mock_keyring: bytes) -> None:
+def test_accepts_format_version_1_0(tmp_path: Path, fernet_key: bytes) -> None:
     """format_version 1.0 не требует manifest_sha256; restore работает."""
     from privacy_gateway.manifest import build_manifest, save_manifest
     from privacy_gateway.models import EntityType, TokenRecord
 
-    key = mock_keyring
-    # Построить минимальный манифест вручную
+    key = fernet_key
     records = [
         TokenRecord(
             token="[EMAIL_1]",
@@ -302,8 +302,8 @@ def test_accepts_format_version_1_0(tmp_path: Path, mock_keyring: bytes) -> None
     route_path = out_dir / "route.json"
     route_path.write_text(json.dumps(route_data), encoding="utf-8")
 
-    llm_reply = "Contact: [EMAIL_1]"
-    result = restore_text(llm_reply, route_path)
+    with patch("privacy_gateway.restore.get_key", return_value=key):
+        result = restore_text("Contact: [EMAIL_1]", route_path)
 
     assert result.restored_text is not None
     assert SYNTH_EMAIL in result.restored_text
@@ -314,10 +314,8 @@ def test_accepts_format_version_1_0(tmp_path: Path, mock_keyring: bytes) -> None
 # ---------------------------------------------------------------------------
 
 
-def test_rejects_unknown_format_version(tmp_path: Path, mock_keyring: bytes) -> None:
+def test_rejects_unknown_format_version(tmp_path: Path) -> None:
     """format_version 2.0 → ConfigurationError до любой работы с ключом."""
-    key = mock_keyring
-
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_bytes(b"[]")
 
@@ -334,10 +332,14 @@ def test_rejects_unknown_format_version(tmp_path: Path, mock_keyring: bytes) -> 
         "privacy_gateway.restore.load_manifest",
         side_effect=lambda *a, **kw: decrypt_called.append(True),
     ):
-        with pytest.raises(ConfigurationError, match="Unknown route.json format_version"):
+        with pytest.raises(
+            ConfigurationError, match="Unknown route.json format_version"
+        ):
             restore_text("любой текст", route_path)
 
-    assert not decrypt_called, "load_manifest не должен вызываться при неизвестной версии"
+    assert not decrypt_called, (
+        "load_manifest не должен вызываться при неизвестной версии"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -362,21 +364,23 @@ def test_integrity_checked_before_decrypt(
     get_key_called = []
     load_manifest_called = []
 
-    with (
-        patch(
-            "privacy_gateway.restore.get_key",
-            side_effect=lambda: get_key_called.append(True) or key,
-        ),
-        patch(
+    with patch(
+        "privacy_gateway.restore.get_key",
+        side_effect=lambda: get_key_called.append(True) or key,
+    ):
+        with patch(
             "privacy_gateway.restore.load_manifest",
             side_effect=lambda *a, **kw: load_manifest_called.append(True),
-        ),
-    ):
-        with pytest.raises(ConfigurationError):
-            restore_text("любой текст", route_path)
+        ):
+            with pytest.raises(ConfigurationError):
+                restore_text("любой текст", route_path)
 
-    assert not get_key_called, "get_key не должен вызываться при ошибке целостности"
-    assert not load_manifest_called, "load_manifest не должен вызываться при ошибке целостности"
+    assert not get_key_called, (
+        "get_key не должен вызываться при ошибке целостности"
+    )
+    assert not load_manifest_called, (
+        "load_manifest не должен вызываться при ошибке целостности"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -407,13 +411,12 @@ def test_swapped_manifest_rejected(tmp_path: Path, mock_keyring: bytes) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_manifest_path_resolution(tmp_path: Path, mock_keyring: bytes) -> None:
+def test_manifest_path_resolution(tmp_path: Path, fernet_key: bytes) -> None:
     """Относительный manifest_path вычисляется от каталога route.json, не от cwd."""
     from privacy_gateway.manifest import build_manifest, save_manifest
     from privacy_gateway.models import EntityType, TokenRecord
 
-    key = mock_keyring
-
+    key = fernet_key
     records = [
         TokenRecord(
             token="[EMAIL_1]",
@@ -424,7 +427,7 @@ def test_manifest_path_resolution(tmp_path: Path, mock_keyring: bytes) -> None:
     values = [SYNTH_EMAIL]
     entries = build_manifest(records, values, key)
 
-    # Расположить route.json и manifest.json в подкаталоге
+    # Разместить route.json и manifest.json в подкаталоге
     sub = tmp_path / "subdir"
     sub.mkdir()
     manifest_path = sub / "manifest.json"
@@ -445,7 +448,8 @@ def test_manifest_path_resolution(tmp_path: Path, mock_keyring: bytes) -> None:
     original_cwd = Path.cwd()
     try:
         os.chdir(tmp_path)  # cwd ≠ sub
-        result = restore_text("[EMAIL_1]", route_path)
+        with patch("privacy_gateway.restore.get_key", return_value=key):
+            result = restore_text("[EMAIL_1]", route_path)
     finally:
         os.chdir(original_cwd)
 
@@ -467,9 +471,7 @@ def test_wrong_key_readable_error(tmp_path: Path, mock_keyring: bytes) -> None:
 
     wrong_key = generate_key()
 
-    with (
-        patch("privacy_gateway.restore.get_key", return_value=wrong_key),
-    ):
+    with patch("privacy_gateway.restore.get_key", return_value=wrong_key):
         with pytest.raises(ConfigurationError) as exc_info:
             restore_text(prompt, route_path)
 
