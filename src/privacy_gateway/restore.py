@@ -281,8 +281,9 @@ def restore_text(
     # Построить словарь token -> plaintext_value
     value_map: dict[str, str] = {}
     for entry in entries:
-        value_map[entry.token] = decrypt_manifest_entry(entry, key)
-
+        token_key = entry.token.strip("[]")
+        value_map[token_key] = decrypt_manifest_entry(entry, key)
+        
     manifest_tokens = set(value_map.keys())
     result.tokens_expected = set(manifest_tokens)
 
