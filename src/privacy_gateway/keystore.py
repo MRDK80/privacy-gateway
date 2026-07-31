@@ -1,4 +1,4 @@
-"""Keystore — управление Fernet-ключами через системный keyring (Э8).
+"""Кейстор — управление Fernet-ключами через системный keyring (Э8).
 
 Публичный контракт:
     get_key() -> bytes (один активный ключ для шифрования)
@@ -6,6 +6,7 @@
         для MultiFernet)
     key_exists() -> bool (проверка без вывода значения)
     create_key(force) -> bytes (создать и сохранить новый ключ)
+    delete_key() -> None (удалить ключ из keyring)
     rotate_key() -> bytes (ротация: новый активный, старый для чтения)
 
 Все методы выбрасывают подклассы KeystoreError при сбое.
@@ -15,22 +16,27 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
 
 import keyring
 
 from privacy_gateway.crypto import generate_key
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Константы
 # ---------------------------------------------------------------------------
 
 _SERVICE = "privacy_gateway"
-_ACTIVE_KEY = "fernet_key"          # имя активного ключа
-_RETIRED_KEY = "fernet_key_retired" # имя старого ключа (после ротации)
+_ACTIVE_KEY = "fernet_key"
+_RETIRED_KEY = "fernet_key_retired"
+
+# FQCN бекендов, признанных безопасными
+_SAFE_BACKENDS: frozenset[str] = frozenset(
+    [
+        "keyring.backends.SecretService.Keyring",
+        "keyring.backends.macOS.Keyring",
+        "keyring.backends.Windows.WinVaultKeyring",
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -59,20 +65,40 @@ class UnsafeBackendError(KeystoreError):
 # ---------------------------------------------------------------------------
 
 
+def _get_backend() -> object:
+    """Verify and return the current keyring backend.
+
+    Raises:
+        KeystoreError: if the backend is not in the safe allowlist.
+    """
+    backend = keyring.get_keyring()
+    fqcn = f"{type(backend).__module__}.{type(backend).__qualname__}"
+    if fqcn not in _SAFE_BACKENDS:
+        raise KeystoreError(
+            f"Unsafe or unavailable keyring backend: {fqcn}. "
+            "Configure a secure system keyring (SecretService, macOS Keychain, "
+            "Windows Credential Vault)."
+        )
+    return backend
+
+
 def _get_raw(name: str) -> str | None:
     """Получить строку из keyring или None."""
-    return keyring.get_password(_SERVICE, name)
+    backend = _get_backend()
+    return backend.get_password(_SERVICE, name)  # type: ignore[union-attr]
 
 
 def _set_raw(name: str, value: str) -> None:
     """Сохранить строку в keyring."""
-    keyring.set_password(_SERVICE, name, value)
+    backend = _get_backend()
+    backend.set_password(_SERVICE, name, value)  # type: ignore[union-attr]
 
 
 def _delete_raw(name: str) -> None:
     """Удалить запись из keyring (игнорировать отсутствие)."""
+    backend = _get_backend()
     try:
-        keyring.delete_password(_SERVICE, name)
+        backend.delete_password(_SERVICE, name)  # type: ignore[union-attr]
     except keyring.errors.PasswordDeleteError:
         pass
 
@@ -129,7 +155,6 @@ def get_all_keys() -> list[bytes]:
         )
     keys = _decode_keys(raw)
 
-    # Добавить retired-ключ, если есть
     retired_raw = _get_raw(_RETIRED_KEY)
     if retired_raw is not None:
         retired = _decode_keys(retired_raw)
@@ -160,6 +185,15 @@ def create_key(*, force: bool = False) -> bytes:
     return new_key
 
 
+def delete_key() -> None:
+    """Удалить активный ключ и retired-ключ из keyring.
+
+    Используется прежде всего в тестах. Не вызывает ошибку, если ключ отсутствует.
+    """
+    _delete_raw(_ACTIVE_KEY)
+    _delete_raw(_RETIRED_KEY)
+
+
 def rotate_key() -> bytes:
     """Ротация: новый ключ становится активным, старый уходит в retired.
 
@@ -168,8 +202,6 @@ def rotate_key() -> bytes:
     """
     current_keys = get_all_keys()  # выбросит KeyNotFoundError если нет ключа
     new_key = generate_key()
-    # Сохранить старые ключи как retired
     _set_raw(_RETIRED_KEY, _encode_keys(current_keys))
-    # Новый ключ — единственный активный
     _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
     return new_key
