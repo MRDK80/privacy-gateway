@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from privacy_gateway.detector import DetectorConfig, detect_entities, load_config
+from privacy_gateway.keystore import get_key  # top-level import — required for patch()
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
@@ -210,12 +211,6 @@ def prepare_pipeline(
     )
 
     # --- Манифест (строим до валидатора — нужен для записи при OK) ---
-    # original_values параллельны entities_to_tokenize, но tokenize может
-    # пропустить перекрывающиеся; берём значения из records напрямую через
-    # обратное сопоставление
-    # build_manifest требует original_values параллельно records;
-    # т.к. tokenize возвращает только не-overlapping records,
-    # пересоберём values из token_records через fingerprint→value map
     fp_to_value: dict[str, str] = {
         e.fingerprint: text[e.start:e.end]
         for e in entities_to_tokenize
