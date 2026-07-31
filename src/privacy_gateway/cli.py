@@ -119,6 +119,17 @@ def _build_parser():
     return parser
 
 
+def _entity_to_cli_dict(entity) -> dict:
+    """Сериализовать DetectedEntity в CLI-формат.
+
+    Контракт CLI использует ключ "type" (а не "entity_type" как в to_dict()),
+    чтобы не менять внутренную модель.
+    """
+    d = entity.to_dict()
+    d["type"] = d.pop("entity_type")
+    return d
+
+
 def _cmd_detect(args) -> int:
     """Обработка команды detect."""
     from privacy_gateway.detector import detect_entities, load_config
@@ -131,7 +142,7 @@ def _cmd_detect(args) -> int:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
 
-    # load_config не принимает None; используем дефолтный путь если не задан
+    # load_config не принимает None
     config_path = Path(args.config) if args.config else _DEFAULT_ENTITIES_CONFIG
     try:
         cfg = load_config(config_path)
@@ -141,11 +152,12 @@ def _cmd_detect(args) -> int:
 
     entities = detect_entities(input_text.text, cfg)
 
+    # CLI-контракт: ключ "type" (а не "entity_type" из to_dict())
     result = {
         "source": input_text.source.value,
         "encoding": input_text.encoding,
         "entity_count": len(entities),
-        "entities": [e.to_dict() for e in entities],
+        "entities": [_entity_to_cli_dict(e) for e in entities],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
@@ -169,7 +181,6 @@ def _cmd_prepare(args) -> int:
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 3
 
-    # --out переопределяет output_dir из конфига
     if args.out:
         routing_cfg.output_dir = args.out
     out_dir = Path(routing_cfg.output_dir)
