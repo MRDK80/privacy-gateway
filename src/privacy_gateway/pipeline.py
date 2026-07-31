@@ -9,7 +9,7 @@
     → токенизатор → манифест → валидатор → запись артефактов
 
 Безопасность (fail closed):
-    - Сущности с secret_kind != None блокируют обработку БЕЗУСЛОВНО,
+    - Сущноႉти с secret_kind != None блокируют обработку БЕЗУСЛОВНО,
       независимо от routing_cfg.block_unconditionally.
       Конфиг не может снять эту защиту (ADR-11).
     - prompt.txt не содержит исходных значений
@@ -39,7 +39,9 @@ from privacy_gateway.detector import (
     detect_entities,
     load_config,
 )
-from privacy_gateway.keystore import get_key as get_key  # noqa: F401 — needed for patch()
+from privacy_gateway.keystore import (
+    get_key as get_key,  # noqa: F401 — top-level import required for patch()
+)
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
@@ -64,7 +66,7 @@ class PipelineResult:
     prompt_path:   Путь к prompt.txt (только при OK)
     route_path:    Путь к route.json (только при OK)
     manifest_path: Путь к manifest.json (только при OK)
-    message:       Читаемое сообщение о результате (без исходных значений)
+    message:       Читаемое сообщение (без исходных значений)
     findings_summary: Краткая сводка находок (типы и позиции, без значений)
     """
 
