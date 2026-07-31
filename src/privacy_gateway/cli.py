@@ -18,26 +18,27 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
-from privacy_gateway.input_parser import InputError, read_input
+from privacy_gateway.input_parser import read_input
 from privacy_gateway.keystore import KeystoreError, get_key
 from privacy_gateway.models import (
     ConfigurationError,
+    InputError,
     ProcessingStatus,
 )
 from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
-# Дефолтный путь к конфигу детектора (shared между detect и prepare)
+# Дефолтный путь к конфигу детектора
 _DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
 
 
-def _build_parser():
-    import argparse
-
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pgw",
         description="Privacy Gateway — безопасная подготовка текста для LLM.",
@@ -119,30 +120,29 @@ def _build_parser():
     return parser
 
 
-def _entity_to_cli_dict(entity) -> dict:
+def _entity_to_cli_dict(entity: Any) -> dict[str, Any]:
     """Сериализовать DetectedEntity в CLI-формат.
 
-    Контракт CLI использует ключ "type" (а не "entity_type" как в to_dict()),
-    чтобы не менять внутренную модель.
+    CLI-контракт использует ключ "type" (а не "entity_type" из to_dict()).
     """
-    d = entity.to_dict()
+    d: dict[str, Any] = entity.to_dict()
     d["type"] = d.pop("entity_type")
     return d
 
 
-def _cmd_detect(args) -> int:
+def _cmd_detect(args: argparse.Namespace) -> int:
     """Обработка команды detect."""
     from privacy_gateway.detector import detect_entities, load_config
 
-    # args.encoding может быть None (не задан); read_input ожидает str
-    read_kwargs = {"encoding": args.encoding} if args.encoding else {}
+    read_kwargs: dict[str, str] = (
+        {"encoding": args.encoding} if args.encoding else {}
+    )
     try:
         input_text = read_input(args.file, **read_kwargs)
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
 
-    # load_config не принимает None
     config_path = Path(args.config) if args.config else _DEFAULT_ENTITIES_CONFIG
     try:
         cfg = load_config(config_path)
@@ -152,8 +152,7 @@ def _cmd_detect(args) -> int:
 
     entities = detect_entities(input_text.text, cfg)
 
-    # CLI-контракт: ключ "type" (а не "entity_type" из to_dict())
-    result = {
+    result: dict[str, Any] = {
         "source": input_text.source.value,
         "encoding": input_text.encoding,
         "entity_count": len(entities),
@@ -163,17 +162,17 @@ def _cmd_detect(args) -> int:
     return 0
 
 
-def _cmd_prepare(args) -> int:
+def _cmd_prepare(args: argparse.Namespace) -> int:
     """Обработка команды prepare."""
-    # args.encoding может быть None; read_input ожидает str
-    read_kwargs = {"encoding": args.encoding} if args.encoding else {}
+    read_kwargs: dict[str, str] = (
+        {"encoding": args.encoding} if args.encoding else {}
+    )
     try:
         input_text = read_input(args.file, **read_kwargs)
     except InputError as exc:
         print(f"Ошибка чтения: {exc}", file=sys.stderr)
         return 3
 
-    # --- Загрузка routing конфига ---
     routing_path = Path(args.routing) if args.routing else None
     try:
         routing_cfg = load_routing_config(routing_path)
@@ -184,21 +183,18 @@ def _cmd_prepare(args) -> int:
     if args.out:
         routing_cfg.output_dir = args.out
     out_dir = Path(routing_cfg.output_dir)
-    overwrite = args.overwrite or routing_cfg.overwrite
+    overwrite: bool = args.overwrite or routing_cfg.overwrite
 
-    # Передаём None — pipeline сам выберет дефолтный путь
     entities_config_path = Path(args.config) if args.config else None
 
-    # --- Получение ключа ---
     try:
         key = get_key()
     except KeystoreError as exc:
         print(f"Ошибка keystore: {exc}", file=sys.stderr)
         return 4
 
-    source_ref = input_text.path.name if input_text.path else "stdin"
+    source_ref: str = input_text.path.name if input_text.path else "stdin"
 
-    # --- Запуск конвейера ---
     try:
         result: PipelineResult = prepare_pipeline(
             text=input_text.text,
@@ -216,7 +212,6 @@ def _cmd_prepare(args) -> int:
         print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
         return 1
 
-    # --- Вывод результата ---
     if result.status == ProcessingStatus.OK:
         print(
             f"OK: {result.prompt_path} / "
