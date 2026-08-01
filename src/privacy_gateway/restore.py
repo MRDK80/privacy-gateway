@@ -210,6 +210,42 @@ def _substitute(
     return result
 
 
+def _load_manifest_multi_key(
+    manifest_path: Path,
+    keys: list[bytes],
+) -> list[ManifestEntry]:
+    """Загрузить манифест, перебирая ключи до первого успешного (ADR-23).
+
+    load_manifest из manifest.py принимает один ключ и бросает DecryptionError
+    при несовпадении. Здесь реализован перебор ключей в порядке get_all_keys()
+    ([active, retired, ...]), что обеспечивает чтение манифестов, созданных
+    до ротации, без ручных действий.
+
+    Args:
+        manifest_path: Путь к manifest.json.
+        keys:          Список ключей в порядке приоритета.
+
+    Returns:
+        Список ManifestEntry.
+
+    Raises:
+        ConfigurationError: Ни один ключ не подошёл или файл повреждён.
+    """
+    last_exc: DecryptionError | None = None
+    for key in keys:
+        try:
+            return load_manifest(manifest_path, key)
+        except DecryptionError as exc:
+            last_exc = exc
+            continue
+    raise ConfigurationError(
+        f"Не удалось загрузить манифест {manifest_path}: "
+        f"ни один из {len(keys)} ключей не подошёл. "
+        f"Возможно, манифест зашифрован другим ключом или повреждён. "
+        f"Детали: {last_exc}"
+    ) from last_exc
+
+
 def restore_text(
     llm_response: str,
     route_path: Path,
@@ -264,7 +300,7 @@ def restore_text(
     # --- 3. verify_manifest_integrity — ДО любой загрузки/расшифровки ---
     verify_manifest_integrity(route_data, manifest_path)
 
-    # --- 4. Получить все ключи, загрузить и расшифровать манифест ---
+    # --- 4. Получить все ключи, загрузить манифест через MultiFernet (ADR-23) ---
     try:
         keys = get_all_keys()
     except KeyNotFoundError as exc:
@@ -273,16 +309,10 @@ def restore_text(
             f"Запустите 'pgw key create' для создания ключа. Детали: {exc}"
         ) from exc
 
-    try:
-        entries: list[ManifestEntry] = load_manifest(manifest_path, keys[0])
-    except DecryptionError as exc:
-        raise ConfigurationError(
-            f"Не удалось загрузить манифест {manifest_path}. "
-            f"Возможно, манифест зашифрован другим ключом или повреждён. "
-            f"Детали: {exc}"
-        ) from exc
+    # Перебираем все ключи до первого успешного (ADR-23: обратная совместимость ротации).
+    entries: list[ManifestEntry] = _load_manifest_multi_key(manifest_path, keys)
 
-    # Построить словарь token -> plaintext через MultiFernet (ADR-23)
+    # Построить словарь token -> plaintext через decrypt_multi (ADR-23)
     value_map: dict[str, str] = {}
     for entry in entries:
         token_key = entry.token.strip("[]")
