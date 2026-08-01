@@ -46,33 +46,20 @@ from pathlib import Path
 from privacy_gateway.crypto import DecryptionError, decrypt_multi
 from privacy_gateway.keystore import KeyNotFoundError, KeystoreError, get_all_keys
 from privacy_gateway.manifest import load_manifest
-from privacy_gateway.models import ConfigurationError, ManifestEntry, RestoreStrictError
+from privacy_gateway.models import (
+    ConfigurationError,
+    ManifestEntry,
+    RestoreStrictError,
+)
 from privacy_gateway.routing import verify_manifest_integrity
 
-# Регулярное выражение для поиска кандидатов на токены (включая искажённые).
-# Ищет что-либо похожее на [WORD...] — для последующей классификации.
 _TOKEN_CANDIDATE_RE = re.compile(r"\[([^\[\]\n]+)\]")
-
-# Паттерн корректного токена: [TYPE_N], где TYPE — заглавные буквы/цифры,
-# N — целое число >= 1 (ADR-19: регистрозависимо).
 _VALID_TOKEN_RE = re.compile(r"^[A-Z][A-Z0-9]*_[1-9][0-9]*$")
 
 
 @dataclass
 class RestoreResult:
-    """Результат восстановления — только счётчики и токены, без значений.
-
-    Поля:
-        restored_text:      Восстановленный текст (None при ошибке строгого режима).
-        tokens_expected:    Множество токенов из манифеста.
-        tokens_found:       Токены, успешно подставленные.
-        tokens_missing:     Токены из манифеста, не найденные в ответе.
-        tokens_unknown:     Токены в ответе, не из манифеста.
-        tokens_malformed:   Кандидаты, не прошедшие валидацию формата.
-        tokens_duplicated:  Токены, встречающиеся в ответе более одного раза.
-        warnings:           Предупреждения (мягкий режим).
-        strict:             Применялся ли строгий режим.
-    """
+    """Результат восстановления — только счётчики и токены, без значений."""
 
     restored_text: str | None = None
     tokens_expected: set[str] = field(default_factory=set)
@@ -114,23 +101,7 @@ def _resolve_manifest_path(
     route_path: Path,
     manifest_path_override: Path | None,
 ) -> Path:
-    """Разрешить путь к manifest.json (ADR-15).
-
-    Если передан явный override — использовать его.
-    Иначе путь из route.json разрешается относительно каталога route.json,
-    а не рабочего каталога.
-
-    Args:
-        route_data:             Словарь из route.json.
-        route_path:             Путь к route.json.
-        manifest_path_override: Явный путь (из --manifest флага) или None.
-
-    Returns:
-        Абсолютный Path к manifest.json.
-
-    Raises:
-        ConfigurationError: Поле manifest_path отсутствует в route.json.
-    """
+    """Разрешить путь к manifest.json (ADR-15)."""
     if manifest_path_override is not None:
         return manifest_path_override.resolve()
 
@@ -143,7 +114,6 @@ def _resolve_manifest_path(
     candidate = Path(raw)
     if candidate.is_absolute():
         return candidate
-    # Разрешаем относительно каталога route.json (ADR-15)
     return (route_path.parent / candidate).resolve()
 
 
@@ -151,36 +121,26 @@ def _classify_candidates(
     text: str,
     manifest_tokens: set[str],
 ) -> tuple[
-    dict[str, list[tuple[int, int]]],  # known: token -> [(start, end), ...]
-    set[str],                           # unknown valid tokens
-    list[str],                          # malformed candidates
+    dict[str, list[tuple[int, int]]],
+    set[str],
+    list[str],
 ]:
-    """Найти и классифицировать все кандидаты на токены в тексте.
-
-    Регистрозависимо (ADR-19): [email_1] — искажённый, [EMAIL_1] — известный.
-
-    Returns:
-        known:     dict token -> list of (start, end) span positions.
-        unknown:   set valid-format tokens not in manifest.
-        malformed: list of raw candidate strings (внутри скобок) с неверным форматом.
-    """
+    """Найти и классифицировать все кандидаты на токены в тексте."""
     known: dict[str, list[tuple[int, int]]] = {}
     unknown: set[str] = set()
     malformed: list[str] = []
     seen_malformed: set[str] = set()
 
     for m in _TOKEN_CANDIDATE_RE.finditer(text):
-        inner = m.group(1)  # содержимое без скобок
+        inner = m.group(1)
         start, end = m.start(), m.end()
 
         if _VALID_TOKEN_RE.match(inner):
-            # Формат корректен
             if inner in manifest_tokens:
                 known.setdefault(inner, []).append((start, end))
             else:
                 unknown.add(inner)
         else:
-            # Искажённый формат; строгий отказ определяется ADR-16
             if inner not in seen_malformed:
                 malformed.append(inner)
                 seen_malformed.add(inner)
@@ -193,11 +153,7 @@ def _substitute(
     known: dict[str, list[tuple[int, int]]],
     value_map: dict[str, str],
 ) -> str:
-    """Подставить значения для всех известных токенов (ADR-18).
-
-    Обрабатывает дубли — все вхождения заменяются.
-    Работает справа налево, чтобы не сдвигать позиции.
-    """
+    """Подставить значения для всех известных токенов (ADR-18)."""
     spans: list[tuple[int, int, str]] = []
     for token, positions in known.items():
         for start, end in positions:
@@ -216,20 +172,7 @@ def _load_manifest_multi_key(
 ) -> list[ManifestEntry]:
     """Загрузить манифест, перебирая ключи до первого успешного (ADR-23).
 
-    load_manifest из manifest.py принимает один ключ и бросает DecryptionError
-    при несовпадении. Здесь реализован перебор ключей в порядке get_all_keys()
-    ([active, retired, ...]), что обеспечивает чтение манифестов, созданных
-    до ротации, без ручных действий.
-
-    Args:
-        manifest_path: Путь к manifest.json.
-        keys:          Список ключей в порядке приоритета.
-
-    Returns:
-        Список ManifestEntry.
-
-    Raises:
-        ConfigurationError: Ни один ключ не подошёл или файл повреждён.
+    Обеспечивает чтение манифестов, созданных до ротации, без ручных действий.
     """
     last_exc: DecryptionError | None = None
     for key in keys:
@@ -241,7 +184,6 @@ def _load_manifest_multi_key(
     raise ConfigurationError(
         f"Не удалось загрузить манифест {manifest_path}: "
         f"ни один из {len(keys)} ключей не подошёл. "
-        f"Возможно, манифест зашифрован другим ключом или повреждён. "
         f"Детали: {last_exc}"
     ) from last_exc
 
@@ -254,26 +196,9 @@ def restore_text(
 ) -> RestoreResult:
     """Восстановить исходный текст, подставив значения токенов.
 
-    Порядок проверок строго соблюдается (ADR-14, ADR-15):
-    verify_manifest_integrity вызывается до любой работы с манифестом.
-
+    Порядок проверок строго соблюдается (ADR-14, ADR-15).
     Расшифровка через MultiFernet (ADR-23): манифесты, созданные до
-    ротации ключа, остаются читаемы без ручных действий.
-
-    Args:
-        llm_response:           Текст ответа LLM.
-        route_path:             Путь к route.json.
-        manifest_path_override: Явный путь к манифесту (переопределяет route.json).
-        strict:                 True = строгий режим (по умолчанию, ADR-16).
-
-    Returns:
-        RestoreResult. При строгом отказе restored_text is None.
-
-    Raises:
-        ConfigurationError:  Ошибка формата route.json или нарушение целостности.
-        KeystoreError:       Ключ не найден или backend небезопасен.
-        RestoreError:        Ошибка конфигурации/целостности → код 3.
-        RestoreStrictError:  Строгий отказ по неизвестному/искажённому токену → код 5.
+    ротации, остаются читаемы без ручных действий.
     """
     result = RestoreResult(strict=strict)
 
@@ -306,13 +231,16 @@ def restore_text(
     except KeyNotFoundError as exc:
         raise KeystoreError(
             f"Ключ Fernet не найден в keyring. "
-            f"Запустите 'pgw key create' для создания ключа. Детали: {exc}"
+            f"Запустите 'pgw key create' для создания ключа. "
+            f"Детали: {exc}"
         ) from exc
 
-    # Перебираем все ключи до первого успешного (ADR-23: обратная совместимость ротации).
-    entries: list[ManifestEntry] = _load_manifest_multi_key(manifest_path, keys)
+    # Перебираем все ключи до первого успешного (ADR-23).
+    entries: list[ManifestEntry] = _load_manifest_multi_key(
+        manifest_path, keys
+    )
 
-    # Построить словарь token -> plaintext через decrypt_multi (ADR-23)
+    # Строим словарь token -> plaintext через decrypt_multi (ADR-23)
     value_map: dict[str, str] = {}
     for entry in entries:
         token_key = entry.token.strip("[]")
@@ -320,8 +248,8 @@ def restore_text(
             value_map[token_key] = decrypt_multi(entry.encrypted_value, keys)
         except DecryptionError as exc:
             raise ConfigurationError(
-                f"Не удалось расшифровать запись манифеста для токена {entry.token!r}. "
-                f"Детали: {exc}"
+                f"Не удалось расшифровать запись манифеста "
+                f"для токена {entry.token!r}. Детали: {exc}"
             ) from exc
 
     manifest_tokens = set(value_map.keys())
@@ -330,7 +258,6 @@ def restore_text(
     # --- 5. Классифицировать токены и применить подстановку ---
     known, unknown, malformed = _classify_candidates(llm_response, manifest_tokens)
 
-    # Дублированные токены — более одного вхождения (ADR-18)
     for token, positions in known.items():
         if len(positions) > 1:
             result.tokens_duplicated.add(token)
@@ -340,11 +267,9 @@ def restore_text(
     result.tokens_unknown = unknown
     result.tokens_malformed = malformed
 
-    # Предупреждения о пропавших токенах (ADR-17 — не ошибка, но обязательно в отчёт)
     for token in sorted(result.tokens_missing):
         result.warnings.append(f"Токен отсутствует в ответе LLM: {token}")
 
-    # Строгий режим: неизвестные и искажённые — RestoreStrictError (код 5, ADR-21)
     if strict and (unknown or malformed):
         issues: list[str] = []
         if unknown:
@@ -356,7 +281,6 @@ def restore_text(
             + "; ".join(issues)
         )
 
-    # Мягкий режим: предупреждения вместо ошибки
     if not strict:
         for token in sorted(unknown):
             result.warnings.append(
@@ -367,7 +291,6 @@ def restore_text(
                 f"Искажённый кандидат (оставлен как есть): [{candidate}]"
             )
 
-    # Подстановка
     restored = _substitute(llm_response, known, value_map)
     result.restored_text = restored
     return result
@@ -378,17 +301,7 @@ def write_restored(
     out_path: Path,
     overwrite: bool = False,
 ) -> None:
-    """Атомарно записать восстановленный текст в файл (ADR-12).
-
-    Args:
-        text:      Восстановленный текст.
-        out_path:  Путь к результирующему файлу.
-        overwrite: Перезаписывать ли существующий файл.
-
-    Raises:
-        FileExistsError:    Файл уже существует и overwrite=False.
-        ConfigurationError: Ошибка записи.
-    """
+    """Атомарно записать восстановленный текст в файл (ADR-12)."""
     if out_path.exists() and not overwrite:
         raise FileExistsError(
             f"Файл уже существует: {out_path}. "
@@ -397,7 +310,6 @@ def write_restored(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Атомарная запись через временный файл в том же каталоге (ADR-12)
     try:
         fd, tmp_name = tempfile.mkstemp(
             dir=out_path.parent, suffix=".tmp", prefix=".pgw_restore_"
