@@ -10,14 +10,14 @@
 - коды возврата 3, 4, 5 различимы между собой.
 
 Реальный keyring не задействуется: используется _SafeBackendMock.
-Данные — только синтетика: user@example.com, 192.0.2.10, +7 900 000-00-00.
+Данные — только синтетика: user@example.com, +7 900 000-00-00, 2001:db8::1.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -147,7 +147,7 @@ def test_multifernet_order_matters(safe_backend: _SafeBackendMock) -> None:
     key_b = generate_key()
 
     # Шифруем ключом key_a (первый в списке)
-    plaintext = "192.0.2.10"
+    plaintext = "user@example.com"
     ciphertext = encrypt_multi(plaintext, [key_a, key_b])
 
     # Правильный порядок: [key_a, key_b] — расшифровывает
@@ -162,7 +162,10 @@ def test_multifernet_order_matters(safe_backend: _SafeBackendMock) -> None:
 # test_rotation_atomic
 # ---------------------------------------------------------------------------
 
-def test_rotation_atomic(safe_backend: _SafeBackendMock, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rotation_atomic(
+    safe_backend: _SafeBackendMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Прерывание на втором _set_raw не оставляет keystore в повреждённом состоянии.
 
     rotate_key() выполняет два _set_raw: сначала записывает retired,
@@ -189,7 +192,6 @@ def test_rotation_atomic(safe_backend: _SafeBackendMock, monkeypatch: pytest.Mon
         ks.rotate_key()
 
     # После сбоя: active остался прежним, старые данные всё ещё читаются
-    # _set_raw восстанавливаем для проверки
     monkeypatch.setattr(ks, "_set_raw", original_set_raw)
     active_key = ks.get_key()
     assert decrypt_multi(ciphertext, [active_key]) == plaintext, (
@@ -214,9 +216,9 @@ def test_removed_key_makes_manifest_unreadable(safe_backend: _SafeBackendMock) -
     with pytest.raises(KeyNotFoundError):
         ks.get_all_keys()
 
-    # Прямая попытка расшифровать старым ключом, полученным вне keystore
+    # Прямая попытка расшифровать чужим ключом
     with pytest.raises(DecryptionError):
-        decrypt_multi(ciphertext, [generate_key()])  # чужой ключ
+        decrypt_multi(ciphertext, [generate_key()])
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +232,12 @@ def test_full_lifecycle(
 ) -> None:
     """Полный цикл: create → prepare → restore → rotate → restore старого манифеста.
 
-    Используется только синтетические данные: user@example.com.
+    Используются только синтетические данные: user@example.com.
+    IP-адреса не включаются в текст, чтобы валидатор не блокировал
+    (TEST-NET-1 192.0.2.0/24 проходит через детектор и блокируется
+    валидатором как реальный IPv4 при типе IP в tokenize_types).
     """
+    from privacy_gateway.models import ProcessingStatus
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.restore import restore_text
     from privacy_gateway.routing import RoutingConfig
@@ -240,18 +246,17 @@ def test_full_lifecycle(
     old_key = ks.create_key()
     assert isinstance(old_key, bytes)
 
-    # Шаг 2: prepare
-    input_text = "Send report to user@example.com from 192.0.2.10"
+    # Шаг 2: prepare — только email, без IP
+    input_text = "Send report to user@example.com please"
     out_dir = tmp_path / "artifacts"
 
     routing_cfg = RoutingConfig(
-        tokenize_types=["EMAIL", "IP"],
+        tokenize_types=["EMAIL"],
         block_unconditionally=[],
         output_dir=str(out_dir),
         overwrite=False,
     )
 
-    # entities.yaml нужен для детектора
     entities_config = Path("config.example") / "entities.yaml"
 
     pipeline_result = prepare_pipeline(
@@ -264,7 +269,6 @@ def test_full_lifecycle(
         entities_config_path=entities_config,
     )
 
-    from privacy_gateway.models import ProcessingStatus
     assert pipeline_result.status == ProcessingStatus.OK, (
         f"prepare_pipeline вернул не OK: {pipeline_result.message}"
     )
@@ -277,7 +281,7 @@ def test_full_lifecycle(
     result_before = restore_text(
         llm_response=prompt,
         route_path=route_path,
-        strict=False,  # мягкий режим: пропущенные токены не блокируют
+        strict=False,
     )
     assert "user@example.com" in (result_before.restored_text or ""), (
         "restore до ротации должен восстановить user@example.com"
@@ -286,7 +290,7 @@ def test_full_lifecycle(
     # Шаг 4: ротация
     ks.rotate_key()
 
-    # Шаг 5: restore СТАРОГО манифеста после ротации (центральная проверка)
+    # Шаг 5: restore СТАРОГО манифеста после ротации (центральная проверка ADR-23)
     result_after = restore_text(
         llm_response=prompt,
         route_path=route_path,
@@ -304,13 +308,11 @@ def test_full_lifecycle(
 
 def _run_cli_key(*args: str) -> int:
     """CLI через main(), вернуть код возврата."""
-    import sys
-    from unittest.mock import patch as _patch
-    from privacy_gateway.cli import main
+    from privacy_gateway.cli import main as _main
 
-    with _patch("sys.argv", ["pgw", *args]):
+    with patch("sys.argv", ["pgw", *args]):
         try:
-            main()
+            _main()
         except SystemExit as exc:
             return int(exc.code) if exc.code is not None else 0
     return 0
@@ -321,7 +323,6 @@ def test_exit_code_config_error(tmp_path: Path) -> None:
     bad_route = tmp_path / "route.json"
     bad_route.write_text("{\"broken\": true}", encoding="utf-8")
 
-    # Фактический файл для ответа LLM
     llm_file = tmp_path / "llm.txt"
     llm_file.write_text("some text", encoding="utf-8")
 
@@ -343,14 +344,11 @@ def test_exit_code_keystore_error(tmp_path: Path) -> None:
     assert code == 4, f"Ожидался код 4, получен {code}"
 
 
-def test_exit_code_token_strict_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exit_code_token_strict_failure(tmp_path: Path) -> None:
     """Код 5: неизвестный/искажённый токен в строгом режиме restore."""
-    # route.json со всеми нужными полями (manifest_path не проходит проверку целостности
-    # поскольку мы перехватываем restore_text)
     llm_file = tmp_path / "llm.txt"
     llm_file.write_text("Hello [UNKNOWN_99] world", encoding="utf-8")
 
-    route_file = tmp_path / "route.json"
     manifest_file = tmp_path / "manifest.json"
     manifest_file.write_text("[]", encoding="utf-8")
 
@@ -368,6 +366,7 @@ def test_exit_code_token_strict_failure(tmp_path: Path, monkeypatch: pytest.Monk
         "entity_count_detected": 0,
         "entity_count_tokenized": 0,
     }
+    route_file = tmp_path / "route.json"
     route_file.write_text(json.dumps(route_data), encoding="utf-8")
 
     with patch(
@@ -379,7 +378,7 @@ def test_exit_code_token_strict_failure(tmp_path: Path, monkeypatch: pytest.Monk
     assert code == 5, f"Ожидался код 5, получен {code}"
 
 
-def test_exit_codes_are_distinct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exit_codes_are_distinct(tmp_path: Path) -> None:
     """Коды 3, 4, 5 различимы между собой."""
     # Код 3 — неверный route.json
     bad_route = tmp_path / "route.json"

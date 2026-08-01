@@ -20,11 +20,11 @@ from unittest.mock import patch
 import pytest
 
 from privacy_gateway.cli import main
+from privacy_gateway.crypto import generate_key
 from privacy_gateway.keystore import (
     KeyExistsError,
     KeystoreError,
 )
-from privacy_gateway.crypto import generate_key
 
 # Паттерн Fernet-ключа: base64url, ровно 44 символа, заканчивается '='
 _FERNET_KEY_RE = re.compile(r"[A-Za-z0-9_\-]{43}=")
@@ -46,7 +46,9 @@ def _run_cli(*args: str, capsys: pytest.CaptureFixture) -> int:  # type: ignore[
 
 def test_key_create_success(capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """pgw key create → код 0, stdout содержит подтверждение."""
-    with patch("privacy_gateway.cli.create_key", return_value=generate_key()) as mock_create:
+    # create_key импортируется внутри _cmd_key_create, поэтому патчим
+    # в модуле keystore, а не в cli.
+    with patch("privacy_gateway.keystore.create_key", return_value=generate_key()) as mock_create:
         code = _run_cli("key", "create", capsys=capsys)
 
     assert code == 0
@@ -75,7 +77,7 @@ def test_key_create_refuses_existing(capsys: pytest.CaptureFixture) -> None:  # 
             raise KeyExistsError("Ключ уже существует.")
         return original_key
 
-    with patch("privacy_gateway.cli.create_key", side_effect=_refusing_create):
+    with patch("privacy_gateway.keystore.create_key", side_effect=_refusing_create):
         code = _run_cli("key", "create", capsys=capsys)
 
     assert code == 3
@@ -95,7 +97,7 @@ def test_key_create_refuses_existing(capsys: pytest.CaptureFixture) -> None:  # 
 
 def test_key_create_force_overwrites(capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """pgw key create --force → create_key(force=True), код 0."""
-    with patch("privacy_gateway.cli.create_key", return_value=generate_key()) as mock_create:
+    with patch("privacy_gateway.keystore.create_key", return_value=generate_key()) as mock_create:
         code = _run_cli("key", "create", "--force", capsys=capsys)
 
     assert code == 0
@@ -118,12 +120,11 @@ def test_key_never_printed(capsys: pytest.CaptureFixture) -> None:  # type: igno
         ("key", "status"),
     ]
     side_effects = [
-        generate_key(),             # успех
+        generate_key(),            # успех
         KeyExistsError("exists"),  # отказ
-        generate_key(),             # force-перезапись
+        generate_key(),            # force-перезапись
     ]
 
-    import itertools
     se_iter = iter(side_effects)
 
     def _side_effect(*, force: bool = False) -> bytes:
@@ -133,8 +134,8 @@ def test_key_never_printed(capsys: pytest.CaptureFixture) -> None:  # type: igno
         return val  # type: ignore[return-value]
 
     with (
-        patch("privacy_gateway.cli.create_key", side_effect=_side_effect),
-        patch("privacy_gateway.cli.key_exists", return_value=True),
+        patch("privacy_gateway.keystore.create_key", side_effect=_side_effect),
+        patch("privacy_gateway.keystore.key_exists", return_value=True),
     ):
         for args in scenarios:
             _run_cli(*args, capsys=capsys)
@@ -154,7 +155,7 @@ def test_key_never_printed(capsys: pytest.CaptureFixture) -> None:  # type: igno
 def test_key_create_backend_unavailable(capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """Недоступный backend → читаемое сообщение в stderr, код 4."""
     with patch(
-        "privacy_gateway.cli.create_key",
+        "privacy_gateway.keystore.create_key",
         side_effect=KeystoreError("Unsafe or unavailable keyring backend"),
     ):
         code = _run_cli("key", "create", capsys=capsys)
@@ -173,7 +174,7 @@ def test_key_create_backend_unavailable(capsys: pytest.CaptureFixture) -> None: 
 
 def test_key_status_no_value(capsys: pytest.CaptureFixture) -> None:  # type: ignore[type-arg]
     """key status при наличии ключа → код 0, значение ключа не выводится."""
-    with patch("privacy_gateway.cli.key_exists", return_value=True):
+    with patch("privacy_gateway.keystore.key_exists", return_value=True):
         code = _run_cli("key", "status", capsys=capsys)
 
     assert code == 0
