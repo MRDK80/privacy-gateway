@@ -48,6 +48,9 @@ pgw = "privacy_gateway.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+privacy_gateway = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
