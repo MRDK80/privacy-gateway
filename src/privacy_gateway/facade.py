@@ -1,9 +1,10 @@
 """Библиотечный API Privacy Gateway — публичные модели контракта.
 
 Модуль задаёт стабильные типы, которыми внешнее приложение обменивается
-с Privacy Gateway. Класс ``PrivacyGateway`` с методами ``prepare`` и
-``restore`` добавляется в этот же модуль следующими шагами задачи; здесь
-зафиксирован только контракт данных.
+с Privacy Gateway. Класс ``PrivacyGateway`` реализует жизненный цикл
+prepare → внешний обработчик → restore поверх существующего конвейера
+проекта. На текущем шаге реализованы ``prepare`` и освобождение ресурсов;
+``restore`` добавляется следующим шагом.
 
 Жизненный цикл контекста восстановления:
 
@@ -28,20 +29,40 @@ from __future__ import annotations
 
 import base64
 import json
+import secrets
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from privacy_gateway.exceptions import RestoreError
+from privacy_gateway import keystore as _keystore
+from privacy_gateway import pipeline as _pipeline
+from privacy_gateway import routing as _routing
+from privacy_gateway.exceptions import (
+    ConfigurationError,
+    DetectionError,
+    KeyStoreError,
+    RestoreError,
+)
+from privacy_gateway.models import ConfigurationError as _InternalConfigurationError
+from privacy_gateway.models import ProcessingStatus as _ProcessingStatus
 
 __all__ = [
     "CONTEXT_FORMAT_VERSION",
     "GatewayConfig",
     "PreparedPayload",
+    "PrivacyGateway",
     "RestoreContext",
     "RestoredPayload",
 ]
 
 CONTEXT_FORMAT_VERSION = "1"
+
+# Права рабочего каталога: только владелец.
+_WORKSPACE_MODE = 0o700
+
+# Нейтральная метка источника для библиотечных операций.
+_SOURCE_REF = "library"
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,3 +231,179 @@ class RestoredPayload:
     def __str__(self) -> str:
         """Вернуть представление без раскрытия восстановленного текста."""
         return self.__repr__()
+
+
+class PrivacyGateway:
+    """Публичный фасад Privacy Gateway для библиотечной интеграции.
+
+    Экземпляр не хранит изменяемого состояния между вызовами: конфигурация
+    маршрутизации загружается на каждый вызов, ключ запрашивается на время
+    операции, а каждая подготовка получает собственный рабочий подкаталог.
+    Поэтому один экземпляр можно использовать из нескольких потоков.
+
+    Экземпляр не логирует текст, значения, ключевой материал и содержимое
+    защищённых артефактов.
+    """
+
+    def __init__(self, config: GatewayConfig | None = None) -> None:
+        """Создать фасад с заданной конфигурацией."""
+        self._config = config if config is not None else GatewayConfig()
+
+    @property
+    def config(self) -> GatewayConfig:
+        """Вернуть конфигурацию фасада."""
+        return self._config
+
+    def prepare(
+        self,
+        text: str,
+        *,
+        correlation_id: str | None = None,
+    ) -> PreparedPayload:
+        """Подготовить текст для передачи внешнему обработчику.
+
+        Args:
+            text:           Исходный текст приложения-потребителя.
+            correlation_id: Необязательный идентификатор операции. Не следует
+                помещать в него чувствительные данные: он возвращается
+                вызывающей стороне вместе с результатом.
+
+        Returns:
+            PreparedPayload с защищённым текстом и непрозрачным контекстом.
+
+        Raises:
+            ConfigurationError: Некорректная конфигурация либо недоступный
+                рабочий каталог.
+            KeyStoreError:      Ключ недоступен в хранилище ключей.
+            DetectionError:     Подготовка остановлена по правилу fail-closed;
+                защищённый текст не сформирован, артефакты удалены.
+        """
+        routing_cfg = self._load_routing()
+        key = self._load_key()
+        handle = secrets.token_hex(16)
+        workspace = self._create_workspace(handle)
+
+        try:
+            result = _pipeline.prepare_pipeline(
+                text=text,
+                source_ref=_SOURCE_REF,
+                routing_cfg=routing_cfg,
+                key=key,
+                out_dir=workspace,
+                overwrite=False,
+                entities_config_path=self._config.entities_config_path,
+            )
+        except _InternalConfigurationError as exc:
+            self._remove_workspace(workspace)
+            raise ConfigurationError(
+                "Подготовка невозможна: некорректная конфигурация."
+            ) from exc
+        except OSError as exc:
+            self._remove_workspace(workspace)
+            raise ConfigurationError(
+                "Не удалось записать защищённые артефакты."
+            ) from exc
+
+        if result.status is not _ProcessingStatus.OK:
+            self._remove_workspace(workspace)
+            raise DetectionError(
+                "Подготовка остановлена: текст не признан безопасным.",
+                status=str(result.status.value),
+            )
+
+        prompt_path = result.prompt_path
+        route_path = result.route_path
+        if prompt_path is None or route_path is None:
+            self._remove_workspace(workspace)
+            raise ConfigurationError(
+                "Подготовка не сформировала защищённые артефакты."
+            )
+
+        try:
+            protected_text = prompt_path.read_text(encoding="utf-8")
+            token_count = self._read_token_count(route_path)
+        except (OSError, ValueError) as exc:
+            self._remove_workspace(workspace)
+            raise ConfigurationError(
+                "Не удалось прочитать защищённые артефакты."
+            ) from exc
+
+        context = RestoreContext(
+            _handle=handle,
+            _route_path=route_path,
+            _workspace_dir=workspace,
+            _owned_workspace=True,
+            _correlation_id=correlation_id,
+        )
+        return PreparedPayload(
+            text=protected_text,
+            context=context,
+            correlation_id=correlation_id,
+            token_count=token_count,
+        )
+
+    def discard(self, context: RestoreContext) -> None:
+        """Удалить защищённые артефакты, связанные с контекстом.
+
+        Вызов идемпотентен. При ``keep_artifacts`` артефакты сохраняются, и
+        ответственность за их удаление остаётся на приложении-потребителе.
+
+        Raises:
+            RestoreError: Контекст не принадлежит этому фасаду.
+        """
+        if not context._owned_workspace:
+            raise RestoreError(
+                "Контекст не управляется этим экземпляром Privacy Gateway."
+            )
+        if self._config.keep_artifacts:
+            return
+        self._remove_workspace(context._workspace_dir)
+
+    def _load_routing(self) -> _routing.RoutingConfig:
+        """Загрузить конфигурацию маршрутизации для одной операции."""
+        try:
+            return _routing.load_routing_config(self._config.routing_config_path)
+        except _InternalConfigurationError as exc:
+            raise ConfigurationError(
+                "Некорректная конфигурация маршрутизации."
+            ) from exc
+        except Exception as exc:  # noqa: BLE001
+            raise ConfigurationError(
+                "Не удалось загрузить конфигурацию маршрутизации."
+            ) from exc
+
+    def _load_key(self) -> bytes:
+        """Получить активный ключ на время одной операции."""
+        try:
+            return _keystore.get_key()
+        except _keystore.KeystoreError as exc:
+            raise KeyStoreError(
+                "Ключ недоступен в хранилище ключей."
+            ) from exc
+
+    def _create_workspace(self, handle: str) -> Path:
+        """Создать изолированный рабочий подкаталог для одной операции."""
+        base = self._config.workspace_dir
+        try:
+            if base is None:
+                return Path(tempfile.mkdtemp(prefix="pgw-"))
+            base.mkdir(parents=True, exist_ok=True)
+            workspace = base / f"pgw-{handle}"
+            workspace.mkdir(mode=_WORKSPACE_MODE)
+            return workspace
+        except OSError as exc:
+            raise ConfigurationError("Рабочий каталог недоступен.") from exc
+
+    @staticmethod
+    def _remove_workspace(workspace: Path) -> None:
+        """Удалить рабочий подкаталог операции, не поднимая ошибок."""
+        shutil.rmtree(workspace, ignore_errors=True)
+
+    @staticmethod
+    def _read_token_count(route_path: Path) -> int:
+        """Прочитать счётчик токенов из служебных метаданных операции."""
+        decoded: object = json.loads(route_path.read_text(encoding="utf-8"))
+        if not isinstance(decoded, dict):
+            return 0
+        value = decoded.get("token_count", 0)
+        return value if isinstance(value, int) else 0
