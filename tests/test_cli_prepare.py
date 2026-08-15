@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from privacy_gateway.crypto import generate_key
+
+MockKeyring = tuple[MagicMock, bytes]
 
 # Синтетические тестовые данные (не реальные)
 SYNTH_EMAIL = "user@example.com"  # pragma: allowlist secret
@@ -32,7 +35,7 @@ def fernet_key() -> bytes:
 
 
 @pytest.fixture()
-def mock_keyring(fernet_key):
+def mock_keyring(fernet_key: bytes) -> Iterator[MockKeyring]:
     """Подменяет keystore.get_key() без обращения к реальному keyring."""
     with patch(
         "privacy_gateway.pipeline.get_key",
@@ -85,7 +88,7 @@ def _run_prepare(
 # Сквозной путь — OK
 # ---------------------------------------------------------------------------
 
-def test_prepare_creates_artifacts(tmp_path, mock_keyring):
+def test_prepare_creates_artifacts(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, SYNTH_TEXT, key)
     assert code == 0
@@ -93,7 +96,9 @@ def test_prepare_creates_artifacts(tmp_path, mock_keyring):
     assert (out_dir / "route.json").exists()
 
 
-def test_prompt_has_no_original_values(tmp_path, mock_keyring):
+def test_prompt_has_no_original_values(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, SYNTH_TEXT, key)
     assert code == 0
@@ -102,7 +107,9 @@ def test_prompt_has_no_original_values(tmp_path, mock_keyring):
     assert SYNTH_IP.encode() not in content
 
 
-def test_route_json_has_no_sensitive_data(tmp_path, mock_keyring):
+def test_route_json_has_no_sensitive_data(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, SYNTH_TEXT, key)
     assert code == 0
@@ -112,7 +119,9 @@ def test_route_json_has_no_sensitive_data(tmp_path, mock_keyring):
     assert key not in raw
 
 
-def test_route_json_valid_and_versioned(tmp_path, mock_keyring):
+def test_route_json_valid_and_versioned(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, SYNTH_TEXT, key)
     assert code == 0
@@ -123,7 +132,9 @@ def test_route_json_valid_and_versioned(tmp_path, mock_keyring):
     assert "timestamp" in data
 
 
-def test_manifest_created_and_encrypted(tmp_path, mock_keyring):
+def test_manifest_created_and_encrypted(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, SYNTH_TEXT, key)
     assert code == 0
@@ -136,7 +147,7 @@ def test_manifest_created_and_encrypted(tmp_path, mock_keyring):
         assert SYNTH_IP not in entry["encrypted_value"]
 
 
-def test_prepare_from_stdin(tmp_path, mock_keyring):
+def test_prepare_from_stdin(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """Проверяем pipeline напрямую с source_ref=stdin."""
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.routing import load_routing_config
@@ -161,14 +172,16 @@ def test_prepare_from_stdin(tmp_path, mock_keyring):
 # Блокировка
 # ---------------------------------------------------------------------------
 
-def test_blocked_returns_nonzero(tmp_path, mock_keyring):
+def test_blocked_returns_nonzero(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     _, key = mock_keyring
     blocked_text = SYNTH_SECRET_KW + "\n"
     code, out_dir = _run_prepare(tmp_path, blocked_text, key)
     assert code != 0
 
 
-def test_pending_returns_distinct_code(tmp_path, mock_keyring):
+def test_pending_returns_distinct_code(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     """APENDING возвращает код, отличный от BLOCKED."""
     from privacy_gateway.models import ProcessingStatus
     from privacy_gateway.pipeline import prepare_pipeline
@@ -207,7 +220,7 @@ def test_pending_returns_distinct_code(tmp_path, mock_keyring):
     assert pending_code != blocked_code
 
 
-def test_no_artifacts_on_blocked(tmp_path, mock_keyring):
+def test_no_artifacts_on_blocked(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """При BLOCKED ни один файл не создан."""
     _, key = mock_keyring
     blocked_text = SYNTH_SECRET_KW + "\n"
@@ -218,7 +231,9 @@ def test_no_artifacts_on_blocked(tmp_path, mock_keyring):
     assert not (out_dir / "manifest.json").exists()
 
 
-def test_error_message_does_not_leak_value(tmp_path, mock_keyring):
+def test_error_message_does_not_leak_value(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     """Сообщение об ошибке не содержит найденного значения."""
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.routing import load_routing_config
@@ -241,14 +256,16 @@ def test_error_message_does_not_leak_value(tmp_path, mock_keyring):
 # Границы
 # ---------------------------------------------------------------------------
 
-def test_empty_input(tmp_path, mock_keyring):
+def test_empty_input(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     _, key = mock_keyring
     code, out_dir = _run_prepare(tmp_path, "", key)
     assert code != 0
     assert not (out_dir / "prompt.txt").exists()
 
 
-def test_existing_output_not_overwritten(tmp_path, mock_keyring):
+def test_existing_output_not_overwritten(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     """Без --overwrite существующие артефакты не затираются."""
     from privacy_gateway.pipeline import prepare_pipeline
     from privacy_gateway.routing import load_routing_config
@@ -273,7 +290,7 @@ def test_existing_output_not_overwritten(tmp_path, mock_keyring):
     assert existing.read_text(encoding="utf-8") == "original"
 
 
-def test_missing_keyring_key_message(tmp_path):
+def test_missing_keyring_key_message(tmp_path: Path) -> None:
     """При отсутствии ключа — понятное сообщение, не трассировка."""
     from privacy_gateway.keystore import KeyNotFoundError
 
