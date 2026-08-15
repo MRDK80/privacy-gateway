@@ -451,3 +451,29 @@ email, IP-адреса, серверы, финансовые данные и д�
 Корневая политика репозитория находится в [`SECURITY.md`](SECURITY.md).
 Техническая модель угроз находится в
 [`docs/SECURITY.md`](docs/SECURITY.md).
+
+## Библиотечный API
+
+Privacy Gateway можно использовать как библиотеку — без вызова CLI и без
+обращения к внутренним модулям:
+
+```python
+from privacy_gateway import GatewayConfig, PrivacyGateway
+
+gateway = PrivacyGateway(GatewayConfig())
+
+prepared = gateway.prepare(text, correlation_id="req-1")
+response_text = external_processor(prepared.text)
+restored = gateway.restore(response_text, context=prepared.context)
+
+gateway.discard(prepared.context)
+```
+
+`prepare` возвращает защищённый текст и непрозрачный контекст восстановления.
+`restore` проверяет целостность защищённых артефактов до возврата открытого
+текста; строгий режим включён по умолчанию. Артефакты удаляет потребитель
+вызовом `discard`.
+
+Полный контракт — модели, исключения, жизненный цикл контекста,
+потокобезопасность и правила очистки — в
+[`docs/LIBRARY_API.md`](docs/LIBRARY_API.md).

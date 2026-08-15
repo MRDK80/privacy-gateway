@@ -5,6 +5,32 @@
 
 ## [Unreleased]
 
+### Добавлено (#14 — библиотечный API)
+
+- `facade.py` — публичный фасад `PrivacyGateway` с методами `prepare`, `restore`
+  и `discard` поверх существующего конвейера, без дублирования детекции,
+  токенизации, шифрования и manifest.
+- Публичные модели `GatewayConfig`, `PreparedPayload`, `RestoredPayload` и
+  непрозрачный `RestoreContext` с сериализацией через `to_token`/`from_token`.
+- `exceptions.py` — стабильная иерархия: `PrivacyGatewayError`,
+  `ConfigurationError`, `DetectionError`, `KeyStoreError`, `IntegrityError`,
+  `RestoreError`, `StrictTokenError`.
+- Стабильный публичный путь импорта через `privacy_gateway.__all__` и маркер
+  `py.typed` в поставке пакета.
+- `docs/LIBRARY_API.md` — контракт, жизненный цикл контекста,
+  потокобезопасность, правила очистки и fail-closed.
+- Тесты: `test_public_contract.py`, `test_facade_prepare.py`,
+  `test_facade_restore.py` — 51 тест, включая round-trip, Unicode, несколько
+  значений, недействительный контекст, повреждение артефактов, отсутствие
+  ключа и строгий режим.
+- ADR-26, ADR-27, ADR-28 в `docs/DECISIONS.md`.
+
+### Не изменено (#14)
+
+- `cli.py`, `pipeline.py`, `restore.py`, `manifest.py`, `keystore.py`,
+  `routing.py` и `models.py` не затронуты: команды, параметры и коды
+  завершения 0/1/2/3/4/5 сохранены.
+
 ### Добавлено (Э8 — ротация ключей и MultiFernet)
 
 - `crypto.py` — расширен поддержкой MultiFernet:
