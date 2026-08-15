@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -47,7 +48,7 @@ def fernet_key() -> bytes:
 
 
 @pytest.fixture()
-def mock_keyring(fernet_key: bytes):
+def mock_keyring(fernet_key: bytes) -> Iterator[bytes]:
     """Подменяет get_all_keys в pipeline и restore без обращения к реальному keyring."""
     with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key):
         with patch("privacy_gateway.restore.get_all_keys", return_value=[fernet_key]):
@@ -348,12 +349,16 @@ def test_integrity_checked_before_decrypt(
 
     route_path = out_dir / "route.json"
 
-    get_all_keys_called = []
-    load_manifest_called = []
+    get_all_keys_called: list[bool] = []
+    load_manifest_called: list[bool] = []
+
+    def _record_get_all_keys() -> list[bytes]:
+        get_all_keys_called.append(True)
+        return [key]
 
     with patch(
         "privacy_gateway.restore.get_all_keys",
-        side_effect=lambda: get_all_keys_called.append(True) or [key],
+        side_effect=_record_get_all_keys,
     ):
         with patch(
             "privacy_gateway.restore.load_manifest",

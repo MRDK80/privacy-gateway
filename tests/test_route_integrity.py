@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from privacy_gateway.crypto import generate_key
 from privacy_gateway.models import ConfigurationError
 from privacy_gateway.routing import verify_manifest_integrity
+
+MockKeyring = tuple[MagicMock, bytes]
 
 # ---------------------------------------------------------------------------
 # Synthetic test data (not real PII)
@@ -39,7 +42,7 @@ def fernet_key() -> bytes:
 
 
 @pytest.fixture()
-def mock_keyring(fernet_key: bytes):
+def mock_keyring(fernet_key: bytes) -> Iterator[MockKeyring]:
     with patch("privacy_gateway.pipeline.get_key", return_value=fernet_key) as m:
         yield m, fernet_key
 
@@ -67,7 +70,7 @@ def _run_prepare(tmp_path: Path, key: bytes, text: str = SYNTH_TEXT) -> Path:
 # Generation tests
 # ---------------------------------------------------------------------------
 
-def test_route_has_manifest_sha256(tmp_path: Path, mock_keyring: tuple) -> None:
+def test_route_has_manifest_sha256(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """After prepare, route.json must contain manifest_sha256 (64 lowercase hex)."""
     _, key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
@@ -80,7 +83,7 @@ def test_route_has_manifest_sha256(tmp_path: Path, mock_keyring: tuple) -> None:
     assert all(c in "0123456789abcdef" for c in sha)
 
 
-def test_format_version_is_1_1(tmp_path: Path, mock_keyring: tuple) -> None:
+def test_format_version_is_1_1(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """format_version must be '1.1' after prepare."""
     _, key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
@@ -88,7 +91,7 @@ def test_format_version_is_1_1(tmp_path: Path, mock_keyring: tuple) -> None:
     assert data["format_version"] == "1.1"
 
 
-def test_sha256_matches_actual_file(tmp_path: Path, mock_keyring: tuple) -> None:
+def test_sha256_matches_actual_file(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """manifest_sha256 in route.json must equal sha256 of manifest.json bytes."""
     _, key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
@@ -101,7 +104,7 @@ def test_sha256_matches_actual_file(tmp_path: Path, mock_keyring: tuple) -> None
 # Verification tests
 # ---------------------------------------------------------------------------
 
-def test_verify_passes_on_valid_pair(tmp_path: Path, mock_keyring: tuple) -> None:
+def test_verify_passes_on_valid_pair(tmp_path: Path, mock_keyring: MockKeyring) -> None:
     """A freshly prepared pair must pass verify_manifest_integrity silently."""
     _, key = mock_keyring
     out_dir = _run_prepare(tmp_path, key)
@@ -111,7 +114,7 @@ def test_verify_passes_on_valid_pair(tmp_path: Path, mock_keyring: tuple) -> Non
 
 
 def test_verify_detects_modified_manifest(
-    tmp_path: Path, mock_keyring: tuple
+    tmp_path: Path, mock_keyring: MockKeyring
 ) -> None:
     """Appending a byte to manifest.json must cause ConfigurationError."""
     _, key = mock_keyring
@@ -126,7 +129,7 @@ def test_verify_detects_modified_manifest(
 
 
 def test_verify_detects_swapped_manifest(
-    tmp_path: Path, mock_keyring: tuple
+    tmp_path: Path, mock_keyring: MockKeyring
 ) -> None:
     """Central test: manifest from a different prepare run must be rejected."""
     _, key = mock_keyring
@@ -167,7 +170,9 @@ def test_verify_unknown_version_errors(tmp_path: Path) -> None:
         verify_manifest_integrity(route_data, manifest_path)
 
 
-def test_verify_missing_manifest_file(tmp_path: Path, mock_keyring: tuple) -> None:
+def test_verify_missing_manifest_file(
+    tmp_path: Path, mock_keyring: MockKeyring
+) -> None:
     """Missing manifest.json must raise ConfigurationError.
 
     The error includes path information but no raw traceback.
@@ -185,7 +190,7 @@ def test_verify_missing_manifest_file(tmp_path: Path, mock_keyring: tuple) -> No
 
 
 def test_error_message_has_no_manifest_content(
-    tmp_path: Path, mock_keyring: tuple
+    tmp_path: Path, mock_keyring: MockKeyring
 ) -> None:
     """Error message on hash mismatch must not contain manifest file content."""
     _, key = mock_keyring
