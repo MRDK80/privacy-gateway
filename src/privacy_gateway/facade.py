@@ -3,8 +3,7 @@
 Модуль задаёт стабильные типы, которыми внешнее приложение обменивается
 с Privacy Gateway. Класс ``PrivacyGateway`` реализует жизненный цикл
 prepare → внешний обработчик → restore поверх существующего конвейера
-проекта. На текущем шаге реализованы ``prepare`` и освобождение ресурсов;
-``restore`` добавляется следующим шагом.
+проекта. Реализованы ``prepare``, ``restore`` и освобождение ресурсов.
 
 Жизненный цикл контекста восстановления:
 
@@ -37,15 +36,19 @@ from pathlib import Path
 
 from privacy_gateway import keystore as _keystore
 from privacy_gateway import pipeline as _pipeline
+from privacy_gateway import restore as _restore
 from privacy_gateway import routing as _routing
 from privacy_gateway.exceptions import (
     ConfigurationError,
     DetectionError,
+    IntegrityError,
     KeyStoreError,
     RestoreError,
+    StrictTokenError,
 )
 from privacy_gateway.models import ConfigurationError as _InternalConfigurationError
 from privacy_gateway.models import ProcessingStatus as _ProcessingStatus
+from privacy_gateway.models import RestoreStrictError as _InternalStrictError
 
 __all__ = [
     "CONTEXT_FORMAT_VERSION",
@@ -340,6 +343,81 @@ class PrivacyGateway:
             context=context,
             correlation_id=correlation_id,
             token_count=token_count,
+        )
+
+    def restore(
+        self,
+        text: str,
+        *,
+        context: RestoreContext,
+        correlation_id: str | None = None,
+    ) -> RestoredPayload:
+        """Восстановить исходные значения в ответе внешнего обработчика.
+
+        Проверка целостности защищённых артефактов выполняется до возврата
+        открытого текста. В строгом режиме недопустимые токены во внешнем
+        ответе приводят к отказу, и открытый текст не возвращается.
+
+        Args:
+            text:           Ответ внешнего обработчика.
+            context:        Непрозрачный контекст, полученный из ``prepare``.
+            correlation_id: Идентификатор операции. По умолчанию берётся из
+                контекста.
+
+        Returns:
+            RestoredPayload с восстановленным текстом и счётчиками токенов.
+
+        Raises:
+            RestoreError:     Контекст недействителен либо восстановление
+                невозможно.
+            StrictTokenError: Строгий режим: внешний ответ содержит
+                неизвестные или искажённые токены.
+            IntegrityError:   Проверка целостности не пройдена; открытый текст
+                не возвращается.
+            KeyStoreError:    Ключ недоступен в хранилище ключей.
+        """
+        effective_id = (
+            correlation_id
+            if correlation_id is not None
+            else context._correlation_id
+        )
+        route_path = context._route_path
+        if not route_path.is_file():
+            raise RestoreError("Контекст восстановления недействителен.")
+
+        try:
+            result = _restore.restore_text(
+                llm_response=text,
+                route_path=route_path,
+                manifest_path_override=None,
+                strict=self._config.strict,
+            )
+        except _InternalStrictError as exc:
+            raise StrictTokenError(
+                "Строгий режим: внешний ответ содержит недопустимые токены."
+            ) from exc
+        except _keystore.KeystoreError as exc:
+            raise KeyStoreError(
+                "Ключ недоступен в хранилище ключей."
+            ) from exc
+        except _InternalConfigurationError as exc:
+            raise IntegrityError(
+                "Проверка целостности защищённых артефактов не пройдена."
+            ) from exc
+        except _restore.RestoreError as exc:
+            raise RestoreError("Восстановление невозможно.") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise RestoreError("Восстановление невозможно.") from exc
+
+        restored_text = result.restored_text
+        if restored_text is None:
+            raise RestoreError("Восстановление не вернуло результат.")
+
+        return RestoredPayload(
+            text=restored_text,
+            correlation_id=effective_id,
+            tokens_restored=result.tokens_found_count,
+            tokens_missing=result.tokens_missing_count,
         )
 
     def discard(self, context: RestoreContext) -> None:
