@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-08-15
+
 ### Добавлено (#14 — библиотечный API)
 
 - `facade.py` — публичный фасад `PrivacyGateway` с методами `prepare`, `restore`
@@ -255,5 +257,6 @@
 - Семантика `PENDING` задокументирована в `models.py` и `validator.py`
 - `ProcessingStatus` в `models.py` расширен docstring'ом с полной семантикой
 
-[0.2.0]: https://github.com/MRDK80/privacy-gateway/compare/v0.1.0...feat/e6-routing
+[0.3.0]: https://github.com/MRDK80/privacy-gateway/commits/main
+[0.2.0]: https://github.com/MRDK80/privacy-gateway/commits/main
 [0.1.0]: https://github.com/MRDK80/privacy-gateway/commits/main

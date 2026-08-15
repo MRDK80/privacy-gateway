@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -25,7 +26,13 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 def test_package_importable() -> None:
     """Пакет privacy_gateway должен импортироваться."""
-    assert privacy_gateway.__version__ == "0.1.0"
+    assert privacy_gateway.__version__ == "0.3.0"
+
+
+def test_version_matches_distribution_metadata() -> None:
+    """__version__ должен совпадать с версией установленного дистрибутива."""
+    distribution_version = importlib.metadata.version("privacy-gateway")
+    assert privacy_gateway.__version__ == distribution_version
 
 
 def test_help_exit_code() -> None:
