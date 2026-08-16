@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,66 @@ from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
 _DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Трансляция исключений в коды завершения (ADR-21)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ExceptionRule:
+    """Тип исключения → префикс сообщения stderr и код завершения."""
+
+    exception_type: type[Exception]
+    exit_code: int
+    prefix: str
+
+
+def _report_exception(
+    exc: Exception,
+    rules: tuple[_ExceptionRule, ...],
+    *,
+    default_prefix: str = "Непредвиденная ошибка",
+    default_code: int = 1,
+) -> int:
+    """Напечатать `{prefix}: {exc}` в stderr и вернуть код завершения.
+
+    Правила проверяются по порядку через isinstance, поэтому подклассы
+    должны идти раньше базовых классов. Неизвестное исключение получает
+    код 1 (ADR-21).
+
+    Ветки с фиксированным безопасным текстом без `str(exc)` сюда не
+    передаются: они остаются явными в командных функциях.
+    """
+    for rule in rules:
+        if isinstance(exc, rule.exception_type):
+            print(f"{rule.prefix}: {exc}", file=sys.stderr)
+            return rule.exit_code
+    print(f"{default_prefix}: {exc}", file=sys.stderr)
+    return default_code
+
+
+# Правила для типов, доступных на уровне модуля. Правила для типов,
+# импортируемых лениво (restore, keystore), строятся в самих командах.
+_INPUT_RULES: tuple[_ExceptionRule, ...] = (
+    _ExceptionRule(InputError, 3, "Ошибка чтения"),
+)
+_LLM_INPUT_RULES: tuple[_ExceptionRule, ...] = (
+    _ExceptionRule(InputError, 3, "Ошибка чтения ответа LLM"),
+)
+_CONFIG_RULES: tuple[_ExceptionRule, ...] = (
+    _ExceptionRule(ConfigurationError, 3, "Ошибка конфигурации"),
+)
+_KEYSTORE_RULES: tuple[_ExceptionRule, ...] = (
+    _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+)
+# Ошибка записи результата restore даёт код 1, а не 3 (#28): поведение
+# зафиксировано тестами и в рамках #18 не исправляется.
+_RESTORE_WRITE_RULES: tuple[_ExceptionRule, ...] = (
+    _ExceptionRule(FileExistsError, 3, "Ошибка"),
+    _ExceptionRule(ConfigurationError, 1, "Ошибка записи"),
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -226,15 +287,13 @@ def _cmd_detect(args: argparse.Namespace) -> int:
             else read_input(args.file)
         )
     except InputError as exc:
-        print(f"Ошибка чтения: {exc}", file=sys.stderr)
-        return 3
+        return _report_exception(exc, _INPUT_RULES)
 
     config_path = Path(args.config) if args.config else _DEFAULT_ENTITIES_CONFIG
     try:
         cfg = load_config(config_path)
     except ConfigurationError as exc:
-        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
-        return 3
+        return _report_exception(exc, _CONFIG_RULES)
 
     entities = detect_entities(input_text.text, cfg)
 
@@ -257,15 +316,13 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
             else read_input(args.file)
         )
     except InputError as exc:
-        print(f"Ошибка чтения: {exc}", file=sys.stderr)
-        return 3
+        return _report_exception(exc, _INPUT_RULES)
 
     routing_path = Path(args.routing) if args.routing else None
     try:
         routing_cfg = load_routing_config(routing_path)
     except ConfigurationError as exc:
-        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
-        return 3
+        return _report_exception(exc, _CONFIG_RULES)
 
     if args.out:
         routing_cfg.output_dir = args.out
@@ -277,8 +334,7 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
     try:
         key = get_key()
     except KeystoreError as exc:
-        print(f"Ошибка keystore: {exc}", file=sys.stderr)
-        return 4
+        return _report_exception(exc, _KEYSTORE_RULES)
 
     source_ref: str = input_text.path.name if input_text.path else "stdin"
 
@@ -292,12 +348,8 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
             overwrite=overwrite,
             entities_config_path=entities_config_path,
         )
-    except ConfigurationError as exc:
-        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
-        return 3
     except Exception as exc:  # noqa: BLE001
-        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
-        return 1
+        return _report_exception(exc, _CONFIG_RULES)
 
     if result.status == ProcessingStatus.OK:
         print(
@@ -320,12 +372,20 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     try:
         input_text = read_input(args.file)
     except InputError as exc:
-        print(f"Ошибка чтения ответа LLM: {exc}", file=sys.stderr)
-        return 3
+        return _report_exception(exc, _LLM_INPUT_RULES)
 
     route_path = Path(args.route)
     manifest_override = Path(args.manifest) if args.manifest else None
     strict = not args.lenient
+
+    # Порядок правил повторяет прежнюю лестницу except: строгий отказ по
+    # токенам (5) проверяется раньше общей ошибки восстановления (3).
+    restore_rules: tuple[_ExceptionRule, ...] = (
+        _ExceptionRule(ConfigurationError, 3, "Ошибка конфигурации"),
+        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+        _ExceptionRule(RestoreStrictError, 5, "Строгий отказ по токенам"),
+        _ExceptionRule(RestoreError, 3, "Ошибка восстановления"),
+    )
 
     try:
         result = restore_text(
@@ -334,23 +394,8 @@ def _cmd_restore(args: argparse.Namespace) -> int:
             manifest_path_override=manifest_override,
             strict=strict,
         )
-    except ConfigurationError as exc:
-        print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
-        return 3
-    except KeystoreError as exc:
-        print(f"Ошибка keystore: {exc}", file=sys.stderr)
-        return 4
-    except RestoreStrictError as exc:
-        # Код 5: LLM вернула неизвестный/искажённый токен (ADR-21)
-        print(f"Строгий отказ по токенам: {exc}", file=sys.stderr)
-        return 5
-    except RestoreError as exc:
-        # Код 3: ошибка конфигурации/целостности (ADR-21)
-        print(f"Ошибка восстановления: {exc}", file=sys.stderr)
-        return 3
     except Exception as exc:  # noqa: BLE001
-        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
-        return 1
+        return _report_exception(exc, restore_rules)
 
     for warning in result.warnings:
         print(f"ПРЕДУПРЕЖДЕНИЕ: {warning}", file=sys.stderr)
@@ -389,12 +434,8 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         out_path = Path(args.out)
         try:
             write_restored(result.restored_text, out_path, overwrite=args.overwrite)
-        except FileExistsError as exc:
-            print(f"Ошибка: {exc}", file=sys.stderr)
-            return 3
-        except ConfigurationError as exc:
-            print(f"Ошибка записи: {exc}", file=sys.stderr)
-            return 1
+        except (FileExistsError, ConfigurationError) as exc:
+            return _report_exception(exc, _RESTORE_WRITE_RULES)
         print(f"OK: {out_path}")
     else:
         print(result.restored_text, end="")
@@ -406,9 +447,14 @@ def _cmd_key_create(args: argparse.Namespace) -> int:
     """Обработка команды key create."""
     from privacy_gateway.keystore import KeyExistsError, KeystoreError, create_key
 
+    rules: tuple[_ExceptionRule, ...] = (
+        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+    )
+
     try:
         create_key(force=args.force)
     except KeyExistsError:
+        # Фиксированное безопасное сообщение без str(exc).
         print(
             "Ключ уже существует. Используйте --force для перезаписи "
             "(внимание: все существующие манифесты станут нечитаемыми). "
@@ -416,12 +462,8 @@ def _cmd_key_create(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 3
-    except KeystoreError as exc:
-        print(f"Ошибка keystore: {exc}", file=sys.stderr)
-        return 4
     except Exception as exc:  # noqa: BLE001
-        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
-        return 1
+        return _report_exception(exc, rules)
 
     print("Ключ успешно создан.")
     return 0
@@ -431,14 +473,14 @@ def _cmd_key_status(_args: argparse.Namespace) -> int:
     """Обработка команды key status."""
     from privacy_gateway.keystore import KeystoreError, key_exists
 
+    rules: tuple[_ExceptionRule, ...] = (
+        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+    )
+
     try:
         exists = key_exists()
-    except KeystoreError as exc:
-        print(f"Ошибка keystore: {exc}", file=sys.stderr)
-        return 4
     except Exception as exc:  # noqa: BLE001
-        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
-        return 1
+        return _report_exception(exc, rules)
 
     if exists:
         print("Ключ присутствует в keyring.")
@@ -452,20 +494,20 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
     """Обработка команды key rotate."""
     from privacy_gateway.keystore import KeyNotFoundError, KeystoreError, rotate_key
 
+    # KeyNotFoundError — подкласс KeystoreError, поэтому идёт первым.
+    rules: tuple[_ExceptionRule, ...] = (
+        _ExceptionRule(
+            KeyNotFoundError,
+            4,
+            "Ключ не найден. Запустите 'pgw key create' сначала. Детали",
+        ),
+        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+    )
+
     try:
         rotate_key()
-    except KeyNotFoundError as exc:
-        print(
-            f"Ключ не найден. Запустите 'pgw key create' сначала. Детали: {exc}",
-            file=sys.stderr,
-        )
-        return 4
-    except KeystoreError as exc:
-        print(f"Ошибка keystore: {exc}", file=sys.stderr)
-        return 4
     except Exception as exc:  # noqa: BLE001
-        print(f"Непредвиденная ошибка: {exc}", file=sys.stderr)
-        return 1
+        return _report_exception(exc, rules)
 
     print(
         "Ротация выполнена. Новый ключ активен. "
