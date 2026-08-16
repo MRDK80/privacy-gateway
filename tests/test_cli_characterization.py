@@ -7,13 +7,14 @@
 Внутренние ``_cmd_*`` напрямую не вызываются.
 
 Сомнительное поведение фиксируется как есть, без исправлений:
-  - ConfigurationError из ``write_restored`` даёт код 1, а не 3 (#28);
   - ``pgw key`` без подкоманды завершается кодом 0 (argparse ``--help``),
     хотя в описании #25 ожидался код 1 — расхождение зафиксировано тестом.
 
 Исправленный контракт:
   - ошибка разбора argv завершает CLI кодом 3, код 2 остаётся за PENDING
-    (#26, ADR-29).
+    (#26, ADR-29);
+  - ConfigurationError из ``write_restored`` даёт код 3: отказ записи
+    результата — ожидаемый операционный отказ (#28, ADR-31).
 
 Реальный keyring не используется. Все данные синтетические, файлы — под
 ``tmp_path``.
@@ -518,10 +519,14 @@ def test_restore_existing_out_without_overwrite_maps_to_code_3(
     assert "новый текст" not in captured.err
 
 
-def test_restore_write_error_maps_to_code_1(
+def test_restore_write_error_maps_to_code_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ConfigurationError из write_restored даёт код 1, а не 3 — см. #28."""
+    """ConfigurationError из write_restored даёт код 3 (#28, ADR-31).
+
+    Отказ записи результата — ожидаемый операционный отказ окружения,
+    а не непредвиденная внутренняя ошибка. Текст stderr не меняется.
+    """
     reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     out_path = tmp_path / "restored.txt"
@@ -542,7 +547,7 @@ def test_restore_write_error_maps_to_code_1(
             )
 
     captured = capsys.readouterr()
-    assert code == 1
+    assert code == 3
     assert captured.err == (
         "Восстановлено: 0/0 токенов\n"
         "Ошибка записи: нет доступа к каталогу\n"

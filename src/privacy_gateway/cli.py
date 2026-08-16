@@ -97,11 +97,12 @@ _CONFIG_RULES: tuple[_ExceptionRule, ...] = (
 _KEYSTORE_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
 )
-# Ошибка записи результата restore даёт код 1, а не 3 (#28): поведение
-# зафиксировано тестами и в рамках #18 не исправляется.
+# Отказ записи результата restore — ожидаемый операционный отказ
+# окружения и даёт код 3 (#28, ADR-31). Правила не объединяются:
+# prefixes stderr различаются и сохраняются побайтово.
 _RESTORE_WRITE_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(FileExistsError, 3, "Ошибка"),
-    _ExceptionRule(ConfigurationError, 1, "Ошибка записи"),
+    _ExceptionRule(ConfigurationError, 3, "Ошибка записи"),
 )
 
 
