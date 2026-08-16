@@ -515,11 +515,23 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
     )
     return 0
 
+def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
+    """Первичный разбор argv: usage error argparse → код 3 (ADR-29, #26).
+
+    argparse к этому моменту уже напечатал usage/error в stderr — текст
+    не изменяется. help (код 0) и любые другие коды пробрасываются как есть.
+    """
+    try:
+        return parser.parse_args()
+    except SystemExit as exc:
+        if exc.code == 2:
+            raise SystemExit(3) from None
+        raise
 
 def main() -> None:
     """Точка входа CLI."""
     parser = _build_parser()
-    args = parser.parse_args()
+    args = _parse_args(parser)
 
     if args.command == "detect":
         sys.exit(_cmd_detect(args))
