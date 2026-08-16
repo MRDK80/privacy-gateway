@@ -11,7 +11,7 @@
     key status  Проверить наличие ключа (Э8)
     key rotate  Ротация ключа через MultiFernet (Э8)
 
-Коды завершения (ADR-20, ADR-21, ADR-29):
+Коды завершения (ADR-20, ADR-21, ADR-29, ADR-30):
     0  OK — артефакты созданы / текст восстановлен / ключ создан
     1  Непредвиденная ошибка
     2  PENDING — требуется ручное одобрение
@@ -110,7 +110,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="pgw",
         description="Privacy Gateway — безопасная подготовка текста для LLM.",
     )
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", required=True)
 
     # --- detect ---
     detect_parser = sub.add_parser(
@@ -230,7 +230,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "key",
         help="Управление Fernet-ключом в keyring.",
     )
-    key_sub = key_parser.add_subparsers(dest="key_command")
+    key_sub = key_parser.add_subparsers(dest="key_command", required=True)
 
     # key create
     key_create = key_sub.add_parser(
@@ -529,7 +529,12 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
         raise
 
 def main() -> None:
-    """Точка входа CLI."""
+    """Точка входа CLI.
+
+    Верхнеуровневая команда и подкоманда `key` обязательны (ADR-30):
+    отсутствие и неизвестное значение отклоняет argparse, а _parse_args()
+    транслирует usage error в код 3 (ADR-29).
+    """
     parser = _build_parser()
     args = _parse_args(parser)
 
@@ -540,19 +545,15 @@ def main() -> None:
     elif args.command == "restore":
         sys.exit(_cmd_restore(args))
     elif args.command == "key":
-        if not hasattr(args, "key_command") or args.key_command is None:
-            # pgw key без подкоманды
-            parser.parse_args(["key", "--help"])
-            sys.exit(1)
         if args.key_command == "create":
             sys.exit(_cmd_key_create(args))
         elif args.key_command == "status":
             sys.exit(_cmd_key_status(args))
         elif args.key_command == "rotate":
             sys.exit(_cmd_key_rotate(args))
-        else:
-            parser.parse_args(["key", "--help"])
-            sys.exit(1)
-    else:
-        parser.print_help()
-        sys.exit(1)
+        else:  # pragma: no cover - argparse гарантирует choices
+            raise AssertionError(
+                f"нераспознанная key-подкоманда: {args.key_command!r}"
+            )
+    else:  # pragma: no cover - argparse гарантирует choices
+        raise AssertionError(f"нераспознанная команда: {args.command!r}")
