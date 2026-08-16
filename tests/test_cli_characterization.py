@@ -703,24 +703,22 @@ def test_key_rotate_keystore_error_maps_to_code_4(
     assert not _KEY_MATERIAL_RE.search(captured.err)
 
 
-def test_key_without_subcommand_prints_help(
-    capsys: pytest.CaptureFixture[str]
+def test_key_without_subcommand_exits_with_code_3(
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`pgw key` без подкоманды: help и код 0.
+    """`pgw key` без подкоманды — usage error: код 3, stdout пуст (ADR-30).
 
-    В описании #25 ожидался код 1, однако фактически ветка вызывает
-    ``parser.parse_args(["key", "--help"])``, и argparse завершает процесс
-    кодом 0 до строки ``sys.exit(1)``. Тест фиксирует фактическое поведение;
-    расхождение с #25 — предмет отдельного решения, здесь не исправляется.
+    До #30 ветка в main() вызывала parser.parse_args(["key", "--help"]),
+    help-action завершал процесс кодом 0, а sys.exit(1) был недостижим.
+    После required=True отсутствие подкоманды обрабатывает argparse,
+    а _parse_args() транслирует usage error в код 3 (ADR-29).
     """
     code = _run("key")
-
     captured = capsys.readouterr()
-    assert code == 0
-    assert "key" in captured.out
-    assert captured.err == ""
-
-
+    assert code == 3
+    assert captured.out == ""
+    assert captured.err.startswith("usage: pgw key")
+    assert "error" in captured.err
 # ---------------------------------------------------------------------------
 # argparse: usage error -> код 3 (#26, ADR-29)
 # ---------------------------------------------------------------------------
@@ -731,6 +729,9 @@ _USAGE_ERROR_CASES = [
     pytest.param(("restore", "REPLY"), id="missing-required-option"),
     pytest.param(("--unknown-option",), id="unknown-option"),
     pytest.param(("unknown-command",), id="unknown-command"),
+    pytest.param((), id="missing-command"),
+    pytest.param(("key",), id="missing-key-subcommand"),
+    pytest.param(("key", "unknown"), id="unknown-key-subcommand"),
 ]
 
 
@@ -804,3 +805,30 @@ def test_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert code == 0
     assert captured.err == ""
+
+
+def test_key_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
+    """Явный `pgw key --help` остаётся успешным кодом 0 (ADR-30)."""
+    code = _run("key", "--help")
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.out != ""
+    assert captured.err == ""
+
+
+def test_key_without_subcommand_code_3_in_subprocess(tmp_path: Path) -> None:
+    """Реальный код процесса для `pgw key` равен 3, а не только SystemExit.code."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from privacy_gateway.cli import main; main()",
+            "key",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert proc.returncode == 3
+    assert proc.stdout == ""
+    assert "usage:" in proc.stderr
