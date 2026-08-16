@@ -7,10 +7,13 @@
 Внутренние ``_cmd_*`` напрямую не вызываются.
 
 Сомнительное поведение фиксируется как есть, без исправлений:
-  - argparse завершает ошибку разбора кодом 2, совпадающим с PENDING (#26);
   - ConfigurationError из ``write_restored`` даёт код 1, а не 3 (#28);
   - ``pgw key`` без подкоманды завершается кодом 0 (argparse ``--help``),
     хотя в описании #25 ожидался код 1 — расхождение зафиксировано тестом.
+
+Исправленный контракт:
+  - ошибка разбора argv завершает CLI кодом 3, код 2 остаётся за PENDING
+    (#26, ADR-29).
 
 Реальный keyring не используется. Все данные синтетические, файлы — под
 ``tmp_path``.
@@ -21,6 +24,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -718,18 +722,85 @@ def test_key_without_subcommand_prints_help(
 
 
 # ---------------------------------------------------------------------------
-# argparse: код 2 совпадает с PENDING (#26) — фиксируем, не исправляем
+# argparse: usage error -> код 3 (#26, ADR-29)
 # ---------------------------------------------------------------------------
 
 
-def test_argparse_error_exits_with_code_2(tmp_path: Path) -> None:
-    """restore без --route: argparse завершает кодом 2, как PENDING (#26).
+_USAGE_ERROR_CASES = [
+    pytest.param(("prepare",), id="missing-positional"),
+    pytest.param(("restore", "REPLY"), id="missing-required-option"),
+    pytest.param(("--unknown-option",), id="unknown-option"),
+    pytest.param(("unknown-command",), id="unknown-command"),
+]
 
-    Семантика различается, но код совпадает. Здесь фиксируется только код
-    argparse; отдельного значения PENDING этот тест не проверяет.
+
+@pytest.mark.parametrize("argv", _USAGE_ERROR_CASES)
+def test_argparse_usage_error_exits_with_code_3(
+    argv: tuple[str, ...],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ошибка разбора argv завершает CLI кодом 3, а не 2 (#26, ADR-29).
+
+    Осознанная смена контракта: код 2 остаётся только за PENDING.
     """
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    resolved = tuple(
+        str(_input_file(tmp_path, SYNTH_LLM_REPLY)) if item == "REPLY" else item
+        for item in argv
+    )
 
-    code = _run("restore", str(reply))
+    code = _run(*resolved)
 
-    assert code == 2
+    captured = capsys.readouterr()
+    assert code == 3
+    assert captured.out == ""
+    assert captured.err.startswith("usage: pgw")
+    assert "error:" in captured.err
+
+
+def test_argparse_usage_error_stderr_is_byte_identical(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Переопределяется только код завершения: stderr argparse не меняется."""
+    from privacy_gateway.cli import _build_parser
+
+    with patch.object(sys, "argv", ["pgw", "prepare"]):
+        parser = _build_parser()
+        with pytest.raises(SystemExit) as raw_exc:
+            parser.parse_args(["prepare"])
+    raw_err = capsys.readouterr().err
+    assert _exit_code(raw_exc.value) == 2
+
+    code = _run("prepare")
+    cli_err = capsys.readouterr().err
+
+    assert code == 3
+    assert cli_err == raw_err
+
+
+def test_argparse_usage_error_code_3_in_subprocess(tmp_path: Path) -> None:
+    """Код 3 виден вызывающему процессу, а не только через SystemExit."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from privacy_gateway.cli import main; main()",
+            "prepare",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+
+    assert proc.returncode == 3
+    assert proc.stdout == ""
+    assert "usage:" in proc.stderr
+
+
+def test_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
+    """``--help`` не затронут перехватом: код 0 (страховка от широкого catch)."""
+    code = _run("--help")
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert captured.err == ""
