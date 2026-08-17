@@ -77,6 +77,7 @@ class PipelineResult:
     manifest_path: Путь к manifest.json (только при OK)
     message:       Читаемое сообщение (без исходных значений)
     findings_summary: Краткая сводка находок (типы и позиции, без значений)
+    token_count:   Число созданных токенов (0 для не-OK)
     """
 
     status: ProcessingStatus
@@ -85,6 +86,7 @@ class PipelineResult:
     route_path: Path | None = None
     manifest_path: Path | None = None
     findings_summary: list[dict[str, Any]] = field(default_factory=list)
+    token_count: int = 0
 
 
 def _safe_findings_summary(findings: list[Any]) -> list[dict[str, Any]]:
