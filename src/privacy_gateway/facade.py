@@ -324,7 +324,7 @@ class PrivacyGateway:
 
         try:
             protected_text = prompt_path.read_text(encoding="utf-8")
-            token_count = self._read_token_count(route_path)
+            token_count = result.token_count
         except (OSError, ValueError) as exc:
             self._remove_workspace(workspace)
             raise ConfigurationError(
@@ -476,12 +476,3 @@ class PrivacyGateway:
     def _remove_workspace(workspace: Path) -> None:
         """Удалить рабочий подкаталог операции, не поднимая ошибок."""
         shutil.rmtree(workspace, ignore_errors=True)
-
-    @staticmethod
-    def _read_token_count(route_path: Path) -> int:
-        """Прочитать счётчик токенов из служебных метаданных операции."""
-        decoded: object = json.loads(route_path.read_text(encoding="utf-8"))
-        if not isinstance(decoded, dict):
-            return 0
-        value = decoded.get("token_count", 0)
-        return value if isinstance(value, int) else 0

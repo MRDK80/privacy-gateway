@@ -77,6 +77,7 @@ class PipelineResult:
     manifest_path: Путь к manifest.json (только при OK)
     message:       Читаемое сообщение (без исходных значений)
     findings_summary: Краткая сводка находок (типы и позиции, без значений)
+    token_count:   Число созданных токенов (0 для не-OK)
     """
 
     status: ProcessingStatus
@@ -85,6 +86,7 @@ class PipelineResult:
     route_path: Path | None = None
     manifest_path: Path | None = None
     findings_summary: list[dict[str, Any]] = field(default_factory=list)
+    token_count: int = 0
 
 
 def _safe_findings_summary(findings: list[Any]) -> list[dict[str, Any]]:
@@ -305,6 +307,7 @@ def prepare_pipeline(
     _write_atomic(prompt_path, tokenized_text)
 
     # Шаг 4: route.json с manifest_sha256 (атомарно)
+    token_count = len(token_records)
     route_data: dict[str, Any] = {
         "format_version": ROUTE_FORMAT_VERSION,
         "status": ProcessingStatus.OK.value,
@@ -312,7 +315,7 @@ def prepare_pipeline(
         "source_ref": source_ref,
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest_sha256,
-        "token_count": len(token_records),
+        "token_count": token_count,
         "token_counts_by_type": token_counts,
         "entity_count_detected": len(entities),
         "entity_count_tokenized": len(token_records),
@@ -326,4 +329,5 @@ def prepare_pipeline(
         prompt_path=prompt_path,
         route_path=route_path,
         manifest_path=manifest_path,
+        token_count=token_count,
     )
