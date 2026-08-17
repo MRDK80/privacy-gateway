@@ -68,7 +68,8 @@
               manifest.json — зашифрованная карта token→value
         │
         ▼  PipelineResult{ status: OK | BLOCKED | PENDING,
-                           prompt_path, route_path, manifest_path }
+                           prompt_path, route_path, manifest_path,
+                           token_count }
 ```
 
 ### Восстановление текста
@@ -199,6 +200,11 @@
 | `route_path` | Path \| None | только при OK |
 | `manifest_path` | Path \| None | только при OK |
 | `findings_summary` | list[dict] | тип+позиция, без значений |
+| `token_count` | int | число токенов; фактическое значение только при OK, иначе 0 |
+
+Счётчик вычисляется один раз как `len(token_records)` и попадает и в
+`route.json`, и в результат конвейера. Публичный фасад берёт значение из
+результата и не перечитывает артефакт (ADR-32).
 
 ### RestoreResult  [Э7]
 

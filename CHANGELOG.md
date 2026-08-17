@@ -12,6 +12,10 @@
 
 ### Changed
 
+- Внутреннее: фасад получает `token_count` из `PipelineResult` и больше
+  не перечитывает `route.json` после успешной подготовки (ADR-32, #32).
+  Публичный `PreparedPayload.token_count`, формат `route.json` и
+  `ROUTE_FORMAT_VERSION` 1.1 не изменились; CLI не затронут.
 - CLI: верхнеуровневая команда и подкоманда `pgw key` стали обязательными.
   `pgw` без команды: 1 → 3, `pgw key` без подкоманды: 0 → 3. Явный `--help`
   остаётся кодом 0, PENDING остаётся кодом 2 (ADR-30, #30).
@@ -22,6 +26,8 @@
 
 ### Removed
 
+- Внутреннее: `PrivacyGateway._read_token_count` — повторное чтение и
+  JSON-разбор `route.json` ради счётчика токенов (#32).
 - CLI: ручная печать help с кодами 0 и 1 для отсутствующей команды и
   недостижимый `sys.exit(1)` после help-action.
 
