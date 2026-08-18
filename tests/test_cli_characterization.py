@@ -29,6 +29,7 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -837,3 +838,45 @@ def test_key_without_subcommand_code_3_in_subprocess(tmp_path: Path) -> None:
     assert proc.returncode == 3
     assert proc.stdout == ""
     assert "usage:" in proc.stderr
+
+
+def test_restore_mkdir_failure_maps_to_code_3(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Отказ создания родительского каталога --out → код 3 (#36, ADR-33).
+
+    Реальный write_restored доходит до подменённого Path.mkdir; права
+    файловой системы не меняются, поэтому тест стабилен и на Windows.
+    """
+    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    route_path = tmp_path / "route.json"
+    out_path = tmp_path / "nested" / "restored.txt"
+    result = _empty_restore_result("секретный результат")
+    real_mkdir = Path.mkdir
+
+    def fake_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+        if self == out_path.parent:
+            raise PermissionError("mkdir denied")
+        real_mkdir(self, *args, **kwargs)
+
+    with patch("privacy_gateway.restore.restore_text", return_value=result):
+        with patch.object(Path, "mkdir", fake_mkdir):
+            code = _run(
+                "restore",
+                str(reply),
+                "--route",
+                str(route_path),
+                "--out",
+                str(out_path),
+            )
+
+    captured = capsys.readouterr()
+    assert code == 3
+    assert captured.err == (
+        "Восстановлено: 0/0 токенов\n"
+        f"Ошибка записи: Не удалось записать результат в {out_path}: "
+        "mkdir denied\n"
+    )
+    assert captured.out == ""
+    assert "секретный результат" not in captured.err
+    assert not out_path.parent.exists()
