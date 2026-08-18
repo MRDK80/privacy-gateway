@@ -308,9 +308,11 @@ def write_restored(
             f"Используйте флаг --overwrite для перезаписи."
         )
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
+    # Подготовка каталога входит в ту же границу OSError, что и атомарная
+    # запись (#36, ADR-33): отказ файловой системы на любом шаге даёт
+    # ConfigurationError и код 3, не-OSError по-прежнему проходит наружу.
     try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             dir=out_path.parent, suffix=".tmp", prefix=".pgw_restore_"
         )
