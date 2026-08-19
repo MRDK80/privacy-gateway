@@ -5,13 +5,27 @@
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-08-19
+
+### Ломающие изменения (коды завершения CLI)
+
+- Ошибка разбора аргументов командной строки: 2 → 3 (#26, ADR-29).
+- `pgw` без команды: 1 → 3; `pgw key` без подкоманды: 0 → 3 (#30, ADR-30).
+- Ошибка записи результата `restore --out`, представленная
+  `ConfigurationError`: 1 → 3 (#28, ADR-31).
+- Отказ создания родительского каталога для `restore --out`: 1 → 3, prefix
+  stderr `Ошибка записи` вместо `Непредвиденная ошибка` (#36, ADR-33).
+
+Внешний вызывающий код, который различает коды завершения CLI, требует
+пересмотра: код 2 закреплён только за PENDING, код 3 — за ошибками
+конфигурации, целостности и записи.
+
+### Changed
+
 - **Изменено (поведение CLI):** ошибка разбора аргументов командной строки
   завершает процесс кодом 3 вместо 2; код 2 закреплён только за PENDING
   (#26, ADR-29). Текст usage/error в stderr, команды, флаги и остальные
   коды завершения не изменились; `--help` по-прежнему даёт код 0.
-
-### Changed
-
 - Внутреннее: фасад получает `token_count` из `PipelineResult` и больше
   не перечитывает `route.json` после успешной подготовки (ADR-32, #32).
   Публичный `PreparedPayload.token_count`, формат `route.json` и
@@ -288,6 +302,7 @@
 - Семантика `PENDING` задокументирована в `models.py` и `validator.py`
 - `ProcessingStatus` в `models.py` расширен docstring'ом с полной семантикой
 
+[0.4.0]: https://github.com/MRDK80/privacy-gateway/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/MRDK80/privacy-gateway/commits/main
 [0.2.0]: https://github.com/MRDK80/privacy-gateway/commits/main
 [0.1.0]: https://github.com/MRDK80/privacy-gateway/commits/main
