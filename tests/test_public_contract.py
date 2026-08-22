@@ -52,8 +52,10 @@ def _make_context(tmp_path: Path) -> RestoreContext:
         _handle="0123456789abcdef",
         _route_path=tmp_path / "route.json",
         _workspace_dir=tmp_path,
+        _base_dir=tmp_path,
         _owned_workspace=True,
         _correlation_id="corr-1",
+        _signature="0" * 64,
     )
 
 
