@@ -5,10 +5,13 @@
 файловой системы, а не тайминг, поэтому тесты детерминированные.
 
 Покрываются оба механизма: закрепление дескриптором (Linux) и отцепление
-имени с повторной сверкой (путь для платформ без ``openat``-семантики).
-Второй механизм проверяется и на Linux — принудительным переключением
-``SUPPORTS_DIR_FD``, потому что Windows CI не может создавать symlink без
-соответствующей привилегии.
+имени с повторной сверкой (Windows). Второй механизм проверяется и на Linux —
+принудительным переключением ``SUPPORTS_DIR_FD``.
+
+Тесты, подменяющие внутренние функции, обязаны патчить ту функцию, которую
+использует активный механизм: у ветки с ``dir_fd`` и ветки без него разные
+точки снятия идентичности и чтения маркера. Игнорирование этого различия даёт
+зелёный результат на Linux и падение на Windows.
 
 Все пути временные, данные синтетические (ADR-25). Реальный keyring не
 задействован.
@@ -19,6 +22,7 @@ from __future__ import annotations
 import os
 import shutil
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,6 +38,7 @@ SYNTH_IP = "192.0.2.10"
 SYNTH_TEXT = f"Свяжитесь: {SYNTH_EMAIL}, сервер {SYNTH_IP}\n"
 
 _ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
+_MISMATCHED_IDENTITY = (0, 0)
 
 
 @pytest.fixture()
@@ -78,8 +83,22 @@ def _symlinks_supported(root: Path) -> bool:
         probe.symlink_to(root, target_is_directory=True)
     except (OSError, NotImplementedError):
         return False
-    probe.unlink()
+    _drop_link(probe)
     return True
+
+
+def _drop_link(path: Path) -> None:
+    """Удалить ссылку, не следуя ей.
+
+    Ссылку на каталог в Windows снимает ``rmdir``, в POSIX — ``unlink``.
+    """
+    try:
+        os.rmdir(path)
+    except OSError:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def _quarantine_leftovers(base: Path) -> list[Path]:
@@ -107,6 +126,46 @@ def _swap_original_name_before_removal(
         real_rmtree(path, *args, **kwargs)  # type: ignore[arg-type]
 
     return wrapper
+
+
+def _identity_mismatch(workspace: Path) -> AbstractContextManager[object]:
+    """Смоделировать расхождение идентичности на границе удаления.
+
+    Ветка с ``dir_fd`` снимает исходную идентичность через ``fstat``, поэтому
+    любой результат ``path_identity`` расходится с ней. Ветка без ``dir_fd``
+    вызывает ``path_identity`` дважды, и расхождение нужно создать между
+    первым и вторым вызовом.
+    """
+    if trust.SUPPORTS_DIR_FD:
+        return patch(
+            "privacy_gateway.context_trust.path_identity",
+            return_value=_MISMATCHED_IDENTITY,
+        )
+    identities = iter([trust.path_identity(workspace), _MISMATCHED_IDENTITY])
+    return patch(
+        "privacy_gateway.context_trust.path_identity",
+        side_effect=lambda *args, **kwargs: next(identities),
+    )
+
+
+def _foreign_marker_secret(
+    genuine: str, foreign: str
+) -> AbstractContextManager[object]:
+    """Смоделировать чужой секрет маркера на самой границе удаления.
+
+    Ветка с ``dir_fd`` читает маркер через дескриптор, ветка без него — по
+    имени, причём второй вызов приходится уже на границу удаления: первый
+    обслуживает prefilter и должен вернуть подлинный секрет.
+    """
+    if trust.SUPPORTS_DIR_FD:
+        return patch(
+            "privacy_gateway.context_trust.read_owner_secret_fd",
+            return_value=foreign,
+        )
+    return patch(
+        "privacy_gateway.context_trust.read_owner_secret",
+        side_effect=[genuine, foreign],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -141,13 +200,13 @@ def test_name_swapped_before_removal_does_not_touch_victim(
     assert workspace.is_symlink()
     assert _quarantine_leftovers(base) == []
 
-    workspace.unlink()
+    _drop_link(workspace)
 
 
 def test_name_swap_before_removal_without_dir_fd(
     tmp_path: Path, mock_keyring: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """То же на пути без descriptor-relative семантики (ветка Windows)."""
+    """То же на пути без descriptor-relative семантики."""
     monkeypatch.setattr(trust, "SUPPORTS_DIR_FD", False)
     base = tmp_path / "base"
     gateway = _gateway(base)
@@ -167,16 +226,16 @@ def test_name_swap_before_removal_without_dir_fd(
     assert workspace.is_symlink()
     assert _quarantine_leftovers(base) == []
 
-    workspace.unlink()
+    _drop_link(workspace)
 
 
-def test_identity_mismatch_after_detach_fails_closed(
+def test_identity_mismatch_at_boundary_fails_closed(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Расхождение идентичности после отцепления не удаляет ничего.
+    """Расхождение идентичности на границе удаления не удаляет ничего.
 
-    Моделирует подмену самого объекта на границе отцепления: проверенная
-    сущность и объект под карантинным именем различаются.
+    Моделирует подмену самого объекта: проверенная сущность и объект,
+    доходящий до удаления, различаются.
     """
     base = tmp_path / "base"
     gateway = _gateway(base)
@@ -185,10 +244,7 @@ def test_identity_mismatch_after_detach_fails_closed(
     workspace = _workspace_of(base)
     marker = workspace / trust.OWNER_MARKER_NAME
 
-    with patch(
-        "privacy_gateway.context_trust.path_identity",
-        return_value=(0, 0),
-    ):
+    with _identity_mismatch(workspace):
         with pytest.raises(RestoreError):
             gateway.discard(prepared.context)
 
@@ -201,7 +257,7 @@ def test_identity_mismatch_after_detach_fails_closed(
 def test_identity_mismatch_without_dir_fd_fails_closed(
     tmp_path: Path, mock_keyring: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ветка без dir_fd тоже отказывает и возвращает исходное имя."""
+    """Ветка без dir_fd отказывает и возвращает исходное имя."""
     monkeypatch.setattr(trust, "SUPPORTS_DIR_FD", False)
     base = tmp_path / "base"
     gateway = _gateway(base)
@@ -209,12 +265,7 @@ def test_identity_mismatch_without_dir_fd_fails_closed(
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
 
-    identities = iter([trust.path_identity(workspace), (0, 0)])
-
-    with patch(
-        "privacy_gateway.context_trust.path_identity",
-        side_effect=lambda *args, **kwargs: next(identities),
-    ):
+    with _identity_mismatch(workspace):
         with pytest.raises(RestoreError):
             gateway.discard(prepared.context)
 
@@ -224,29 +275,44 @@ def test_identity_mismatch_without_dir_fd_fails_closed(
     assert _quarantine_leftovers(base) == []
 
 
-def test_marker_secret_must_match_pinned_directory(
+def test_marker_secret_must_match_at_boundary(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Секрет из закреплённого каталога обязан совпадать с секретом MAC.
+    """Секрет маркера на границе удаления обязан совпадать с секретом MAC.
 
-    Аутентичность токена привязана к закреплённой сущности: подмена
-    содержимого маркера между path-проверкой и границей удаления отказывает.
+    Аутентичность токена привязана к сущности: подмена содержимого маркера
+    между prefilter и границей удаления приводит к отказу.
     """
     base = tmp_path / "base"
     gateway = _gateway(base)
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
+    genuine = trust.read_owner_secret(workspace, prepared.context._handle)
+    assert genuine is not None
 
-    with patch(
-        "privacy_gateway.context_trust.read_owner_secret_fd",
-        return_value=trust.new_workspace_secret(),
-    ):
-        with patch(
-            "privacy_gateway.context_trust.read_owner_secret",
-            wraps=trust.read_owner_secret,
-        ):
-            with pytest.raises(RestoreError):
-                gateway.discard(prepared.context)
+    with _foreign_marker_secret(genuine, trust.new_workspace_secret()):
+        with pytest.raises(RestoreError):
+            gateway.discard(prepared.context)
+
+    assert workspace.is_dir()
+    assert _quarantine_leftovers(base) == []
+
+
+def test_marker_secret_must_match_without_dir_fd(
+    tmp_path: Path, mock_keyring: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """То же на ветке без dir_fd: секрет перечитывается перед удалением."""
+    monkeypatch.setattr(trust, "SUPPORTS_DIR_FD", False)
+    base = tmp_path / "base"
+    gateway = _gateway(base)
+    prepared = gateway.prepare(SYNTH_TEXT)
+    workspace = _workspace_of(base)
+    genuine = trust.read_owner_secret(workspace, prepared.context._handle)
+    assert genuine is not None
+
+    with _foreign_marker_secret(genuine, trust.new_workspace_secret()):
+        with pytest.raises(RestoreError):
+            gateway.discard(prepared.context)
 
     assert workspace.is_dir()
     assert _quarantine_leftovers(base) == []
@@ -261,11 +327,10 @@ def test_valid_workspace_still_removed_on_both_paths(
     tmp_path: Path, mock_keyring: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Новая граница не ослабляет уборку валидного owned workspace."""
+    native = trust.SUPPORTS_DIR_FD
     for pinned in (True, False):
         base = tmp_path / f"base-{int(pinned)}"
-        monkeypatch.setattr(
-            trust, "SUPPORTS_DIR_FD", trust.SUPPORTS_DIR_FD and pinned
-        )
+        monkeypatch.setattr(trust, "SUPPORTS_DIR_FD", native and pinned)
         gateway = _gateway(base)
         prepared = gateway.prepare(SYNTH_TEXT)
         workspace = _workspace_of(base)
@@ -287,10 +352,7 @@ def test_boundary_failure_message_leaks_nothing(
     secret = trust.read_owner_secret(workspace, prepared.context._handle)
     assert secret is not None
 
-    with patch(
-        "privacy_gateway.context_trust.path_identity",
-        return_value=(0, 0),
-    ):
+    with _identity_mismatch(workspace):
         with pytest.raises(RestoreError) as exc_info:
             gateway.discard(prepared.context)
 
