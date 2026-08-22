@@ -1,9 +1,9 @@
 """Regression-тесты доверенности контекста восстановления — issue #43, ADR-34.
 
 Проверяют, что удаление рабочего каталога возможно только для контекста,
-созданного доверенной областью ``PrivacyGateway``, принадлежащего доверенной
-базе и не изменённого после выдачи. Все пути — временные, данные — только
-синтетика (ADR-25). Реальный keyring не задействован.
+доказавшего владение именно этим каталогом, и что гарантия cleanup не зависит
+от доступности ключа. Все пути — временные, данные — только синтетика
+(ADR-25). Реальный keyring не задействован.
 """
 
 from __future__ import annotations
@@ -25,12 +25,14 @@ from privacy_gateway.facade import (
     PrivacyGateway,
     RestoreContext,
 )
+from privacy_gateway.keystore import KeyNotFoundError
 
 SYNTH_EMAIL = "user@example.com"  # pragma: allowlist secret
 SYNTH_IP = "192.0.2.10"
 SYNTH_TEXT = f"Свяжитесь: {SYNTH_EMAIL}, сервер {SYNTH_IP}\n"
 
 _ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
+_FOREIGN_HANDLE = "ffffffffffffffffffffffffffffffff"
 
 
 @pytest.fixture()
@@ -40,17 +42,13 @@ def fernet_key() -> bytes:
 
 @pytest.fixture()
 def mock_keyring(fernet_key: bytes) -> Iterator[bytes]:
-    """Подменяет доступ к ключам в подготовке, восстановлении и проверке."""
+    """Подменяет доступ к ключам в подготовке и восстановлении."""
     with patch("privacy_gateway.keystore.get_key", return_value=fernet_key):
         with patch(
-            "privacy_gateway.keystore.get_all_keys",
+            "privacy_gateway.restore.get_all_keys",
             return_value=[fernet_key],
         ):
-            with patch(
-                "privacy_gateway.restore.get_all_keys",
-                return_value=[fernet_key],
-            ):
-                yield fernet_key
+            yield fernet_key
 
 
 def _gateway(base: Path, *, keep_artifacts: bool = False) -> PrivacyGateway:
@@ -76,18 +74,21 @@ def _victim(root: Path) -> Path:
     return victim
 
 
-def _resigned(
-    context: RestoreContext, key: bytes, **changes: object
-) -> RestoreContext:
-    """Пересобрать контекст с изменёнными полями и действительной подписью.
+def _plant_marker(directory: Path, handle: str) -> str:
+    """Подложить маркер владения: атакующий с правом записи в каталог."""
+    secret = trust.new_workspace_secret()
+    trust.write_owner_marker(directory, handle, secret)
+    return secret
 
-    Моделирует атакующего, который получил доступ к keystore-независимой части
-    контракта: подпись действительна, но принадлежность каталога — нет.
-    """
+
+def _resigned(
+    context: RestoreContext, secret: str, **changes: object
+) -> RestoreContext:
+    """Пересобрать контекст с изменёнными полями и действительной подписью."""
     updated = dataclasses.replace(context, **changes)  # type: ignore[arg-type]
     return dataclasses.replace(
         updated,
-        _signature=trust.sign_payload(updated._payload(), key),
+        _signature=trust.sign_payload(updated._payload(), secret),
     )
 
 
@@ -133,10 +134,36 @@ def test_valid_token_round_trip_can_discard(
     assert not workspace.exists()
 
 
+def test_discard_works_without_keystore(
+    tmp_path: Path, mock_keyring: bytes
+) -> None:
+    """Освобождение ресурсов не зависит от доступности ключа (#43).
+
+    Гарантия cleanup должна выполняться после удаления ключа и при
+    заблокированном хранилище: иначе защищённые артефакты останутся на диске.
+    """
+    base = tmp_path / "base"
+    gateway = _gateway(base)
+    prepared = gateway.prepare(SYNTH_TEXT)
+    workspace = _workspace_of(base)
+
+    with patch(
+        "privacy_gateway.keystore.get_all_keys",
+        side_effect=KeyNotFoundError("no key"),
+    ):
+        with patch(
+            "privacy_gateway.keystore.get_key",
+            side_effect=KeyNotFoundError("no key"),
+        ):
+            gateway.discard(prepared.context)
+
+    assert not workspace.exists()
+
+
 def test_repeated_discard_is_idempotent(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Повторное освобождение ресурсов не поднимает ошибку и ничего не трогает."""
+    """Повторное освобождение не поднимает ошибку и ничего не трогает."""
     base = tmp_path / "base"
     gateway = _gateway(base)
     victim = _victim(tmp_path)
@@ -177,8 +204,9 @@ def test_tampered_path_in_token_fails_closed(
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
 
-    token = _forge_token(prepared.context, _workspace_dir=victim)
-    forged = RestoreContext.from_token(token)
+    forged = RestoreContext.from_token(
+        _forge_token(prepared.context, _workspace_dir=victim)
+    )
 
     with pytest.raises(RestoreError):
         gateway.discard(forged)
@@ -196,8 +224,9 @@ def test_tampered_signature_fails_closed(
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
 
-    token = _forge_token(prepared.context, _signature="0" * 64)
-    forged = RestoreContext.from_token(token)
+    forged = RestoreContext.from_token(
+        _forge_token(prepared.context, _signature="0" * 64)
+    )
 
     with pytest.raises(RestoreError):
         gateway.discard(forged)
@@ -267,13 +296,14 @@ def test_corrupted_serialization_is_public_error(
 def test_absolute_path_outside_base_fails_closed(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Действительная подпись не даёт удалить каталог вне доверенной базы."""
+    """Подложенный маркер и верная подпись не выводят удаление за базу."""
     base = tmp_path / "base"
     gateway = _gateway(base)
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
+    secret = _plant_marker(victim, prepared.context._handle)
 
-    forged = _resigned(prepared.context, mock_keyring, _workspace_dir=victim)
+    forged = _resigned(prepared.context, secret, _workspace_dir=victim)
 
     with pytest.raises(RestoreError):
         gateway.discard(forged)
@@ -289,10 +319,11 @@ def test_traversal_outside_base_fails_closed(
     gateway = _gateway(base)
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
+    secret = _plant_marker(victim, prepared.context._handle)
 
     forged = _resigned(
         prepared.context,
-        mock_keyring,
+        secret,
         _workspace_dir=base / ".." / "victim",
     )
 
@@ -305,7 +336,7 @@ def test_traversal_outside_base_fails_closed(
 def test_sibling_prefix_directory_fails_closed(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Sibling с общим префиксом имени не удаляется."""
+    """Sibling внутри базы с чужим handle не удаляется."""
     base = tmp_path / "base"
     gateway = _gateway(base)
     prepared = gateway.prepare(SYNTH_TEXT)
@@ -313,8 +344,9 @@ def test_sibling_prefix_directory_fails_closed(
     sibling = base / f"{workspace.name}-extra"
     sibling.mkdir()
     (sibling / "keep.txt").write_text("keep\n", encoding="utf-8")
+    secret = _plant_marker(sibling, _FOREIGN_HANDLE)
 
-    forged = _resigned(prepared.context, mock_keyring, _workspace_dir=sibling)
+    forged = _resigned(prepared.context, secret, _workspace_dir=sibling)
 
     with pytest.raises(RestoreError):
         gateway.discard(forged)
@@ -330,10 +362,11 @@ def test_declared_base_must_match_configuration(
     gateway = _gateway(base)
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
+    secret = _plant_marker(victim, prepared.context._handle)
 
     forged = _resigned(
         prepared.context,
-        mock_keyring,
+        secret,
         _workspace_dir=victim,
         _base_dir=tmp_path,
     )
@@ -364,7 +397,7 @@ def test_foreign_ownership_scope_fails_closed(
 def test_missing_owner_marker_fails_closed(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Каталог без действительного маркера владения не удаляется."""
+    """Каталог без маркера владения не удаляется."""
     base = tmp_path / "base"
     gateway = _gateway(base)
     prepared = gateway.prepare(SYNTH_TEXT)
@@ -385,10 +418,35 @@ def test_tampered_owner_marker_fails_closed(
     gateway = _gateway(base)
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
-    (workspace / trust.OWNER_MARKER_NAME).write_text("f" * 64, encoding="ascii")
+    marker = workspace / trust.OWNER_MARKER_NAME
+    marker.write_text(
+        f"{trust.MARKER_FORMAT_VERSION}\n{prepared.context._handle}\n"
+        f"{trust.new_workspace_secret()}\n",
+        encoding="ascii",
+    )
 
     with pytest.raises(RestoreError):
         gateway.discard(prepared.context)
+
+    assert workspace.is_dir()
+
+
+def test_marker_with_foreign_handle_fails_closed(
+    tmp_path: Path, mock_keyring: bytes
+) -> None:
+    """Маркер с чужим handle не подтверждает владение."""
+    base = tmp_path / "base"
+    gateway = _gateway(base)
+    prepared = gateway.prepare(SYNTH_TEXT)
+    workspace = _workspace_of(base)
+    marker = workspace / trust.OWNER_MARKER_NAME
+    marker.unlink()
+    secret = _plant_marker(workspace, _FOREIGN_HANDLE)
+
+    forged = _resigned(prepared.context, secret)
+
+    with pytest.raises(RestoreError):
+        gateway.discard(forged)
 
     assert workspace.is_dir()
 
@@ -420,13 +478,14 @@ def test_workspace_replaced_by_symlink_fails_closed(
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
     workspace = _workspace_of(base)
-    marker = workspace / trust.OWNER_MARKER_NAME
-    marker_value = marker.read_text(encoding="ascii")
+    marker_raw = (workspace / trust.OWNER_MARKER_NAME).read_text(
+        encoding="ascii"
+    )
     for child in sorted(workspace.iterdir()):
         child.unlink()
     workspace.rmdir()
     os.symlink(victim, workspace, target_is_directory=True)
-    (victim / trust.OWNER_MARKER_NAME).write_text(marker_value, encoding="ascii")
+    (victim / trust.OWNER_MARKER_NAME).write_text(marker_raw, encoding="ascii")
 
     with pytest.raises(RestoreError):
         gateway.discard(prepared.context)
@@ -466,13 +525,14 @@ def test_swapped_path_component_refuses_removal(
 def test_trust_failure_message_leaks_nothing(
     tmp_path: Path, mock_keyring: bytes
 ) -> None:
-    """Отказ доверенности не раскрывает значения, ключи и локальные пути."""
+    """Отказ доверенности не раскрывает значения, секреты и пути."""
     base = tmp_path / "base"
     gateway = _gateway(base)
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
+    secret = _plant_marker(victim, prepared.context._handle)
 
-    forged = _resigned(prepared.context, mock_keyring, _workspace_dir=victim)
+    forged = _resigned(prepared.context, secret, _workspace_dir=victim)
 
     with pytest.raises(RestoreError) as exc_info:
         gateway.discard(forged)
@@ -480,6 +540,6 @@ def test_trust_failure_message_leaks_nothing(
     message = str(exc_info.value)
     assert SYNTH_EMAIL not in message
     assert SYNTH_IP not in message
+    assert secret not in message
     assert str(victim) not in message
     assert str(base) not in message
-    assert mock_keyring.decode("ascii") not in message

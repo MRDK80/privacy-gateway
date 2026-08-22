@@ -1,24 +1,25 @@
 """Доверенность и принадлежность контекста восстановления (ADR-34, issue #43).
 
-Модуль реализует два независимых механизма, которые вместе делают удаление
-рабочего каталога возможным только для контекста, выданного доверенной
-областью ``PrivacyGateway``:
+Удаление рабочего каталога возможно только для контекста, который доказал
+владение именно этим каталогом:
 
-1. Аутентификация сериализованного контекста. HMAC-SHA256 по канонической
-   форме полезной нагрузки токена. Ключ MAC выводится из ключевого материала
-   keystore с доменным разделением и в токен не попадает. Проверка идёт по
-   активному и retired ключам (ADR-06, ADR-23), поэтому ротация ключа не
-   аннулирует уже выданные контексты.
-2. Подтверждение принадлежности рабочего каталога. Canonical containment в
-   доверенной базе (доверенная база берётся из конфигурации фасада, не из
-   токена), отказ следовать symlink/junction и маркер владения внутри самого
-   каталога.
+1. Секрет владения. Подготовка генерирует случайный секрет, пишет его в маркер
+   ``.pgw-owner`` внутри рабочего каталога (``O_EXCL``, права только для
+   владельца) вместе с версией формата и handle, и подписывает полезную
+   нагрузку токена HMAC-SHA256 на этом секрете.
+2. Принадлежность. Перед удалением проверяются canonical containment в
+   доверенной базе из конфигурации фасада, отказ следовать symlink/junction,
+   совпадение handle в маркере и совпадение MAC.
 
-Строкового containment (``startswith`` и эквиваленты) модуль не использует:
-сравнение идёт по компонентам пути после ``os.path.realpath``.
+Секрет живёт ровно столько, сколько рабочий каталог. Keystore в проверке не
+участвует, поэтому ротация или удаление ключа не мешают освобождению
+ресурсов — существующая гарантия cleanup не ослаблена.
 
-Модуль не логирует и не помещает в сообщения ключевой материал, открытый
-текст и локальные пути.
+Строковый containment (``startswith`` и эквиваленты) не используется: сравнение
+идёт по компонентам пути после ``os.path.realpath``.
+
+Модуль не логирует и не помещает в сообщения секреты, открытый текст и
+локальные пути.
 """
 
 from __future__ import annotations
@@ -27,36 +28,43 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
 import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Final
 
-from privacy_gateway import keystore as _keystore
-
 #: Доменное разделение MAC контекста. Меняется вместе с версией формата.
 CONTEXT_MAC_LABEL: Final = b"privacy-gateway/restore-context/v2"
-
-#: Доменное разделение маркера владения рабочим каталогом.
-OWNER_MARKER_LABEL: Final = b"privacy-gateway/workspace-owner/v1"
 
 #: Имя файла маркера владения внутри рабочего каталога.
 OWNER_MARKER_NAME: Final = ".pgw-owner"
 
+#: Версия формата маркера владения.
+MARKER_FORMAT_VERSION: Final = "1"
+
 _MARKER_MODE: Final = 0o600
+_SECRET_BYTES: Final = 32
 
 
 class ContextTrustError(Exception):
     """Внутренний отказ проверки доверенности контекста.
 
     Частью публичного контракта не является: фасад транслирует её в
-    ``RestoreError`` или ``KeyStoreError`` через exception chaining.
+    ``RestoreError`` через exception chaining.
     """
 
 
-def _derive(key: bytes, label: bytes) -> bytes:
-    """Вывести ключ MAC из ключевого материала keystore."""
-    return hmac.new(key, label, hashlib.sha256).digest()
+def new_workspace_secret() -> str:
+    """Создать секрет владения для одного рабочего каталога."""
+    return secrets.token_hex(_SECRET_BYTES)
+
+
+def _derive(secret: str) -> bytes:
+    """Вывести ключ MAC из секрета владения."""
+    return hmac.new(
+        secret.encode("ascii"), CONTEXT_MAC_LABEL, hashlib.sha256
+    ).digest()
 
 
 def canonical_payload(payload: dict[str, Any]) -> bytes:
@@ -74,62 +82,33 @@ def canonical_payload(payload: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def sign_payload(payload: dict[str, Any], key: bytes) -> str:
-    """Подписать полезную нагрузку контекста активным ключом."""
-    mac = hmac.new(
-        _derive(key, CONTEXT_MAC_LABEL),
-        canonical_payload(payload),
-        hashlib.sha256,
-    )
-    return mac.hexdigest()
+def sign_payload(payload: dict[str, Any], secret: str) -> str:
+    """Подписать полезную нагрузку секретом владения."""
+    return hmac.new(
+        _derive(secret), canonical_payload(payload), hashlib.sha256
+    ).hexdigest()
 
 
 def verify_payload(
     payload: dict[str, Any],
     signature: str | None,
-    keys: list[bytes],
+    secret: str,
 ) -> bool:
-    """Проверить подпись контекста по всем доступным ключам.
+    """Проверить подпись контекста секретом владения.
 
-    Возвращает ``True`` только при совпадении MAC. Сравнение — постоянного
-    времени; перебор ключей не завершается досрочно.
+    Сравнение постоянного времени; при отсутствующей подписи — ``False``.
     """
     if not signature:
         return False
-    message = canonical_payload(payload)
-    matched = False
-    for key in keys:
-        expected = hmac.new(
-            _derive(key, CONTEXT_MAC_LABEL), message, hashlib.sha256
-        ).hexdigest()
-        if hmac.compare_digest(expected, signature):
-            matched = True
-    return matched
+    expected = sign_payload(payload, secret)
+    return hmac.compare_digest(expected, signature)
 
 
-def trusted_keys() -> list[bytes]:
-    """Вернуть ключевой материал для проверки доверенности (ADR-23)."""
-    try:
-        return _keystore.get_all_keys()
-    except _keystore.KeystoreError as exc:
-        raise ContextTrustError("Ключевой материал недоступен.") from exc
+def write_owner_marker(workspace: Path, handle: str, secret: str) -> None:
+    """Закрепить владение рабочим каталогом.
 
-
-def owner_marker_value(handle: str, key: bytes) -> str:
-    """Вычислить значение маркера владения для рабочего каталога."""
-    mac = hmac.new(
-        _derive(key, OWNER_MARKER_LABEL),
-        handle.encode("utf-8"),
-        hashlib.sha256,
-    )
-    return mac.hexdigest()
-
-
-def write_owner_marker(workspace: Path, handle: str, key: bytes) -> None:
-    """Записать маркер владения внутрь рабочего каталога.
-
-    Файл создаётся исключительно (``O_EXCL``) с правами только для владельца.
-    Секрет в файл не попадает: хранится только MAC от handle.
+    Файл создаётся исключительно (``O_EXCL``) с правами только для владельца
+    и содержит версию формата, handle операции и секрет владения.
 
     Raises:
         OSError: Маркер не удалось создать.
@@ -139,27 +118,36 @@ def write_owner_marker(workspace: Path, handle: str, key: bytes) -> None:
         marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _MARKER_MODE
     )
     with os.fdopen(descriptor, "w", encoding="ascii") as stream:
-        stream.write(owner_marker_value(handle, key))
+        stream.write(f"{MARKER_FORMAT_VERSION}\n{handle}\n{secret}\n")
 
 
-def verify_owner_marker(workspace: Path, handle: str, keys: list[bytes]) -> bool:
-    """Проверить, что каталог помечен как принадлежащий доверенной области."""
+def read_owner_secret(workspace: Path, handle: str) -> str | None:
+    """Вернуть секрет владения для заявленного handle.
+
+    Возвращает ``None``, если маркер отсутствует, не является обычным файлом,
+    имеет неизвестную версию формата, повреждён либо принадлежит другому
+    handle. Ссылкам не следует.
+    """
     marker = workspace / OWNER_MARKER_NAME
     try:
         info = marker.lstat()
     except OSError:
-        return False
+        return None
     if not stat.S_ISREG(info.st_mode) or is_reparse_point(info):
-        return False
+        return None
     try:
-        stored = marker.read_text(encoding="ascii").strip()
+        raw = marker.read_text(encoding="ascii")
     except (OSError, ValueError):
-        return False
-    matched = False
-    for key in keys:
-        if hmac.compare_digest(owner_marker_value(handle, key), stored):
-            matched = True
-    return matched
+        return None
+    lines = raw.splitlines()
+    if len(lines) != 3:
+        return None
+    version, stored_handle, secret = lines
+    if version != MARKER_FORMAT_VERSION or not secret:
+        return None
+    if not hmac.compare_digest(stored_handle, handle):
+        return None
+    return secret
 
 
 def resolve_trusted_base(configured: Path | None) -> Path:
