@@ -643,8 +643,8 @@ if sys.platform == "win32":  # pragma: no cover - платформенная в�
         )
         if handle == _INVALID_HANDLE_VALUE or handle is None:
             raise ContextTrustError(_UNAVAILABLE)
-        return handle
-
+        return cast(int, handle)
+    
     def _win_close(handle: int) -> None:
         """Закрыть handle, игнорируя отказ закрытия."""
         _kernel32.CloseHandle(handle)
@@ -760,7 +760,7 @@ if sys.platform == "win32":  # pragma: no cover - платформенная в�
         )
         if status != 0 or child.value is None:
             raise ContextTrustError(_UNAVAILABLE)
-        return cast(int, child.value)
+        return child.value
 
     def _win_read_marker(dir_handle: int, handle: str) -> str | None:
         """Прочитать маркер владения относительно handle каталога."""
