@@ -34,6 +34,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from privacy_gateway import context_trust as _trust
 from privacy_gateway import keystore as _keystore
 from privacy_gateway import pipeline as _pipeline
 from privacy_gateway import restore as _restore
@@ -59,7 +60,7 @@ __all__ = [
     "RestoredPayload",
 ]
 
-CONTEXT_FORMAT_VERSION = "1"
+CONTEXT_FORMAT_VERSION = "2"
 
 # Права рабочего каталога: только владелец.
 _WORKSPACE_MODE = 0o700
@@ -99,13 +100,18 @@ class RestoreContext:
     и без интерпретации его содержимого. Публичных полей с данными нет:
     открытый текст, ключи, шифртекст, содержимое manifest и внутренние
     структуры детектора и токенизатора здесь не хранятся.
+
+    Сериализованный контекст аутентифицирован (ADR-34): поля токена сами по
+    себе не дают права на удаление рабочего каталога.
     """
 
     _handle: str
     _route_path: Path
     _workspace_dir: Path
+    _base_dir: Path
     _owned_workspace: bool = False
     _correlation_id: str | None = None
+    _signature: str | None = None
 
     def __repr__(self) -> str:
         """Вернуть представление без раскрытия содержимого контекста."""
@@ -115,21 +121,27 @@ class RestoreContext:
         """Вернуть представление без раскрытия содержимого контекста."""
         return self.__repr__()
 
-    def to_token(self) -> str:
-        """Сериализовать контекст в строку для передачи между процессами.
-
-        Токен содержит только служебные ссылки на защищённые артефакты и
-        версию формата. Его следует хранить с теми же ограничениями доступа,
-        что и сами артефакты.
-        """
-        payload: dict[str, object] = {
+    def _payload(self) -> dict[str, object]:
+        """Вернуть подписываемую полезную нагрузку контекста."""
+        return {
             "v": CONTEXT_FORMAT_VERSION,
             "handle": self._handle,
             "route": str(self._route_path),
             "workspace": str(self._workspace_dir),
+            "base": str(self._base_dir),
             "owned": self._owned_workspace,
             "correlation_id": self._correlation_id,
         }
+
+    def to_token(self) -> str:
+        """Сериализовать контекст в строку для передачи между процессами.
+
+        Токен содержит только служебные ссылки, версию формата и код
+        аутентичности. Ключевой материал в токен не попадает. Токен следует
+        хранить с теми же ограничениями доступа, что и сами артефакты.
+        """
+        payload: dict[str, object] = dict(self._payload())
+        payload["sig"] = self._signature
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii")
 
@@ -137,9 +149,13 @@ class RestoreContext:
     def from_token(cls, token: str) -> RestoreContext:
         """Восстановить контекст из токена ``to_token``.
 
+        Разбор структурный: код аутентичности переносится в объект и
+        проверяется непосредственно перед операцией, которая на него
+        опирается. Токены версии ``1`` не поддерживаются (ADR-34).
+
         Raises:
-            RestoreError: Токен повреждён, неполон либо имеет неподдерживаемую
-                версию формата.
+            RestoreError: Токен повреждён, неполон, не содержит кода
+                аутентичности либо имеет неподдерживаемую версию формата.
         """
         try:
             raw = base64.urlsafe_b64decode(token.encode("ascii"))
@@ -156,21 +172,25 @@ class RestoreContext:
                 "Неподдерживаемая версия контекста восстановления."
             )
 
+        signature = decoded.get("sig")
+        if not isinstance(signature, str) or not signature:
+            raise RestoreError("Контекст восстановления неполон.")
+
         try:
             correlation_raw = decoded["correlation_id"]
             return cls(
                 _handle=str(decoded["handle"]),
                 _route_path=Path(str(decoded["route"])),
                 _workspace_dir=Path(str(decoded["workspace"])),
+                _base_dir=Path(str(decoded["base"])),
                 _owned_workspace=bool(decoded["owned"]),
                 _correlation_id=(
                     None if correlation_raw is None else str(correlation_raw)
                 ),
+                _signature=signature,
             )
         except KeyError as exc:
-            raise RestoreError(
-                "Контекст восстановления неполон."
-            ) from exc
+            raise RestoreError("Контекст восстановления неполон.") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,12 +351,34 @@ class PrivacyGateway:
                 "Не удалось прочитать защищённые артефакты."
             ) from exc
 
+        base_dir = _trust.resolve_trusted_base(self._config.workspace_dir)
+        workspace_secret = _trust.new_workspace_secret()
+        try:
+            _trust.write_owner_marker(workspace, handle, workspace_secret)
+        except OSError as exc:
+            self._remove_workspace(workspace)
+            raise ConfigurationError(
+                "Не удалось закрепить владение рабочим каталогом."
+            ) from exc
+
+        unsigned = RestoreContext(
+            _handle=handle,
+            _route_path=route_path,
+            _workspace_dir=workspace,
+            _base_dir=base_dir,
+            _owned_workspace=True,
+            _correlation_id=correlation_id,
+        )
         context = RestoreContext(
             _handle=handle,
             _route_path=route_path,
             _workspace_dir=workspace,
+            _base_dir=base_dir,
             _owned_workspace=True,
             _correlation_id=correlation_id,
+            _signature=_trust.sign_payload(
+                unsigned._payload(), workspace_secret
+            ),
         )
         return PreparedPayload(
             text=protected_text,
@@ -423,19 +465,94 @@ class PrivacyGateway:
     def discard(self, context: RestoreContext) -> None:
         """Удалить защищённые артефакты, связанные с контекстом.
 
-        Вызов идемпотентен. При ``keep_artifacts`` артефакты сохраняются, и
-        ответственность за их удаление остаётся на приложении-потребителе.
+        Удаление выполняется только для контекста, который доказал владение
+        рабочим каталогом: принадлежность доверенной базе этого фасада,
+        canonical containment, настоящий каталог без ссылок, маркер владения
+        с тем же handle и совпадение кода аутентичности (ADR-34). При любом
+        отказе проверки не удаляется ничего.
+
+        Проверка не обращается к хранилищу ключей: освобождение ресурсов
+        остаётся возможным после ротации и удаления ключа.
+
+        Вызов идемпотентен: если рабочий каталог уже удалён, вызов ничего не
+        делает и не поднимает ошибку. При ``keep_artifacts`` артефакты
+        сохраняются, и ответственность за их удаление остаётся на
+        приложении-потребителе.
 
         Raises:
-            RestoreError: Контекст не принадлежит этому фасаду.
+            RestoreError: Контекст не принадлежит этому фасаду, изменён либо
+                не подтверждён как владеющий рабочим каталогом.
         """
         if not context._owned_workspace:
             raise RestoreError(
                 "Контекст не управляется этим экземпляром Privacy Gateway."
             )
+
         if self._config.keep_artifacts:
             return
-        self._remove_workspace(context._workspace_dir)
+
+        workspace = self._validated_workspace(context)
+        if workspace is None:
+            return
+
+        identity = _trust.workspace_identity(workspace)
+        try:
+            if _trust.workspace_identity(workspace) != identity:
+                raise RestoreError(
+                    "Рабочий каталог изменился во время проверки."
+                )
+        except _trust.ContextTrustError as exc:
+            raise RestoreError(
+                "Рабочий каталог изменился во время проверки."
+            ) from exc
+
+        self._remove_workspace(workspace)
+
+    def _validated_workspace(self, context: RestoreContext) -> Path | None:
+        """Проверить владение и вернуть каталог, разрешённый к удалению.
+
+        Возвращает ``None``, если удалять нечего. Порядок проверок задан
+        fail-closed: доверенная база берётся из конфигурации фасада, а не из
+        токена, и только подтверждённый каталог доходит до удаления.
+        """
+        expected_base = _trust.resolve_trusted_base(self._config.workspace_dir)
+        if _trust.canonical_path(context._base_dir) != expected_base:
+            raise RestoreError(
+                "Контекст восстановления не признан доверенным."
+            )
+
+        workspace = context._workspace_dir
+        if not _trust.is_contained(
+            expected_base, _trust.canonical_path(workspace)
+        ):
+            raise RestoreError(
+                "Контекст восстановления не признан доверенным."
+            )
+
+        try:
+            workspace.lstat()
+        except OSError:
+            return None
+
+        if not _trust.is_real_directory(workspace):
+            raise RestoreError(
+                "Рабочий каталог не признан принадлежащим контексту."
+            )
+
+        secret = _trust.read_owner_secret(workspace, context._handle)
+        if secret is None:
+            raise RestoreError(
+                "Рабочий каталог не признан принадлежащим контексту."
+            )
+
+        if not _trust.verify_payload(
+            context._payload(), context._signature, secret
+        ):
+            raise RestoreError(
+                "Контекст восстановления не признан доверенным."
+            )
+
+        return workspace
 
     def _load_routing(self) -> _routing.RoutingConfig:
         """Загрузить конфигурацию маршрутизации для одной операции."""
