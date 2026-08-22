@@ -38,11 +38,10 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 from unittest.mock import patch
 
 import pytest
