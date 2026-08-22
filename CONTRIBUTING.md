@@ -4,17 +4,55 @@
 
 ## Окружение
 
-- Поддерживаемая версия Python соответствует CI-матрице проекта: Python 3.11 на Ubuntu latest и Windows latest.
-- Версия Python в локальном окружении не должна расходиться с `pyproject.toml` и с `.github/workflows/`. Обнаруженное расхождение фиксируется отдельной issue, а не «правится по пути».
+### Python policy
+
+Разделяются три разных понятия: поддерживаемый диапазон пакета, exact CI baseline и фактическая версия локального gate.
+
+- Поддерживаемый диапазон пакета объявлен в `pyproject.toml`: `project.requires-python = ">=3.11"`. Это единственный источник истины; верхняя граница не объявлена и не обещается.
+- Exact CI baseline — Python 3.11 на Ubuntu latest и Windows latest. Эти check runs обязательны независимо от локальной версии Python.
+- Локальный gate выполняется на любой версии, удовлетворяющей `requires-python`. Фактический вывод `python --version` обязательно приводится в PR и handover.
+- Локальная minor version, отличающаяся от CI baseline (например Python 3.12.x), не является exception сама по себе, если она удовлетворяет `requires-python`. Exact CI на Python 3.11 при этом остаётся обязательной.
+- Если локальная версия не удовлетворяет `requires-python`, работа блокируется до смены окружения.
+- Если объявленный диапазон в `pyproject.toml`, CI-матрица в `.github/workflows/` и документация действительно расходятся, расхождение фиксируется отдельной issue, а не «правится по пути». Отличающаяся, но поддерживаемая локальная minor version расхождением не считается.
 - Используйте отдельное виртуальное окружение для репозитория.
-- Устанавливайте проект в editable-режиме вместе с dev-зависимостями ровно так, как они объявлены в `pyproject.toml`. Не выдумывайте команды и extras, которых нет в конфигурации проекта.
+- Проект устанавливается в editable-режиме вместе с dev-зависимостями ровно так, как они объявлены в `pyproject.toml`. Не выдумывайте команды и extras, которых нет в конфигурации проекта.
+
+Фактический диапазон можно проверить непосредственно из конфигурации:
+
+```bash
+python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['requires-python'])"
+```
+
+### Linux (bash)
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-# затем editable + dev-зависимости строго по pyproject.toml
+python -m pip install -e ".[dev]"
 pre-commit install
+```
+
+Команда `python3.11` приведена как CI baseline и доступна не во всех дистрибутивах. Допустимо создать venv любым установленным интерпретатором, удовлетворяющим `>=3.11` (например `python3 -m venv .venv` или полный путь к интерпретатору); использованная версия фиксируется в отчёте.
+
+### Windows (PowerShell)
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+pre-commit install
+```
+
+Если Python Launcher (`py`) отсутствует, используйте полный путь к поддерживаемому интерпретатору. Команды для `cmd.exe` здесь не приводятся, так как не проверялись.
+
+### Фиксация фактической версии
+
+После активации окружения зафиксируйте версию и приведите её в PR и handover:
+
+```bash
+python --version
 ```
 
 ## Начало работы
@@ -71,6 +109,10 @@ CI-результат подтверждается только первичны
 Обязательно указывается:
 
 - base SHA, имя ветки, HEAD SHA (и merge SHA, если merge выполнен);
+- фактический вывод `python --version` окружения, в котором выполнялся локальный gate;
+- значение `project.requires-python` (или прямая ссылка на `pyproject.toml`) как supported range;
+- локальная версия Python отдельно от exact CI version (Python 3.11);
+- точная команда установки dev-зависимостей: `python -m pip install -e ".[dev]"`;
 - точные выполненные команды локального gate;
 - фактическое число passed/skipped тестов;
 - фактическое число файлов, проверенных `mypy`;
