@@ -42,6 +42,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any
+from collections.abc import Callable
 from unittest.mock import patch
 
 import pytest
@@ -185,7 +186,9 @@ def _identity_mismatch() -> AbstractContextManager[Any]:
     идентичность, второй — расходящуюся.
     """
     if sys.platform == "win32" and not trust.SUPPORTS_DIR_FD:
-        real_identity = vars(trust)["_win_identity"]
+        real_identity: Callable[[int], tuple[int, bytes]] = vars(trust)[
+            "_win_identity"
+        ]
         calls = {"count": 0}
 
         def fake(handle: int) -> tuple[int, bytes]:
@@ -195,6 +198,7 @@ def _identity_mismatch() -> AbstractContextManager[Any]:
             return _MISMATCHED_IDENTITY  # type: ignore[return-value]
 
         return patch.object(trust, "_win_identity", side_effect=fake)
+
     return patch.object(
         trust, "path_identity", return_value=_MISMATCHED_IDENTITY
     )
