@@ -15,6 +15,16 @@
 исполняется в exact CI на соответствующем раннере: Windows-проверка не
 скрывается полностью, как требует #52.
 
+Остаточное поведение после успешного удаления различается по платформам и
+задокументировано в дополнении ADR-34: на Linux финальный ``rmdir`` называет
+имя только для проверки идентичности карантинного имени, а сама проверенная
+сущность (уже под другим именем после атаки) никогда не адресуется по имени
+и остаётся пустым каталогом. На Windows диспозиция ставится на handle,
+который идентифицирует объект по identity, а не по текущему имени, поэтому
+сущность удаляется целиком независимо от того, как она называется в момент
+удаления. Обе гарантии укладываются в требование #52: подтверждённая
+сущность не остаётся неудалённой, а неподтверждённая — не удаляется.
+
 Инвариант «нет закрепления — нет удаления» проверяется отдельно и на любой
 платформе: ``discard`` обязан завершиться fail closed и не вызывать
 path-based рекурсивное удаление.
@@ -132,23 +142,59 @@ def _plant_decoy(base: Path, state: dict[str, Path]) -> None:
     state["moved"] = moved
 
 
-def _assert_swap_defended(state: dict[str, Path], victim: Path) -> None:
-    """Проверить, что удалена проверенная сущность, а не подставленная."""
+def _assert_decoy_survived(state: dict[str, Path], victim: Path) -> None:
+    """Проверить, что подставленный каталог и victim не затронуты."""
     decoy = state["decoy"]
-    moved = state["moved"]
     assert (decoy / _CONTROL_NAME).is_file()
     assert (decoy / "sub" / "deep.txt").is_file()
-    assert moved.is_dir()
-    assert not any(moved.iterdir())
     assert (victim / "keep.txt").is_file()
 
 
+def _assert_swap_defended_pinned(state: dict[str, Path], victim: Path) -> None:
+    """Linux: проверенная сущность остаётся пустым каталогом под чужим именем.
+
+    Финальный ``rmdir`` называет имя только для проверки идентичности
+    карантинного имени (которое теперь указывает на decoy и не совпадает),
+    поэтому сама проверенная сущность, уже переехавшая под имя ``-moved``,
+    никаким destructive-вызовом по имени не адресуется. Дети у неё вычищены
+    относительно дескриптора, но сам каталог остаётся.
+    """
+    _assert_decoy_survived(state, victim)
+    moved = state["moved"]
+    assert moved.is_dir()
+    assert not any(moved.iterdir())
+
+
+def _assert_swap_defended_handle(state: dict[str, Path], victim: Path) -> None:
+    """Windows: диспозиция на handle удаляет сущность целиком по identity.
+
+    В отличие от Linux, диспозиция ставится на сам handle закреплённого
+    объекта и не зависит от его текущего имени: сущность, переехавшая под имя
+    ``-moved``, удаляется полностью при закрытии handle.
+    """
+    _assert_decoy_survived(state, victim)
+    assert not state["moved"].exists()
+
+
 def _identity_mismatch() -> AbstractContextManager[Any]:
-    """Смоделировать расхождение идентичности на границе удаления."""
+    """Смоделировать расхождение идентичности на границе удаления.
+
+    На Windows ``_win_identity`` вызывается дважды — до и после отцепления,
+    поэтому подмена через ``return_value`` не создаёт расхождения: оба вызова
+    вернули бы одно и то же значение. Первый вызов обязан вернуть настоящую
+    идентичность, второй — расходящуюся.
+    """
     if sys.platform == "win32" and not trust.SUPPORTS_DIR_FD:
-        return patch.object(
-            trust, "_win_identity", return_value=_MISMATCHED_IDENTITY
-        )
+        real_identity = vars(trust)["_win_identity"]
+        calls = {"count": 0}
+
+        def fake(handle: int) -> tuple[int, bytes]:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return real_identity(handle)
+            return _MISMATCHED_IDENTITY  # type: ignore[return-value]
+
+        return patch.object(trust, "_win_identity", side_effect=fake)
     return patch.object(
         trust, "path_identity", return_value=_MISMATCHED_IDENTITY
     )
@@ -184,7 +230,7 @@ def test_quarantine_swap_real_directory_pinned(
     with patch("os.scandir", side_effect=scandir):
         gateway.discard(prepared.context)
 
-    _assert_swap_defended(state, victim)
+    _assert_swap_defended_pinned(state, victim)
 
 
 @handle_only
@@ -197,10 +243,8 @@ def test_quarantine_swap_real_directory_handle(
     victim = _victim(tmp_path)
     prepared = gateway.prepare(SYNTH_TEXT)
     state: dict[str, Path] = {}
-    # Атрибут объявлен в платформенном блоке: под Linux mypy считает его
-    # недостижимым, поэтому берём его из словаря модуля.
     real_children = vars(trust)["_win_children"]
-    
+
     def children(handle: int) -> Any:
         if not state:
             _plant_decoy(base, state)
@@ -209,7 +253,7 @@ def test_quarantine_swap_real_directory_handle(
     with patch.object(trust, "_win_children", side_effect=children):
         gateway.discard(prepared.context)
 
-    _assert_swap_defended(state, victim)
+    _assert_swap_defended_handle(state, victim)
 
 
 # ---------------------------------------------------------------------------
