@@ -474,6 +474,12 @@ class PrivacyGateway:
         Проверка не обращается к хранилищу ключей: освобождение ресурсов
         остаётся возможным после ротации и удаления ключа.
 
+        Удаление выполняется над проверенной сущностью файловой системы, а
+        не над заново разрешённым путём: каталог отцепляется от исходного
+        имени и удаляется только после сверки идентичности. Публичное
+        поведение одинаково на всех платформах, низкоуровневый механизм
+        различается — дополнение к ADR-34.
+
         Вызов идемпотентен: если рабочий каталог уже удалён, вызов ничего не
         делает и не поднимает ошибку. При ``keep_artifacts`` артефакты
         сохраняются, и ответственность за их удаление остаётся на
@@ -491,29 +497,30 @@ class PrivacyGateway:
         if self._config.keep_artifacts:
             return
 
-        workspace = self._validated_workspace(context)
-        if workspace is None:
+        validated = self._validated_workspace(context)
+        if validated is None:
             return
+        workspace, secret = validated
 
-        identity = _trust.workspace_identity(workspace)
         try:
-            if _trust.workspace_identity(workspace) != identity:
-                raise RestoreError(
-                    "Рабочий каталог изменился во время проверки."
-                )
+            _trust.remove_verified_workspace(
+                workspace, context._handle, secret
+            )
         except _trust.ContextTrustError as exc:
             raise RestoreError(
                 "Рабочий каталог изменился во время проверки."
             ) from exc
 
-        self._remove_workspace(workspace)
-
-    def _validated_workspace(self, context: RestoreContext) -> Path | None:
-        """Проверить владение и вернуть каталог, разрешённый к удалению.
+    def _validated_workspace(
+        self, context: RestoreContext
+    ) -> tuple[Path, str] | None:
+        """Проверить владение и вернуть каталог с секретом владения.
 
         Возвращает ``None``, если удалять нечего. Порядок проверок задан
         fail-closed: доверенная база берётся из конфигурации фасада, а не из
-        токена, и только подтверждённый каталог доходит до удаления.
+        токена, и только подтверждённый каталог доходит до удаления. Секрет
+        возвращается, чтобы граница удаления привязала аутентичность
+        контекста к закреплённой сущности, а не к пути.
         """
         expected_base = _trust.resolve_trusted_base(self._config.workspace_dir)
         if _trust.canonical_path(context._base_dir) != expected_base:
@@ -552,7 +559,7 @@ class PrivacyGateway:
                 "Контекст восстановления не признан доверенным."
             )
 
-        return workspace
+        return workspace, secret
 
     def _load_routing(self) -> _routing.RoutingConfig:
         """Загрузить конфигурацию маршрутизации для одной операции."""

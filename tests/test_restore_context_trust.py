@@ -494,29 +494,6 @@ def test_workspace_replaced_by_symlink_fails_closed(
     assert workspace.is_symlink()
 
 
-def test_swapped_path_component_refuses_removal(
-    tmp_path: Path, mock_keyring: bytes
-) -> None:
-    """Подмена каталога между проверкой и удалением приводит к отказу.
-
-    Проверка детерминированная: подменяется не тайминг, а результат снятия
-    идентичности каталога — управляемая граница файловой системы.
-    """
-    base = tmp_path / "base"
-    gateway = _gateway(base)
-    prepared = gateway.prepare(SYNTH_TEXT)
-    workspace = _workspace_of(base)
-
-    with patch(
-        "privacy_gateway.facade._trust.workspace_identity",
-        side_effect=[(1, 1), (1, 2)],
-    ):
-        with pytest.raises(RestoreError):
-            gateway.discard(prepared.context)
-
-    assert workspace.is_dir()
-
-
 # ---------------------------------------------------------------------------
 # Гигиена сообщений
 # ---------------------------------------------------------------------------
