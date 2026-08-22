@@ -43,7 +43,7 @@ import stat
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 #: Доменное разделение MAC контекста. Меняется вместе с версией формата.
 CONTEXT_MAC_LABEL: Final = b"privacy-gateway/restore-context/v2"
@@ -760,8 +760,7 @@ if sys.platform == "win32":  # pragma: no cover - платформенная в�
         )
         if status != 0 or child.value is None:
             raise ContextTrustError(_UNAVAILABLE)
-        handle_value: int = child.value
-        return handle_value
+        return cast(int, child.value)
 
     def _win_read_marker(dir_handle: int, handle: str) -> str | None:
         """Прочитать маркер владения относительно handle каталога."""
