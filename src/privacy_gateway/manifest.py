@@ -16,15 +16,38 @@ DecryptionError (из crypto.py).
     Манифесты зашифрованы конкретным ключом. При замене ключа старые манифесты
     становятся нечитаемы (load_manifest поднимет DecryptionError). Для ротации
     необходимо: 1) загрузить со старым ключом, 2) пересохранить с новым.
+
+Публикация manifest.json (#45, ADR-45):
+    save_manifest() сериализует документ целиком, пишет его во временный
+    файл в каталоге назначения и публикует одним os.replace().
+
+    Политика — atomic visibility only: пустой или частично записанный
+    manifest.json не наблюдается, при отказе write/close/replace ранее
+    существовавший файл остаётся неизменным, временный файл удаляется
+    best-effort и его удаление не подменяет первичную ошибку.
+
+    fsync файла и каталога НЕ выполняется: crash durability не обещается.
+    Атомарна публикация одного файла, а не набора артефактов prepare.
+    Порядок публикации в pipeline не меняется (manifest.json → prompt.txt
+    → route.json; route.json содержит manifest_sha256). Коллизия
+    «существует только manifest.json» относится к #48 и здесь не
+    изменяется.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from privacy_gateway.crypto import decrypt, encrypt
 from privacy_gateway.models import ManifestEntry, TokenRecord
+
+# Префикс/суффикс временного файла публикации манифеста.
+# Имя не совпадает с manifest.json и не воспринимается как манифест.
+_TMP_PREFIX = ".manifest-"
+_TMP_SUFFIX = ".tmp"
 
 
 def build_manifest(
@@ -66,19 +89,66 @@ def build_manifest(
     return entries
 
 
+def _publish_atomically(path: Path, serialized: str) -> None:
+    """Опубликовать *serialized* по пути *path* атомарной заменой.
+
+    Временный файл создаётся в каталоге назначения (одна файловая
+    система), закрывается ровно один раз и публикуется os.replace().
+    До успешного replace содержимое *path* не меняется. Cleanup
+    временного файла best-effort и не маскирует первичную ошибку.
+
+    Args:
+        path:       Итоговый путь публикации.
+        serialized: Полностью сформированное содержимое файла.
+
+    Raises:
+        OSError: Отказ создания, записи, закрытия или замены файла.
+    """
+    tmp_name: str | None = None
+    published = False
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=_TMP_PREFIX,
+            suffix=_TMP_SUFFIX,
+        )
+        try:
+            # newline по умолчанию — как у Path.write_text(),
+            # чтобы формат файла не изменился ни на одной платформе.
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            raise
+        with stream:
+            stream.write(serialized)
+        os.replace(tmp_name, path)
+        published = True
+    finally:
+        if tmp_name is not None and not published:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+
+
 def save_manifest(entries: list[ManifestEntry], path: Path) -> None:
-    """Записать манифест в JSON-файл (UTF-8).
+    """Записать манифест в JSON-файл (UTF-8) атомарной публикацией.
 
     Исходные значения в файле отсутствуют; encrypted_value хранится как hex.
+    Документ сериализуется полностью до создания временного файла, поэтому
+    ошибка сериализации не создаёт временных файлов и не меняет
+    существующий манифест.
 
     Args:
         entries: Список ManifestEntry.
-        path:    Путь к файлу (создаётся или перезаписывается).
+        path:    Путь к файлу (создаётся или заменяется целиком).
+
+    Raises:
+        OSError: Отказ создания, записи, закрытия или замены файла.
     """
     data = [entry.to_dict() for entry in entries]
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    serialized = json.dumps(data, ensure_ascii=False, indent=2)
+    _publish_atomically(path, serialized)
 
 
 def load_manifest(path: Path, key: bytes) -> list[ManifestEntry]:

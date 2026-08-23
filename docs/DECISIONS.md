@@ -1033,3 +1033,40 @@ runtime-проверками, exact CI на доступных Windows runners �
 корень и traversal закреплены descriptor/handle в принятой модели угроз. При
 недоказуемом закреплении операция завершается fail closed, и допустим
 остаточный `.pgw-quarantine-*`.
+
+## ADR-45: политика атомарности и durability публикации manifest.json  [#45]
+
+**Дата:** 2026-08-23. Дополняет ADR-12 (атомарность записи артефактов), не
+заменяет его.
+
+**Контекст.** ADR-12 и документация описывали атомарную публикацию
+prepare-артефактов, но `save_manifest()` использовал прямой
+`Path.write_text()`. `pipeline._write_atomic()` уже применял temp + rename для
+`prompt.txt` и `route.json`, то есть манифест был единственным артефактом вне
+этой схемы (аудит #42, issue #45).
+
+**Решение.** Принята политика **atomic visibility only**: полная сериализация
+JSON в строку до создания файла, `tempfile.mkstemp(dir=path.parent,
+prefix=".manifest-", suffix=".tmp")`, единственное закрытие потока, публикация
+одним `os.replace()`, best-effort удаление temp в `finally` без маскирования
+первичной ошибки. При отказе `os.fdopen` сырой дескриптор закрывается явно.
+`flush + os.fsync(fd)` и fsync каталога не выполняются.
+
+**Обоснование.** Задача #45 — исключить наблюдаемый частичный или пустой
+`manifest.json` и разрушение ранее валидного файла. Crash durability требует
+отдельного кроссплатформенно обоснованного решения по fsync и в этот scope не
+входит. Транзакционность всего набора артефактов потребовала бы
+staging-каталога и rename каталога целиком — отвергнуто как расширение scope.
+
+**Последствия.** Публичное API `save_manifest(entries, path) -> None`, JSON
+format contract (`ensure_ascii=False`, `indent=2`, UTF-8, без завершающего
+перевода строки, `newline` по умолчанию как у `Path.write_text()`), exception
+contract (raw `OSError`), schema и версия манифеста не изменились. Порядок
+публикации в `prepare_pipeline()` сохранён: `manifest.json` →
+`manifest_sha256` → `prompt.txt` → `route.json`; завершающий маркер набора —
+`route.json`, а не манифест. Коллизия «существует только `manifest.json`» при
+`overwrite=False` остаётся открытой в #48: `os.replace()` по-прежнему заменяет
+существующий манифест, preflight-проверки и смысл `overwrite` не изменены.
+Тестов 331 → 351 (+20 failure-path и характеризационных), mypy 45 → 47 файлов.
+
+**Статус:** действует.
