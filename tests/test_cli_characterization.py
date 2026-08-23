@@ -312,8 +312,8 @@ def test_prepare_existing_artifacts_blocked_without_overwrite(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "BLOCKED: Output file(s) already exist: prompt.txt, route.json. "
-        "Use --overwrite to allow replacement.\n"
+        "BLOCKED: Output file(s) already exist: prompt.txt, route.json, "
+        "manifest.json. Use --overwrite to allow replacement.\n"
     )
 
 
