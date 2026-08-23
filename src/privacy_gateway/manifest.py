@@ -1,4 +1,4 @@
-"""Слой зашифрованного манифеста — Ф4.
+"""Слой зашифрованного манифеста — Э4.
 
 Публичный контракт:
     build_manifest(records, original_values, key) -> list[ManifestEntry]
