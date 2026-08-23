@@ -181,7 +181,12 @@ def prepare_pipeline(
     manifest_path = out_dir / "manifest.json"
 
     if not overwrite:
-        existing = [p for p in (prompt_path, route_path) if p.exists()]
+        existing = [
+            p
+            for p in (prompt_path, route_path, manifest_path)
+            if p.exists()
+        ]
+
         if existing:
             names = ", ".join(p.name for p in existing)
             return PipelineResult(

@@ -1,13 +1,16 @@
-"""Характеризация порядка публикации артефактов prepare — #45.
+"""Характеризация порядка публикации артефактов prepare — #45, #48.
 
 Фиксируют фактический порядок записи (подтверждён кодом, не только
 документацией): manifest.json публикуется первым, затем prompt.txt,
-затем route.json с manifest_sha256. Порядок в #45 не меняется —
+затем route.json с manifest_sha256. Порядок в #45 и #48 не меняется —
 тесты защищают его от регрессии вместе с атомарной публикацией.
 
-Также характеризуется граница с #48: наличие только manifest.json
-при overwrite=False не блокирует prepare. Это ожидаемое состояние
-до #48, и #45 его не изменяет.
+Единая preflight overwrite-policy трёх артефактов закрыта в #48
+(ADR-48): наличие только manifest.json при overwrite=False блокирует
+prepare до первой записи. Прежний характеризационный тест обратного
+поведения инвертирован и оставлен здесь как regression contract на
+границе с #45: атомарная замена одного файла и preflight-коллизия —
+разные гарантии.
 
 Синтетика: user@example.com, 192.0.2.10.
 """
@@ -17,7 +20,6 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -105,18 +107,18 @@ def test_manifest_failure_leaves_prompt_and_route_absent(
     assert not (out_dir / "route.json").exists()
 
 
-def test_existing_manifest_alone_does_not_block_prepare(
-    tmp_path: Path,
-) -> None:
-    """Граница с #48: только manifest.json не блокирует overwrite=False."""
+def test_existing_manifest_alone_blocks_prepare(tmp_path: Path) -> None:
+    """#48: одиночный manifest.json блокирует prepare при overwrite=False."""
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     manifest_path = out_dir / "manifest.json"
     manifest_path.write_text("[]", encoding="utf-8")
+    old_bytes = manifest_path.read_bytes()
 
     result = _run(out_dir, generate_key())
 
-    assert result.status == ProcessingStatus.OK, result.message
-    decoded: Any = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert isinstance(decoded, list)
-    assert decoded, "манифест должен быть заменён опубликованным документом"
+    assert result.status == ProcessingStatus.BLOCKED, result.message
+    assert "manifest.json" in result.message
+    assert manifest_path.read_bytes() == old_bytes
+    assert not (out_dir / "prompt.txt").exists()
+    assert not (out_dir / "route.json").exists()
