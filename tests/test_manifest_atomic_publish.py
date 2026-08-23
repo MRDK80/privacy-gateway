@@ -19,7 +19,6 @@ from typing import IO, Any
 
 import pytest
 
-from privacy_gateway import manifest as manifest_mod
 from privacy_gateway.crypto import generate_key
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import EntityType, ManifestEntry, TokenRecord
@@ -131,7 +130,7 @@ def test_format_contract_unchanged(tmp_path: Path) -> None:
         indent=2,
     )
     assert dest.read_text(encoding="utf-8") == expected
-    assert not expected.endswith("\\n")
+    assert not expected.endswith("\n")
 
 
 def test_existing_manifest_replaced_entirely(tmp_path: Path) -> None:
@@ -320,13 +319,14 @@ def test_serialization_failure_creates_no_temp(
     dest = tmp_path / "manifest.json"
     save_manifest(_entries("1"), dest)
     old_bytes = dest.read_bytes()
+    entries = _entries("2")
 
     def failing_dumps(*args: Any, **kwargs: Any) -> str:
         raise TypeError("not serializable")
 
-    monkeypatch.setattr(manifest_mod.json, "dumps", failing_dumps)
+    monkeypatch.setattr(json, "dumps", failing_dumps)
     with pytest.raises(TypeError, match="not serializable"):
-        save_manifest(_entries("2"), dest)
+        save_manifest(entries, dest)
     monkeypatch.undo()
     assert dest.read_bytes() == old_bytes
     assert _leftovers(tmp_path) == []

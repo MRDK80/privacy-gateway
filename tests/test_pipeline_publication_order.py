@@ -23,13 +23,14 @@ import pytest
 
 from privacy_gateway import pipeline as pipeline_mod
 from privacy_gateway.crypto import generate_key
+from privacy_gateway.manifest import save_manifest as real_save_manifest
 from privacy_gateway.models import ManifestEntry, ProcessingStatus
 from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
 SYNTH_EMAIL = "user@example.com"  # pragma: allowlist secret
 SYNTH_IP = "192.0.2.10"  # pragma: allowlist secret
-SYNTH_TEXT = f"Письмо на {SYNTH_EMAIL} с сервера {SYNTH_IP}\\n"
+SYNTH_TEXT = f"Письмо на {SYNTH_EMAIL} с сервера {SYNTH_IP}\n"
 
 
 def _run(out_dir: Path, key: bytes, overwrite: bool = False) -> PipelineResult:
@@ -48,12 +49,11 @@ def test_manifest_published_before_prompt_and_route(
 ) -> None:
     """Фактический порядок: manifest.json → prompt.txt → route.json."""
     calls: list[str] = []
-    real_save = pipeline_mod.save_manifest
     real_write = pipeline_mod._write_atomic
 
     def spy_save(entries: list[ManifestEntry], path: Path) -> None:
         calls.append(path.name)
-        real_save(entries, path)
+        real_save_manifest(entries, path)
 
     def spy_write(
         path: Path, content: str | bytes, mode: int | None = None
