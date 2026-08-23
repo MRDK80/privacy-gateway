@@ -311,22 +311,39 @@ def write_restored(
     # Подготовка каталога входит в ту же границу OSError, что и атомарная
     # запись (#36, ADR-33): отказ файловой системы на любом шаге даёт
     # ConfigurationError и код 3, не-OSError по-прежнему проходит наружу.
+    #
+    # Имя временного файла сохраняется до конца операции, а его удаление
+    # выполняется в finally (#44, аудит #42): временный файл содержит
+    # восстановленный plaintext, поэтому он не должен оставаться на диске
+    # ни при одном неуспешном исходе, включая отказ os.replace.
+    tmp_name: str | None = None
+    published = False
     try:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp_name = tempfile.mkstemp(
             dir=out_path.parent, suffix=".tmp", prefix=".pgw_restore_"
         )
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(text)
-        except Exception:
-            try:
-                os.unlink(tmp_name)
-            except OSError:
-                pass
+            stream = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            # fdopen не принял владение дескриптором — закрываем его сами,
+            # иначе дескриптор утечёт до конца процесса.
+            os.close(fd)
             raise
+        with stream as fh:
+            fh.write(text)
+        # Дескриптор уже закрыт: на Windows unlink открытого файла невозможен.
         os.replace(tmp_name, out_path)
+        published = True
     except OSError as exc:
         raise ConfigurationError(
             f"Не удалось записать результат в {out_path}: {exc}"
         ) from exc
+    finally:
+        if tmp_name is not None and not published:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                # Первичная ошибка записи важнее косметической уборки:
+                # отказ самого unlink не маскирует и не подменяет её.
+                pass
