@@ -6,7 +6,7 @@
   в детерминированном порядке [active, retired] без дублей;
 - retired-entry содержит ровно один ключ после успешной ротации;
 - decryptability-матрица K0-K3: читаются только два последних поколения;
-- отказ на каждом шаге ротации не теряет active и допускает retry;
+- отказ на каждом шаге ротации не теряет данные и допускает retry;
 - отказ verification не сообщает success и не раскрывает key material;
 - legacy-состояние с глубокой историей ограничивается при чтении
   и сокращается при первой явной ротации;
@@ -139,12 +139,20 @@ def test_decryptability_matrix_k0_to_k3(safe_backend: _SafeBackendMock) -> None:
 
 
 @pytest.mark.parametrize("fail_on_call", [1, 2, 3])
-def test_rotation_failure_preserves_active_and_allows_retry(
+def test_rotation_failure_preserves_data_and_allows_retry(
     safe_backend: _SafeBackendMock,
     monkeypatch: pytest.MonkeyPatch,
     fail_on_call: int,
 ) -> None:
-    """Отказ любой записи не теряет active и допускает retry."""
+    """Отказ любой записи не теряет данные и допускает retry.
+
+    Шаги записи по ADR-46: 1 — carry retired, 2 — новый active, 3 — prune.
+    При отказе на шагах 1 и 2 ротация не состоялась и active остаётся
+    прежним. При отказе на шаге 3 смена active уже выполнена и
+    подтверждена чтением, недостигнутым остаётся только bounded-
+    состояние retired-entry, о чём операция обязана сообщить ошибкой,
+    а не полным success.
+    """
     ks.create_key()
     ks.rotate_key()
     active_before = ks.get_key()
@@ -165,15 +173,27 @@ def test_rotation_failure_preserves_active_and_allows_retry(
         ks.rotate_key()
     monkeypatch.setattr(ks, "_set_raw", original_set_raw)
 
-    assert ks.get_key() == active_before, (
-        "Активный ключ не должен теряться при отказе ротации"
-    )
+    active_after_failure = ks.get_key()
+    if fail_on_call in (1, 2):
+        assert active_after_failure == active_before, (
+            "Ротация не состоялась: активный ключ должен остаться прежним"
+        )
+    else:
+        assert active_after_failure != active_before, (
+            "Отказ prune происходит после подтверждённой смены active"
+        )
+
     keys_after_failure = ks.get_all_keys()
     assert len(keys_after_failure) <= 2
     assert decrypt_multi(current_token, keys_after_failure) == _PLAINTEXT
 
+    expected_entries = 1 if fail_on_call == 1 else 2
+    assert len(_retired_entries(safe_backend)) == expected_entries, (
+        "Незавершённый prune оставляет key material в keyring"
+    )
+
     new_key = ks.rotate_key()
-    assert ks.get_all_keys() == [new_key, active_before]
+    assert ks.get_all_keys() == [new_key, active_after_failure]
     assert len(_retired_entries(safe_backend)) == 1
 
 
