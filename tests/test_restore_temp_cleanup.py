@@ -49,9 +49,9 @@ class _StreamProxy:
     def __enter__(self) -> _StreamProxy:
         return self
 
-    def __exit__(self, *exc_info: Any) -> bool:
+    def __exit__(self, *exc_info: Any) -> None:
+        # Исключение не подавляется: None эквивалентен False для with.
         self.close()
-        return False
 
     def write(self, data: str) -> int:
         if self._write_exc is not None:
