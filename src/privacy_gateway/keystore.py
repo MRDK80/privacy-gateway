@@ -2,8 +2,8 @@
 
 Публичный контракт:
     get_key() -> bytes (один активный ключ для шифрования)
-    get_all_keys() -> list[bytes] (все ключи, первый — активный,
-        для MultiFernet)
+    get_all_keys() -> list[bytes] (active и один retired, ADR-46,
+                              для MultiFernet)
     key_exists() -> bool (проверка без вывода значения)
     create_key(force) -> bytes (создать и сохранить новый ключ)
     delete_key() -> None (удалить ключ из keyring)
@@ -29,6 +29,9 @@ from privacy_gateway.crypto import generate_key
 _SERVICE = "privacy_gateway"
 _ACTIVE_KEY = "fernet_key"
 _RETIRED_KEY = "fernet_key_retired"
+
+# Максимум ключей, доступных штатному API: active + один retired (ADR-46)
+_MAX_KEYS = 2
 
 # FQCN бекендов, признанных безопасными
 _SAFE_BACKENDS: frozenset[str] = frozenset(
@@ -153,7 +156,11 @@ def get_key() -> bytes:
 
 
 def get_all_keys() -> list[bytes]:
-    """Вернуть все ключи: [активный, ...старые] для MultiFernet.
+    """Вернуть [active, retired] для MultiFernet (ADR-46).
+
+    Возвращается не более _MAX_KEYS ключей без дублей: активный ключ и
+    непосредственно предыдущий. Более глубокая legacy-история не отдаётся
+    штатному API и удаляется при следующей явной ротации.
 
     Raises:
         KeyNotFoundError: если активный ключ не найден.
@@ -163,15 +170,19 @@ def get_all_keys() -> list[bytes]:
         raise KeyNotFoundError(
             "Активный ключ не найден. Запустите 'pgw key create'."
         )
+
     keys = _decode_keys(raw)
 
     retired_raw = _get_raw(_RETIRED_KEY)
     if retired_raw is not None:
-        retired = _decode_keys(retired_raw)
-        keys.extend(retired)
+        keys.extend(_decode_keys(retired_raw))
 
-    return keys
+    bounded: list[bytes] = []
+    for key in keys:
+        if key not in bounded:
+            bounded.append(key)
 
+    return bounded[:_MAX_KEYS]
 
 def create_key(*, force: bool = False) -> bytes:
     """Создать новый Fernet-ключ и сохранить в keyring.
@@ -206,13 +217,37 @@ def delete_key() -> None:
 
 
 def rotate_key() -> bytes:
-    """Ротация: новый ключ становится активным, старый уходит в retired.
+    """Ротация с bounded retention: новый active, предыдущий active — retired.
+
+    Порядок операций (ADR-46): carry предыдущего active в retired вместе с
+    уже сохранённой историей, запись нового active, verification чтением,
+    затем prune retired до одного ключа. При отказе на любом шаге активный
+    ключ не теряется, текущее поколение манифестов остаётся читаемым, а
+    повторный вызов приводит к bounded-состоянию.
 
     Raises:
         KeyNotFoundError: если активного ключа нет.
+        KeystoreError: если смена активного ключа не подтверждена чтением.
     """
-    current_keys = get_all_keys()
+    current_active = get_key()
+
+    retired_raw = _get_raw(_RETIRED_KEY)
+    previous_retired = (
+        _decode_keys(retired_raw) if retired_raw is not None else []
+    )
+
     new_key = generate_key()
-    _set_raw(_RETIRED_KEY, _encode_keys(current_keys))
+
+    carry = [current_active]
+    carry.extend(k for k in previous_retired if k != current_active)
+    _set_raw(_RETIRED_KEY, _encode_keys(carry))
+
     _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
+
+    if get_key() != new_key:
+        raise KeystoreError(
+            "Ротация не подтверждена: активный ключ не соответствует новому."
+        )
+
+    _set_raw(_RETIRED_KEY, _encode_keys([current_active]))
     return new_key
