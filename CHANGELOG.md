@@ -7,6 +7,20 @@
 
 ### Security
 
+<!-- issue-66: retention-wording -->
+- Уточнена формулировка bounded retention после #46: штатный API
+  (`keystore.get_all_keys()`) немедленно ограничен `[active, retired]`, а
+  физический `fernet_key_retired` сокращается до одного ключа только
+  после успешной явной ротации с завершённым prune (#66, #46, ADR-46).
+- Снято чрезмерное обещание, что компрометация keyring раскрывает
+  максимум два ключа: до physical prune legacy- или partial-failure
+  история остаётся в backend и доступна субъекту с прямым доступом.
+- Зафиксировано фактическое поведение verification failure: смена active
+  не откатывается, физический retired-entry содержит два ключа, текущее
+  и предыдущее поколения читаются, безопасный retry приводит к bounded
+  physical state (#66).
+
+
 - `prepare` при `overwrite=False` проверяет полный набор целевых артефактов —
   `prompt.txt`, `route.json` и `manifest.json` — одной проверкой до первой
   операции записи (#48, аудит #42, ADR-48). Ранее одиночный существующий
