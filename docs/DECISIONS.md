@@ -1216,3 +1216,30 @@ verification чтением → перезапись retired = `[prev_active]` (
 duplicate-create contract (#47), manifest atomicity/collision (#45/#48), context
 trust (#43/#52), export/backup, configurable произвольная глубина retention,
 версия пакета и релиз, CI matrix. #41 не закрывается.
+
+#### Уточнение от 2026-08-24 (issue #66)
+
+ADR-46 разделяет две гарантии, которые ранее описывались как одна.
+
+- **API retention** действует немедленно: `get_all_keys()` возвращает не
+  более двух дедуплицированных ключей `[active, retired]`; более глубокая
+  legacy-история не попадает в restore/MultiFernet.
+- **Physical retention** меняется только явными операциями: physical
+  migration выполняется исключительно при успешной ротации с завершённым
+  prune. До этого legacy-установка физически хранит всю накопленную
+  историю в `fernet_key_retired`.
+- Prune failure оставляет дополнительный physical key material: при
+  legacy-истории глубиной 3 физический entry после отказа prune содержит
+  4 ключа при bounded API из 2.
+- Verification failure наступает после записи нового active, поэтому
+  состояние определяется фактическим backend, а не предположением о
+  rollback: фактический active - новый ключ, физический retired-entry
+  содержит два ключа, `get_all_keys()` возвращает
+  `[new_active, previous_active]`, текущее и предыдущее поколения
+  читаются.
+- Safe retry подтверждён тестом: повторный `rotate_key()` сокращает
+  физический retired-entry до одного ключа и не возвращает дубли.
+- Legacy rollback остаётся возможным до physical prune, поскольку старые
+  ключи физически присутствуют в backend.
+- Bounded policy `active + один retired` не меняется; prune command,
+  configurable depth и locking subsystem остаются вне scope (#47, #41).

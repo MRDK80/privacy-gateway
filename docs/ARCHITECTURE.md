@@ -640,3 +640,13 @@ verification чтением и prune `retired = [prev_active]`. Такой по�
 Migration существующих установок: глубокая история ограничивается уже при
 чтении, физически сокращается при первой явной ротации, и ни одна операция
 чтения не удаляет key material.
+
+<!-- issue-66: keyring-layout-layers -->
+
+Три слоя retention (уточнение #66, 2026-08-24):
+
+| Слой | Состояние | Когда действует |
+| --- | --- | --- |
+| Logical / API | `get_all_keys()` -> не более `[active, retired]`, дедуплицировано | немедленно, всегда |
+| Physical legacy / partial failure | `fernet_key_retired` может содержать несколько ключей | до успешного prune: legacy-установка, отказ prune, verification failure |
+| Physical post-prune | `fernet_key_retired` содержит ровно один ключ | после успешной явной ротации с завершённым prune |
