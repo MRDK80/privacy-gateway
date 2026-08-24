@@ -1243,4 +1243,3 @@ ADR-46 разделяет две гарантии, которые ранее о�
   ключи физически присутствуют в backend.
 - Bounded policy `active + один retired` не меняется; prune command,
   configurable depth и locking subsystem остаются вне scope (#47, #41).
-
