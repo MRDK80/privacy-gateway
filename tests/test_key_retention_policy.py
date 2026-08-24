@@ -277,3 +277,119 @@ def test_read_operations_never_delete_key_material(
         ks.get_all_keys()
 
     assert safe_backend.storage == snapshot
+
+# ---------------------------------------------------------------------------
+# Physical retention: verification failure и safe retry (issue #66)
+# ---------------------------------------------------------------------------
+
+
+def test_verification_failure_state_is_factual_and_retry_bounds_physical(
+    safe_backend: _SafeBackendMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verification failure не откатывает active; retry даёт bounded state.
+
+    Сценарий issue #66: start active=K1 / retired=[K0], stale read на
+    verification после записи K2, восстановление normal reads, фиксация
+    фактического backend-state, затем retry до K3.
+    """
+    k0 = ks.create_key()
+    k1 = ks.rotate_key()
+    token_k0 = encrypt_multi(_PLAINTEXT, [k0])
+    token_k1 = encrypt_multi(_PLAINTEXT, [k1])
+
+    assert ks.get_key() == k1
+    assert _retired_entries(safe_backend) == [k0.decode()]
+    assert ks.get_all_keys() == [k1, k0]
+
+    original_get_raw = ks._get_raw
+    stale_active = original_get_raw(ks._ACTIVE_KEY)
+
+    def _stale_get_raw(name: str) -> str | None:
+        if name == ks._ACTIVE_KEY:
+            return stale_active
+        return original_get_raw(name)
+
+    monkeypatch.setattr(ks, "_get_raw", _stale_get_raw)
+    with pytest.raises(KeystoreError) as exc_info:
+        ks.rotate_key()
+    monkeypatch.setattr(ks, "_get_raw", original_get_raw)
+
+    message = str(exc_info.value)
+    k2 = ks.get_key()
+
+    for key in (k0, k1, k2):
+        assert key.decode() not in message
+        assert str(key) not in message
+    for entry in _retired_entries(safe_backend):
+        assert entry not in message
+
+    assert k2 not in (k0, k1), (
+        "verification failure не откатывает уже записанный active"
+    )
+    assert _retired_entries(safe_backend) == [k1.decode(), k0.decode()], (
+        "незавершённый prune оставляет два физических retired-ключа"
+    )
+    keys_after_failure = ks.get_all_keys()
+    assert keys_after_failure == [k2, k1]
+    assert len(keys_after_failure) <= 2
+
+    token_k2 = encrypt_multi(_PLAINTEXT, [k2])
+    assert decrypt_multi(token_k2, keys_after_failure) == _PLAINTEXT
+    assert decrypt_multi(token_k1, keys_after_failure) == _PLAINTEXT
+    with pytest.raises(DecryptionError):
+        decrypt_multi(token_k0, keys_after_failure)
+
+    k3 = ks.rotate_key()
+    keys_after_retry = ks.get_all_keys()
+    assert keys_after_retry == [k3, k2]
+    assert len(set(keys_after_retry)) == len(keys_after_retry)
+    assert _retired_entries(safe_backend) == [k2.decode()]
+
+    token_k3 = encrypt_multi(_PLAINTEXT, [k3])
+    assert decrypt_multi(token_k3, keys_after_retry) == _PLAINTEXT
+    assert decrypt_multi(token_k2, keys_after_retry) == _PLAINTEXT
+    for stale in (token_k1, token_k0):
+        with pytest.raises(DecryptionError):
+            decrypt_multi(stale, keys_after_retry)
+
+
+def test_prune_failure_on_legacy_history_keeps_physical_material_until_retry(
+    safe_backend: _SafeBackendMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """До prune physical blast radius может быть глубже двух ключей."""
+    active = ks.create_key()
+    legacy = [generate_key() for _ in range(3)]
+    ks._set_raw(ks._RETIRED_KEY, ks._encode_keys(legacy))
+
+    assert ks.get_all_keys() == [active, legacy[0]]
+    assert len(_retired_entries(safe_backend)) == 3
+
+    calls = 0
+    original_set_raw = ks._set_raw
+
+    def _failing_set_raw(name: str, value: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            raise KeystoreError("Симулированный сбой записи keyring")
+        original_set_raw(name, value)
+
+    monkeypatch.setattr(ks, "_set_raw", _failing_set_raw)
+    with pytest.raises(KeystoreError):
+        ks.rotate_key()
+    monkeypatch.setattr(ks, "_set_raw", original_set_raw)
+
+    new_active = ks.get_key()
+    assert new_active not in [active, *legacy]
+    assert ks.get_all_keys() == [new_active, active]
+    physical = _retired_entries(safe_backend)
+    assert physical == [active.decode(), *(k.decode() for k in legacy)]
+    assert len(physical) > 2, (
+        "physical retired-entry до prune глубже bounded API-контракта"
+    )
+
+    retried = ks.rotate_key()
+    assert ks.get_all_keys() == [retried, new_active]
+    assert _retired_entries(safe_backend) == [new_active.decode()]
