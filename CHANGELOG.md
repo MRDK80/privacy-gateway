@@ -7,6 +7,10 @@
 
 ### Corrections
 
+- Уточнено: cleanup временного plaintext-файла при отказе restore заявлен как
+  best-effort — при отказе `unlink` со стороны ОС файл может остаться (#44, #71).
+- CI matrix расширена до Python 3.11 и 3.12 на ubuntu-latest и windows-latest —
+  exact CI приведён в соответствие с `requires-python >=3.11` и classifiers (#71).
 <!-- issue-47: cli-contract -->
 - v0.3.0 и ADR-22 заявляли CLI-команду `pgw key delete`; она не входила в
   parser/dispatch ни в одном выпуске. Поддерживаемые подкоманды `pgw key`:

@@ -668,6 +668,26 @@ route не вводится. Чтение `prompt.txt` остаётся. Отв�
 - Алгоритм атомарной записи, `FileExistsError` и его текст, `overwrite`,
   `_RESTORE_WRITE_RULES`, `cli.py` и публичный фасад не изменены.
 
+### Уточнение от 2026-08-26 (#71, #44)
+
+Acceptance criterion #44 «после каждого моделируемого отказа временный plaintext
+отсутствует» уточняется до best-effort: cleanup временного файла
+`.pgw_restore_*.tmp` выполняется на всех путях отказа (write, flush, close,
+`fdopen`, `os.replace`), но абсолютная гарантия невозможна, если сама операция
+`unlink` отклонена ОС (mandatory lock, запрет DAC/MAC на каталог, Windows
+sharing violation).
+
+Принято решение по варианту 2 из #71: literal criterion переоформлен как
+documented best-effort residual, production-поведение `write_restored()` не
+меняется. Ошибка cleanup не подменяет первичную ошибку: первичное исключение
+сохраняется, существующий destination не изменяется, exit-code/exception
+contract (`ConfigurationError` -> 3, прочий `OSError` -> 1, ADR-31/ADR-33)
+остаётся прежним.
+
+Residual risk: при запрете `unlink` временный файл с plaintext может остаться в
+каталоге назначения до ручного удаления. Regression test не добавляется:
+runtime-поведение не изменено, существующие failure-path тесты сохраняются.
+
 ---
 
 ## ADR-34: доверенность контекста восстановления и подтверждение владения рабочим каталогом  [#43]
@@ -1085,6 +1105,20 @@ contract (raw `OSError`), schema и версия манифеста не изм�
 Тестов 331 → 351 (+20 failure-path и характеризационных), mypy 45 → 47 файлов.
 
 **Статус:** действует.
+
+### Уточнение от 2026-08-26 (#71, ADR-45)
+
+Абзац выше, описывающий #48 (overwrite collision policy) как открытую задачу, —
+исторический срез состояния до PR #62. Фактическое состояние: #48 закрыт как
+COMPLETED, collision policy подтверждена независимой проверкой для всех семи
+комбинаций; границы broken symlink и TOCTOU остаются документированным residual
+(см. ADR-48 и #64).
+
+Гарантия ADR-45 не расширяется: подтверждается только atomic visibility
+`manifest.json` через `mkstemp` + `os.replace` в пределах одной файловой
+системы. Crash durability, `fsync` данных и каталога, а также общая транзакция
+над несколькими prepare-артефактами (`prompt.txt`, `route.json`,
+`manifest.json`) не обещаются и не следуют из этого ADR.
 
 ## ADR-48: единая preflight overwrite-policy набора артефактов prepare  [#48]
 
