@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-08-27
+
 ### Corrections
 
 - Уточнено: cleanup временного plaintext-файла при отказе restore заявлен как
@@ -427,6 +429,7 @@
 - Семантика `PENDING` задокументирована в `models.py` и `validator.py`
 - `ProcessingStatus` в `models.py` расширен docstring'ом с полной семантикой
 
+[0.5.0]: https://github.com/MRDK80/privacy-gateway/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/MRDK80/privacy-gateway/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/MRDK80/privacy-gateway/commits/main
 [0.2.0]: https://github.com/MRDK80/privacy-gateway/commits/main
