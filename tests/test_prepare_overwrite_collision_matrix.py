@@ -24,6 +24,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -215,23 +218,101 @@ def test_directory_on_target_name_blocks(
     assert (out_dir / "manifest.json").is_dir()
 
 
-def test_broken_symlink_semantics_are_characterized(tmp_path: Path) -> None:
-    """Характеризация остаточной semantics: Path.exists() и broken symlink.
+def _make_entry(out_dir: Path, name: str, kind: str) -> Path:
+    """Занять целевое имя *name* записью типа *kind* внутри tmp_path."""
+    target = out_dir / name
+    if kind == "file":
+        target.write_bytes(SENTINELS[name])
+    elif kind == "dir":
+        target.mkdir()
+    elif kind == "live_symlink":
+        real = out_dir / f"real-{name}"
+        real.write_bytes(SENTINELS[name])
+        target.symlink_to(real)
+    elif kind == "broken_symlink":
+        target.symlink_to(out_dir / f"missing-{name}")
+    else:  # pragma: no cover - защита от опечатки в параметризации
+        raise AssertionError(f"неизвестный тип записи: {kind}")
+    return target
 
-    ADR-48: unify path-entry semantics (lexists/is_symlink) в scope #48 не
-    вводится — фиксируется как остаточное поведение, единое для всех трёх
-    артефактов.
+
+ENTRY_KINDS = ("file", "dir", "live_symlink", "broken_symlink")
+
+
+@pytest.mark.parametrize("name", TARGET_NAMES)
+@pytest.mark.parametrize("kind", ENTRY_KINDS)
+def test_occupied_path_entry_blocks_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    kind: str,
+) -> None:
+    """#63: занятый path entry блокирует overwrite=False до первой записи.
+
+    Преемственность: заменяет характеризационный
+    ``test_broken_symlink_semantics_are_characterized`` (#48, ADR-48), который
+    фиксировал остаточную target-oriented semantics ``Path.exists()``.
+    Остаточное поведение переведено в regression contract, а не удалено.
     """
     out_dir = tmp_path / "out"
     out_dir.mkdir()
-    link = out_dir / "manifest.json"
     try:
-        link.symlink_to(out_dir / "missing-target.json")
-    except (OSError, NotImplementedError):
-        pytest.skip("symlink недоступен без привилегий на этой платформе")
+        entry = _make_entry(out_dir, name, kind)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{kind} недоступен в этом окружении: {exc!r}")
+    link_target = os.readlink(entry) if kind.endswith("symlink") else None
+    expected = sorted(p.name for p in out_dir.iterdir())
+    _forbid_writes(monkeypatch)
 
-    assert link.is_symlink()
-    assert not link.exists()
+    result = _run(out_dir, generate_key())
+
+    assert result.status == ProcessingStatus.BLOCKED, (
+        f"target={name} kind={kind}: {result.message}"
+    )
+    assert name in result.message, f"target={name} kind={kind}"
+    assert result.prompt_path is None
+    assert result.route_path is None
+    assert result.manifest_path is None
+    assert os.path.lexists(entry), f"запись удалена: target={name} kind={kind}"
+    if kind == "dir":
+        assert entry.is_dir()
+    elif kind == "file":
+        assert entry.read_bytes() == SENTINELS[name]
+    else:
+        assert entry.is_symlink(), f"symlink заменён: target={name} kind={kind}"
+        assert os.readlink(entry) == link_target
+    if kind == "broken_symlink":
+        assert not entry.exists(), "broken symlink должен остаться broken"
+    assert sorted(p.name for p in out_dir.iterdir()) == expected
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junction только Windows")
+@pytest.mark.parametrize("name", TARGET_NAMES)
+def test_live_junction_on_target_name_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    """#63: Windows junction по целевому имени — занятый path entry."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    real = out_dir / f"real-{name}"
+    real.mkdir()
+    link = out_dir / name
+    proc = subprocess.run(  # noqa: S603 - фиксированные аргументы внутри tmp_path
+        ["cmd", "/c", "mklink", "/J", str(link), str(real)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0 or not os.path.lexists(link):
+        pytest.skip(
+            f"junction не создан: rc={proc.returncode} {proc.stderr.strip()}"
+        )
+    _forbid_writes(monkeypatch)
+
+    result = _run(out_dir, generate_key())
+
+    assert result.status == ProcessingStatus.BLOCKED, result.message
+    assert os.path.lexists(link)
 
 
 # ---------------------------------------------------------------------------
