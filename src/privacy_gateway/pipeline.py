@@ -184,7 +184,7 @@ def prepare_pipeline(
         existing = [
             p
             for p in (prompt_path, route_path, manifest_path)
-            if p.exists()
+            if os.path.lexists(p)
         ]
 
         if existing:

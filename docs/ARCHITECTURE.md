@@ -610,8 +610,13 @@ CLI остаётся независимым потребителем внутр�
 
 Атомарная замена одного файла (ADR-45) и preflight-коллизия (ADR-48) — разные
 гарантии. Preflight best-effort: конкурентное создание артефакта после
-проверки не предотвращается. `Path.exists()` semantics: каталог по целевому
-имени блокирует, broken symlink — нет.
+проверки не предотвращается. При `overwrite=False` prepare не начинает публикацию, если целевое имя
+`prompt.txt`, `route.json` или `manifest.json` занято любой существующей записью
+каталога: обычным файлом, каталогом, живым symlink, broken symlink или Windows
+junction/reparse записью. Проверка выполняется одним preflight через
+`os.path.lexists()` до первого writer-вызова; существующая запись не изменяется,
+не удаляется и не заменяется. Это best-effort preflight, а не strict no-clobber:
+TOCTOU-окно между проверкой и публикацией сохраняется (#64, ADR-48).
 ## Keyring layout и retention (#46, ADR-46)
 
 Keystore использует ровно две записи в системном keyring:
