@@ -1166,6 +1166,50 @@ Path-entry semantics — `Path.exists()`, теперь единые для тр�
 входит; текущее поведение закреплено тестами.
 
 **Статус:** действует.
+
+### Дополнение 2026-08-28 (#63): path-entry occupancy вместо target existence
+
+Контекст. Исходный ADR-48 сознательно оставил единый preflight `prepare_pipeline()`
+на `Path.exists()` и зафиксировал остаточную semantics: broken symlink по целевому
+имени считался свободным, а последующий `os.replace()` заменял сам path entry.
+Остаточное поведение было закрыто характеризационным тестом
+`test_broken_symlink_semantics_are_characterized`.
+
+Решение. При `overwrite=False` preflight проверяет занятость path entry, а не
+существование цели ссылки: в единственном месте проверки
+`src/privacy_gateway/pipeline.py` `p.exists()` заменён на `os.path.lexists(p)`.
+Порядок проверки `prompt.txt` → `route.json` → `manifest.json`, статус `BLOCKED`,
+текст `Output file(s) already exist: {names}. Use --overwrite to allow replacement.`,
+CLI-префикс `BLOCKED: ` и код возврата 3 не изменены. Исключения не вводятся.
+
+Основание совместимости. `os.path.lexists()` доступен в Python 3.11 и 3.12 и
+возвращает `True` для существующей записи каталога, включая broken symbolic link.
+`os.path.isjunction()` и `Path.is_junction()` добавлены только в Python 3.12
+(gh-99547) и в production-коде безусловно не используются: это нарушило бы
+официальную support matrix 3.11/3.12 × Ubuntu/Windows.
+
+Наблюдаемое изменение поведения. Ранее допустимый сценарий, когда целевое имя
+занято broken symlink и публикация начиналась без `--overwrite`, теперь даёт
+`BLOCKED`. Существующая запись не изменяется, не удаляется и не заменяется; отказ
+происходит до первого writer-вызова. Regression-доказательство: RED-прогон до
+production-правки падал на `save_manifest` для всех трёх целей с
+`kind=broken_symlink`, после правки матрица 3 цели × {файл, каталог, live symlink,
+broken symlink} проходит целиком.
+
+Границы. Гарантия остаётся best-effort preflight, а не strict no-clobber:
+TOCTOU-окно между проверкой и публикацией сохраняется и относится к #64.
+`overwrite=True` не изменён. Атомарный writer и порядок публикации #45
+(`manifest.json` → `manifest_sha256` → `prompt.txt` → `route.json`) не изменены;
+отдельные проверки в `save_manifest` и `_write_atomic` не вводятся.
+
+Windows junction/reparse. Ожидание: junction является существующей directory entry
+и распознаётся `lexists()` через `lstat`. Доказательная граница: live junction
+проверяется на Windows CI отдельным тестом со skip по точной причине, если
+`mklink /J` недоступен; сценарии нерешаемого reparse point
+(`ERROR_MOUNT_POINT_NOT_RESOLVED`) как покрытые не заявляются. Скрытые
+`ctypes`/pywin32/платформенные обходы не добавляются; при непокрытом
+broken-junction случае фиксируется точный gap без завышенной гарантии.
+
 ---
 
 ## ADR-46. Bounded retention для retired keys (#46)
