@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- prepare: preflight при `overwrite=False` ориентирован на занятость path entry
+  (`os.path.lexists()`), а не на существование цели ссылки. Занятое целевое имя
+  `prompt.txt` / `route.json` / `manifest.json` — включая broken symlink —
+  блокирует публикацию до первой записи; существующая запись не заменяется.
+  `overwrite=True`, порядок публикации, текст сообщения, CLI-префикс и код 3 не
+  изменены. Strict no-clobber не заявляется, TOCTOU остаётся (#63, #64).
+
 ## [0.5.0] — 2026-08-27
 
 ### Corrections
