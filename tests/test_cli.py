@@ -26,7 +26,8 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
 
 def test_package_importable() -> None:
     """Пакет privacy_gateway должен импортироваться."""
-    assert privacy_gateway.__version__ == "0.5.0"
+    assert isinstance(privacy_gateway.__version__, str)
+    assert privacy_gateway.__version__
 
 
 def test_version_matches_distribution_metadata() -> None:
