@@ -53,15 +53,24 @@ def test_manifest_published_before_prompt_and_route(
     calls: list[str] = []
     real_write = pipeline_mod._write_atomic
 
-    def spy_save(entries: list[ManifestEntry], path: Path) -> None:
-        calls.append(path.name)
-        real_save_manifest(entries, path)
-
-    def spy_write(
-        path: Path, content: str | bytes, mode: int | None = None
+    def spy_save(
+        entries: list[ManifestEntry],
+        path: Path,
+        *,
+        overwrite: bool = True,
     ) -> None:
         calls.append(path.name)
-        real_write(path, content, mode)
+        real_save_manifest(entries, path, overwrite=overwrite)
+
+    def spy_write(
+        path: Path,
+        content: str | bytes,
+        mode: int | None = None,
+        *,
+        overwrite: bool = True,
+    ) -> None:
+        calls.append(path.name)
+        real_write(path, content, mode, overwrite=overwrite)
 
     monkeypatch.setattr(pipeline_mod, "save_manifest", spy_save)
     monkeypatch.setattr(pipeline_mod, "_write_atomic", spy_write)
@@ -94,7 +103,12 @@ def test_manifest_failure_leaves_prompt_and_route_absent(
     manifest_path.write_text("[]", encoding="utf-8")
     old_bytes = manifest_path.read_bytes()
 
-    def failing_save(entries: list[ManifestEntry], path: Path) -> None:
+    def failing_save(
+        entries: list[ManifestEntry],
+        path: Path,
+        *,
+        overwrite: bool = True,
+    ) -> None:
         raise OSError("manifest publication failed")
 
     monkeypatch.setattr(pipeline_mod, "save_manifest", failing_save)

@@ -1198,6 +1198,14 @@ broken symlink} проходит целиком.
 
 Границы. Гарантия остаётся best-effort preflight, а не strict no-clobber:
 TOCTOU-окно между проверкой и публикацией сохраняется и относится к #64.
+
+Обновление 2026-08-29 (#64, ADR-64). TOCTOU-окно закрыто: при `overwrite=False`
+публикация идёт через общий примитив `publish.publish_temp()` — POSIX
+`os.link(temp, target)` + best-effort `os.unlink(temp)`, Windows
+`os.rename(temp, target)`, без fallback на `os.replace`. Формулировки ADR-48
+и ADR-45 выше сохранены как исторический срез; действующая граница гарантии,
+error contract и semantics поздней коллизии описаны в
+`docs/ADR-64-no-clobber-publication.md`.
 `overwrite=True` не изменён. Атомарный writer и порядок публикации #45
 (`manifest.json` → `manifest_sha256` → `prompt.txt` → `route.json`) не изменены;
 отдельные проверки в `save_manifest` и `_write_atomic` не вводятся.

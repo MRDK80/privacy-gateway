@@ -351,15 +351,24 @@ def test_overwrite_true_keeps_publication_order(
     calls: list[str] = []
     real_write = pipeline_mod._write_atomic
 
-    def spy_save(entries: list[ManifestEntry], path: Path) -> None:
-        calls.append(path.name)
-        real_save_manifest(entries, path)
-
-    def spy_write(
-        path: Path, content: str | bytes, mode: int | None = None
+    def spy_save(
+        entries: list[ManifestEntry],
+        path: Path,
+        *,
+        overwrite: bool = True,
     ) -> None:
         calls.append(path.name)
-        real_write(path, content, mode)
+        real_save_manifest(entries, path, overwrite=overwrite)
+
+    def spy_write(
+        path: Path,
+        content: str | bytes,
+        mode: int | None = None,
+        *,
+        overwrite: bool = True,
+    ) -> None:
+        calls.append(path.name)
+        real_write(path, content, mode, overwrite=overwrite)
 
     monkeypatch.setattr(pipeline_mod, "save_manifest", spy_save)
     monkeypatch.setattr(pipeline_mod, "_write_atomic", spy_write)
