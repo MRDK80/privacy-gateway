@@ -512,7 +512,7 @@ Fernet-ключ либо полное содержимое манифеста. �
 | Кодировки | Явная передача: `utf-8`, `utf-8-sig`, `cp1251` |
 | Unicode при restore | Текст читается и записывается в UTF-8 |
 | Переводы строк | Сохраняются при побайтовом сквозном цикле |
-| Атомарная запись | Временный файл в каталоге назначения + `os.replace` |
+| Атомарная запись | Временный файл в каталоге назначения + публикация: `os.replace`, при `overwrite=False` `os.link` (POSIX) / `os.rename` (Windows) |
 | Права manifest.json | `chmod` с игнорированием ошибок на Windows |
 | CI | Матрица `ubuntu-latest` + `windows-latest` |
 
@@ -584,9 +584,21 @@ CLI остаётся независимым потребителем внутр�
 
 | Артефакт | Механизм |
 | --- | --- |
-| `manifest.json` | `save_manifest`: temp `.manifest-*.tmp` в каталоге назначения → close → `os.replace` |
-| `prompt.txt` | `_write_atomic`: temp → `replace` |
-| `route.json` | `_write_atomic`: temp → `replace`, содержит `manifest_sha256` |
+| `manifest.json` | `save_manifest`: temp `.manifest-*.tmp` в каталоге назначения → close → публикация |
+| `prompt.txt` | `_write_atomic`: temp → публикация |
+| `route.json` | `_write_atomic`: temp → публикация, содержит `manifest_sha256` |
+
+Оба writer-пути публикуют через общий примитив `publish.publish_temp()`
+(#64, ADR-64):
+
+| Режим | POSIX | Windows |
+| --- | --- | --- |
+| `overwrite=True` | `os.replace` | `os.replace` |
+| `overwrite=False` | `os.link` + best-effort `os.unlink(temp)` | `os.rename` |
+
+При `overwrite=False` fallback на `os.replace` отсутствует: недоступность
+примитива даёт явную ошибку (fail closed). Коллизия имени — BLOCKED и код 3;
+`EPERM` и `PermissionError` в BLOCKED не мапятся.
 
 Порядок при статусе OK: `manifest.json` (затем `chmod` только для владельца) →
 чтение `manifest_sha256` из уже опубликованного файла → `prompt.txt` →
@@ -609,14 +621,18 @@ CLI остаётся независимым потребителем внутр�
 перечислением имён; CLI печатает `BLOCKED: …` и возвращает код 3.
 
 Атомарная замена одного файла (ADR-45) и preflight-коллизия (ADR-48) — разные
-гарантии. Preflight best-effort: конкурентное создание артефакта после
-проверки не предотвращается. При `overwrite=False` prepare не начинает публикацию, если целевое имя
+гарантии. Preflight закрывает раннюю коллизию, а strict no-clobber в точке
+публикации обеспечивает #64 (ADR-64): объект, созданный конкурентом после
+проверки, не заменяется. При `overwrite=False` prepare не начинает публикацию, если целевое имя
 `prompt.txt`, `route.json` или `manifest.json` занято любой существующей записью
 каталога: обычным файлом, каталогом, живым symlink, broken symlink или Windows
 junction/reparse записью. Проверка выполняется одним preflight через
 `os.path.lexists()` до первого writer-вызова; существующая запись не изменяется,
-не удаляется и не заменяется. Это best-effort preflight, а не strict no-clobber:
-TOCTOU-окно между проверкой и публикацией сохраняется (#64, ADR-48).
+не удаляется и не заменяется. С #64 (ADR-64) публикация при `overwrite=False`
+также не заменяет path entry, созданный после preflight: примитив
+`publish.publish_temp()` отказывает с `FileExistsError`, prepare возвращает
+BLOCKED, CLI — код 3. Транзакционность набора артефактов по-прежнему не
+обещается: поздняя коллизия оставляет набор незавершённым без откатов.
 ## Keyring layout и retention (#46, ADR-46)
 
 Keystore использует ровно две записи в системном keyring:

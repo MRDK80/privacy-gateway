@@ -13,6 +13,17 @@
   блокирует публикацию до первой записи; существующая запись не заменяется.
   `overwrite=True`, порядок публикации, текст сообщения, CLI-префикс и код 3 не
   изменены. Strict no-clobber не заявляется, TOCTOU остаётся (#63, #64).
+- prepare: при `overwrite=False` публикация артефактов больше не заменяет
+  path entry, созданный конкурентным процессом после preflight. Введён общий
+  примитив `privacy_gateway.publish.publish_temp()`: POSIX `os.link(temp,
+  target)` + best-effort `os.unlink(temp)`, Windows `os.rename(temp, target)`.
+  При `overwrite=True` семантика `os.replace` и порядок публикации #45 не
+  изменены. Fallback на `os.replace` при `overwrite=False` отсутствует
+  (fail closed). Коллизия имени даёт BLOCKED и код 3; `EPERM` на файловых
+  системах без hard links и `PermissionError` при sharing violation в BLOCKED
+  не мапятся. Поздняя коллизия оставляет набор незавершённым: ранее
+  опубликованные артефакты не откатываются, `route.json` не публикуется
+  (#64, ADR-64).
 
 ## [0.5.0] — 2026-08-27
 
