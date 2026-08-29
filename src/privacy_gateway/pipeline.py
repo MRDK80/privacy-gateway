@@ -55,6 +55,7 @@ from privacy_gateway.models import (
     ConfigurationError,
     ProcessingStatus,
 )
+from privacy_gateway.publish import publish_temp
 from privacy_gateway.routing import RoutingConfig
 from privacy_gateway.tokenizer import tokenize
 from privacy_gateway.validator import validate
@@ -103,9 +104,19 @@ def _safe_findings_summary(findings: list[Any]) -> list[dict[str, Any]]:
 
 
 def _write_atomic(
-    path: Path, content: str | bytes, mode: int | None = None
+    path: Path,
+    content: str | bytes,
+    mode: int | None = None,
+    *,
+    overwrite: bool = True,
 ) -> None:
-    """Записать файл атомарно через временный файл в той же директории."""
+    """Записать файл атомарно через временный файл в той же директории.
+
+    При ``overwrite=False`` публикация no-clobber (#64, ADR-64):
+    занятое целевое имя не заменяется, поднимается
+    ``FileExistsError``, временный файл удаляется на общем
+    пути отказа.
+    """
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)
     suffix = path.suffix or ".tmp"
@@ -121,7 +132,7 @@ def _write_atomic(
         fd = -1
         if mode is not None:
             os.chmod(tmp_path, mode)
-        tmp_path.replace(path)
+        publish_temp(tmp_path, path, overwrite=overwrite)
     except Exception:
         if fd != -1:
             try:
@@ -130,6 +141,21 @@ def _write_atomic(
                 pass
         tmp_path.unlink(missing_ok=True)
         raise
+
+
+def _collision_result(path: Path) -> PipelineResult:
+    """BLOCKED-результат коллизии имени на writer boundary (#64).
+
+    Текст и публичный контракт совпадают с preflight-коллизией
+    #48: CLI печатает префикс ``BLOCKED: `` и возвращает код 3.
+    """
+    return PipelineResult(
+        status=ProcessingStatus.BLOCKED,
+        message=(
+            f"Output file(s) already exist: {path.name}. "
+            "Use --overwrite to allow replacement."
+        ),
+    )
 
 
 def prepare_pipeline(
@@ -299,7 +325,12 @@ def prepare_pipeline(
     timestamp = datetime.now(tz=UTC).isoformat()
 
     # Шаг 1: атомарная запись manifest.json (через save_manifest, ADR-12)
-    save_manifest(manifest_entries, manifest_path)
+    try:
+        save_manifest(
+            manifest_entries, manifest_path, overwrite=overwrite
+        )
+    except FileExistsError:
+        return _collision_result(manifest_path)
     try:
         os.chmod(manifest_path, _MANIFEST_MODE)
     except OSError:
@@ -309,7 +340,12 @@ def prepare_pipeline(
     manifest_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
 
     # Шаг 3: prompt.txt
-    _write_atomic(prompt_path, tokenized_text)
+    try:
+        _write_atomic(
+            prompt_path, tokenized_text, overwrite=overwrite
+        )
+    except FileExistsError:
+        return _collision_result(prompt_path)
 
     # Шаг 4: route.json с manifest_sha256 (атомарно)
     token_count = len(token_records)
@@ -326,7 +362,10 @@ def prepare_pipeline(
         "entity_count_tokenized": len(token_records),
     }
     route_json = json.dumps(route_data, ensure_ascii=False, indent=2)
-    _write_atomic(route_path, route_json)
+    try:
+        _write_atomic(route_path, route_json, overwrite=overwrite)
+    except FileExistsError:
+        return _collision_result(route_path)
 
     return PipelineResult(
         status=ProcessingStatus.OK,

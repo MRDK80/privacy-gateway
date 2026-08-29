@@ -43,6 +43,7 @@ from pathlib import Path
 
 from privacy_gateway.crypto import decrypt, encrypt
 from privacy_gateway.models import ManifestEntry, TokenRecord
+from privacy_gateway.publish import publish_temp
 
 # Префикс/суффикс временного файла публикации манифеста.
 # Имя не совпадает с manifest.json и не воспринимается как манифест.
@@ -89,7 +90,9 @@ def build_manifest(
     return entries
 
 
-def _publish_atomically(path: Path, serialized: str) -> None:
+def _publish_atomically(
+    path: Path, serialized: str, *, overwrite: bool = True
+) -> None:
     """Опубликовать *serialized* по пути *path* атомарной заменой.
 
     Временный файл создаётся в каталоге назначения (одна файловая
@@ -121,7 +124,7 @@ def _publish_atomically(path: Path, serialized: str) -> None:
             raise
         with stream:
             stream.write(serialized)
-        os.replace(tmp_name, path)
+        publish_temp(tmp_name, path, overwrite=overwrite)
         published = True
     finally:
         if tmp_name is not None and not published:
@@ -131,7 +134,9 @@ def _publish_atomically(path: Path, serialized: str) -> None:
                 pass
 
 
-def save_manifest(entries: list[ManifestEntry], path: Path) -> None:
+def save_manifest(
+    entries: list[ManifestEntry], path: Path, *, overwrite: bool = True
+) -> None:
     """Записать манифест в JSON-файл (UTF-8) атомарной публикацией.
 
     Исходные значения в файле отсутствуют; encrypted_value хранится как hex.
@@ -148,7 +153,7 @@ def save_manifest(entries: list[ManifestEntry], path: Path) -> None:
     """
     data = [entry.to_dict() for entry in entries]
     serialized = json.dumps(data, ensure_ascii=False, indent=2)
-    _publish_atomically(path, serialized)
+    _publish_atomically(path, serialized, overwrite=overwrite)
 
 
 def load_manifest(path: Path, key: bytes) -> list[ManifestEntry]:

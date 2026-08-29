@@ -73,9 +73,14 @@ def _inject_before_manifest(
 ) -> None:
     """Создать foreign-объект прямо перед публикацией manifest.json."""
 
-    def spy_save(entries: list[ManifestEntry], path: Path) -> None:
+    def spy_save(
+        entries: list[ManifestEntry],
+        path: Path,
+        *,
+        overwrite: bool = True,
+    ) -> None:
         make_foreign(path)
-        real_save_manifest(entries, path)
+        real_save_manifest(entries, path, overwrite=overwrite)
 
     monkeypatch.setattr(pipeline_mod, "save_manifest", spy_save)
 
@@ -87,11 +92,15 @@ def _inject_before_write(
     real_write = pipeline_mod._write_atomic
 
     def spy_write(
-        path: Path, content: str | bytes, mode: int | None = None
+        path: Path,
+        content: str | bytes,
+        mode: int | None = None,
+        *,
+        overwrite: bool = True,
     ) -> None:
         if path.name == target_name:
             make_foreign(path)
-        real_write(path, content, mode)
+        real_write(path, content, mode, overwrite=overwrite)
 
     monkeypatch.setattr(pipeline_mod, "_write_atomic", spy_write)
 
@@ -101,10 +110,17 @@ def _write_foreign_file(path: Path) -> None:
 
 
 def _leftover_temps(out_dir: Path) -> list[str]:
+    """Любой файл, кроме трёх артефактов, считается остаточным.
+
+    Временные файлы prompt/route наследуют суффикс цели
+    (``.txt`` и ``.json``), поэтому фильтр по ``.tmp`` их не
+    поймал бы.
+    """
+    artifacts = {"manifest.json", "prompt.txt", "route.json"}
     return sorted(
         p.name
         for p in out_dir.iterdir()
-        if p.name.startswith(".manifest-") or p.suffix == ".tmp"
+        if p.name not in artifacts
     )
 
 
@@ -277,7 +293,12 @@ def test_eperm_is_not_mapped_to_blocked(
     """
     out_dir = tmp_path / "out"
 
-    def failing_save(entries: list[ManifestEntry], path: Path) -> None:
+    def failing_save(
+        entries: list[ManifestEntry],
+        path: Path,
+        *,
+        overwrite: bool = True,
+    ) -> None:
         raise OSError(
             errno.EPERM, "hard links are not supported by the filesystem"
         )
@@ -301,7 +322,11 @@ def test_permission_error_is_not_mapped_to_blocked(
     out_dir = tmp_path / "out"
 
     def failing_write(
-        path: Path, content: str | bytes, mode: int | None = None
+        path: Path,
+        content: str | bytes,
+        mode: int | None = None,
+        *,
+        overwrite: bool = True,
     ) -> None:
         raise PermissionError(
             errno.EACCES, "temp file is locked by another process"
