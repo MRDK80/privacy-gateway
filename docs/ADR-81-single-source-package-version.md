@@ -226,3 +226,157 @@ Release v0.5.0 и существующие tags не затрагиваются.
 - #41 — parent roadmap.
 - #82 — отдельная P3 DX-задача, в scope не входит.
 - ADR-64 — источник практики о влиянии артефактов сборки на рабочее дерево.
+
+---
+
+## Дополнение 2026-08-30 — build gate в exact CI и нижняя граница backend
+
+Датированное дополнение. Исходные разделы ADR-81 не переписываются: механизм
+единственного источника версии остаётся прежним — литерал `__version__` в
+`src/privacy_gateway/__init__.py` плюс `dynamic = ["version"]` и
+`[tool.setuptools.dynamic]` в `pyproject.toml`.
+
+Контекст: issue #85, база `main` `53adb1fc0f59a201a4401aeeb7327df704a69419`,
+версия пакета `0.5.0` не меняется. Residual risk из PR #84 состоял в том, что
+wheel и sdist проверялись только вручную на Linux, а объявленная нижняя граница
+`setuptools>=70` не исполнялась ни локально, ни в CI.
+
+### Решение 1: размещение build gate
+
+Build gate выполняется внутри существующего job `test` workflow `CI`, последним
+шагом после `pytest`, `ruff check .`, `mypy .` и обоих шагов `detect-secrets`.
+Топология обязательных проверок сохраняется: четыре matrix cells
+(ubuntu-latest и windows-latest × Python 3.11 и 3.12) плюс отдельный workflow
+`pre-commit` — всего пять check runs.
+
+Отвергнут вариант с отдельной build matrix: он увеличил бы число обязательных
+checks с пяти до девяти, потребовал бы синхронного изменения `CONTRIBUTING.md`,
+`AGENTS.md`, PR template и настроек репозитория, а при добавлении новой
+поддерживаемой minor-версии Python пришлось бы поддерживать две matrix.
+Его единственное содержательное преимущество — независимость packaging-evidence
+от dev-окружения — достигается и в принятом варианте, потому что сборка идёт из
+одноразовой копии, а wheel устанавливается в чистое venv без editable-установки.
+
+### Решение 2: нижняя граница backend поднимается до `setuptools>=70.1`
+
+`[build-system] requires` меняется с `["setuptools>=70", "wheel"]` на
+`["setuptools>=70.1", "wheel"]`.
+
+Основание — исполненное доказательство, а не документация. При пине
+`setuptools==70.0.0` сборка проходит, но `Generator` в `*.dist-info/WHEEL`
+равен `bdist_wheel (0.48.0)`, и сборка четыре раза печатает
+`FutureWarning: The 'wheel' package is no longer the canonical location of the
+'bdist_wheel' command, and will be removed in a future release. Please update to
+setuptools v70.1 or later`. То есть на 70.0.0 wheel собирает не backend, а
+compat-слой пакета `wheel`, помеченный на удаление. При пине `70.1.0` тот же
+прогон даёт `Generator: setuptools (70.1.0)`.
+
+Граница 70.1 — первая версия, в которой backend самодостаточен для сборки
+wheel. Она не зависит от графика deprecation пакета `wheel`.
+
+Отвергнуто: оставить `>=70` и тестировать 70.0.0 — гейт был бы зелёным лишь до
+следующего релиза `wheel`, то есть доказывал бы работоспособность чужого
+compat-слоя, а не совместимость проекта.
+
+Вопрос об удалении `"wheel"` из `build-system.requires` в это решение не входит
+и требует отдельной issue.
+
+### Решение 3: механизм проверки нижней границы
+
+Нижняя граница проверяется одной boundary-сборкой в cell ubuntu-latest /
+Python 3.11:
+
+* отдельное venv в runner temp;
+* `setuptools==70.1.0` и `wheel` установлены явно;
+* сборка выполняется с `python -m build --no-isolation`;
+* печатается фактический `setuptools.__version__` из этого venv;
+* дополнительно проверяется строка `Generator` в `WHEEL` собранного wheel.
+
+Обычный isolated `python -m build` нижнюю границу не доказывает: фронтенд
+создаёт эфемерное окружение и ставит туда версию, удовлетворяющую
+`setuptools>=70.1`, фактически последнюю. В контрольном прогоне это
+`setuptools==84.0.0` и `wheel==0.48.0`.
+
+Отвергнут пиннинг через `PIP_BUILD_CONSTRAINT` при isolated build: механизм
+зависит от версии pip на runner'е, а job выполняет `pip install --upgrade pip`,
+то есть версия pip плавающая. `--no-isolation` от версии pip не зависит.
+
+### Решение 4: нормальная сборка
+
+Остальные проверки выполняют default `python -m build` без флагов `--sdist`
+и `--wheel`, то есть sdist собирается первым, а wheel — из sdist. Это
+выполняется во всех четырёх cells, включая Windows.
+
+Frontend `build` пинится значением `build==1.6.0` и не добавляется ни в
+`project.dependencies`, ни в `[project.optional-dependencies].dev`. Пин
+frontend и пин backend не смешиваются: `setuptools==70.1.0` существует только
+внутри boundary venv.
+
+### Решение 5: изоляция артефактов
+
+Сборка запрещена в рабочем дереве checkout. Порядок:
+
+1. одноразовая копия создаётся из `git archive HEAD`;
+2. копия распаковывается в каталог внутри runner temp;
+3. `--outdir`, build-venv и clean venv находятся в runner temp;
+4. после сборки повторно проверяются `git status --short --branch`
+   и `git diff --check`.
+
+Это усиливает test obligation 7 ADR-81 и учитывает урок #64. Причина в текущей
+конфигурации репозитория: `mypy` работает в режиме `strict` без `exclude`,
+а `detect-secrets scan --all-files` исключает `.venv`, кэши и `*.egg-info`, но
+не `build/` и не `dist/`. Артефакты внутри checkout ломали бы две разные
+обязательные проверки.
+
+### Решение 6: сверка версии
+
+В каждой cell wheel устанавливается в чистое venv, после чего сверяются:
+
+* `privacy_gateway.__version__` из установленного пакета;
+* `importlib.metadata.version("privacy-gateway")`;
+* поле `Version` в `METADATA` внутри wheel;
+* ожидаемое значение, извлечённое из AST литерала `__version__`.
+
+Ожидаемое значение не хардкодится: третий канонический источник версии
+запрещён. Разбор AST обязан учитывать и `ast.Assign`, и `ast.AnnAssign` — иначе
+корректная по ADR-81 запись `__version__: str = "0.5.0"` не была бы найдена.
+Дополнительно проверяется, что модуль импортирован из clean venv, а не из
+checkout или editable-установки. Имена артефактов используются как
+вспомогательный признак, а не как источник истины.
+
+### Решение 7: реализация
+
+Логика реализуется одним типизированным модулем `tools/verify_package_build.py`,
+который вызывается из workflow одной командой, одинаковой на Ubuntu и Windows.
+Это исключает дублирование шагов на bash и PowerShell и не требует менять
+`defaults.run.shell` существующего job.
+
+Последствие фиксируется явно: число проверяемых `mypy` файлов увеличивается
+с 53 до 54, и новый модуль обязан проходить `strict` и `ruff`.
+
+### Failure semantics
+
+Различаются два типа отказа:
+
+* нарушение формы конфигурации ловит policy-тест
+  `tests/test_package_version.py::test_pyproject_declares_version_dynamic`;
+* расхождение фактических метаданных дистрибутива ловит build gate.
+
+Согласованный статический `project.version` может собраться успешно, поэтому от
+backend не требуется падать: падать обязан policy-тест. Причинность проверяется
+mutation-прогоном в одноразовой копии, RED-коммит в ветке для этого не нужен.
+
+### Что не меняется
+
+* Версия `0.5.0`, tags и GitHub Release.
+* Механизм единственного источника версии.
+* Production-код в `src/`.
+* PyPI publishing, trusted publishing, provenance и signing не добавляются.
+* Поддерживаемые minor-версии Python остаются 3.11 и 3.12.
+
+### Follow-up
+
+Локальные прогоны выявили deprecation `project.license` как TOML-таблицы и
+license classifiers с дедлайном 2027-Feb-18. SPDX-форма требует
+`setuptools>=77`, что конфликтует с границей 70.1, поэтому вопрос вынесен
+в issue #86 и в scope #85 не входит.

@@ -58,7 +58,10 @@ pre-commit install
 - `__version__` обязан оставаться простым строковым литералом, совместимым с `ast.literal_eval`. Вычисления, вызовы функций, конкатенация и производные от импортов запрещены: setuptools читает атрибут статически из AST, а при неудаче попытается импортировать ещё не установленный пакет, и сборка упадёт.
 - После изменения литерала обязателен повторный `python -m pip install -e ".[dev]"`. Metadata editable-установки не обновляется автоматически, поэтому до переустановки `tests/test_cli.py::test_version_matches_distribution_metadata` сравнит новый литерал с устаревшей metadata и упадёт.
 - Тихий fallback на литерал при отсутствии distribution metadata не вводится: отсутствие метаданных не маскируется.
-- Инварианты проверяются `tests/test_package_version.py`; build gate подтверждает совпадение версии для editable install, wheel, sdist и wheel, собранного из sdist.
+- Инварианты формы конфигурации проверяются `tests/test_package_version.py`.
+- Фактические метаданные дистрибутива проверяет build gate exact CI (`tools/verify_package_build.py`, #85): в каждой matrix cell из одноразовой копии `HEAD` собирается sdist, затем wheel из sdist, wheel устанавливается в чистое виртуальное окружение, после чего сверяются `METADATA` -> `Version`, `importlib.metadata.version("privacy-gateway")` и `privacy_gateway.__version__`. Ожидаемое значение берётся из AST литерала `__version__`, третий источник версии не вводится.
+- Нижняя граница backend `setuptools>=70.1` проверяется отдельной boundary-сборкой на Ubuntu latest / Python 3.11: пин в отдельном окружении и `python -m build --no-isolation`, с проверкой поля `Generator` в метаданных wheel. Обычная изолированная сборка нижнюю границу не доказывает, потому что ставит последнюю подходящую версию backend.
+- Артефакты сборки не создаются внутри рабочего дерева: `mypy` работает в режиме `strict` без `exclude`, а `detect-secrets` не исключает `build/` и `dist/`, поэтому загрязнение checkout ломало бы обязательные проверки.
 
 ### Фиксация фактической версии
 
@@ -116,6 +119,16 @@ pre-commit run --all-files
 - Windows latest, Python 3.11;
 - Windows latest, Python 3.12;
 - отдельный pre-commit workflow.
+
+В каждой из четырёх matrix cells после `pytest`, `ruff check .`, `mypy .` и
+`detect-secrets` выполняется build gate — шаг «Сборка дистрибутива и сверка
+версии»; на Ubuntu latest / Python 3.11 дополнительно выполняется шаг «Нижняя
+граница setuptools 70.1». Число обязательных check runs при этом не меняется и
+остаётся равным пяти: packaging-проверки входят в существующие cells, а не
+образуют отдельную matrix.
+
+Падение build gate окрашивает тот же check run, что и падение тестов, поэтому
+причину смотрят по имени упавшего шага в логе job.
 
 При добавлении новой поддерживаемой Python minor-версии она одновременно добавляется в classifiers и exact CI matrix на обеих ОС. До успешного выполнения этих check runs поддержка новой версии не считается подтверждённой.
 
