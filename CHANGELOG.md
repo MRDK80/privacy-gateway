@@ -7,6 +7,20 @@
 
 ### Changed
 
+<!-- issue-81-single-source-version -->
+- packaging: версия дистрибутива больше не дублируется вручную. Единственный
+  источник — строковый литерал `__version__` в `src/privacy_gateway/__init__.py`;
+  `pyproject.toml` объявляет `dynamic = ["version"]` и получает значение через
+  `[tool.setuptools.dynamic]` `version = {attr = "privacy_gateway.__version__"}`.
+  Статическое `project.version` удалено. Наблюдаемая версия остаётся `0.5.0` во
+  всех режимах: editable install, wheel, sdist и wheel, собранный из sdist.
+  Публичный `__version__` остаётся строкой в `__all__`, CLI-контракты, форматы
+  артефактов и их версии не изменены; версия пакета в артефакты не
+  сериализуется. Runtime-зависимости не добавлены, metadata lookup в import-путь
+  не введён. Release теперь правит одну строку в коде, но требует повторного
+  `python -m pip install -e ".[dev]"` для обновления metadata
+  editable-установки (#81, ADR-81).
+
 - prepare: preflight при `overwrite=False` ориентирован на занятость path entry
   (`os.path.lexists()`), а не на существование цели ссылки. Занятое целевое имя
   `prompt.txt` / `route.json` / `manifest.json` — включая broken symlink —
