@@ -90,11 +90,27 @@ def canonical_version(init_path: Path) -> str:
     return found[0]
 
 
-def assert_clean(repo_root: Path, stage: str) -> None:
-    """Проверить, что рабочее дерево не изменено."""
-    status = run(["git", "status", "--porcelain"], cwd=repo_root).strip()
-    if status:
-        raise BuildGateError(f"{stage}: рабочее дерево изменено\n{status}")
+def tree_state(repo_root: Path) -> list[str]:
+    """Снимок состояния рабочего дерева по git status --porcelain."""
+    output = run(["git", "status", "--porcelain"], cwd=repo_root)
+    return sorted(line for line in output.splitlines() if line.strip())
+
+
+def ensure_unchanged(repo_root: Path, before: list[str]) -> None:
+    """Проверить, что сборка не изменила рабочее дерево.
+
+    Инвариант #85 — отсутствие влияния сборки на checkout. Предсуществующие
+    изменения от предыдущих шагов job (например, перезапись .secrets.baseline
+    шагом detect-secrets) в этот инвариант не входят.
+    """
+    after = tree_state(repo_root)
+    appeared = [line for line in after if line not in before]
+    disappeared = [line for line in before if line not in after]
+    if appeared or disappeared:
+        raise BuildGateError(
+            "сборка изменила рабочее дерево; "
+            f"появилось: {appeared}; исчезло: {disappeared}"
+        )
     run(["git", "diff", "--check"], cwd=repo_root)
 
 
@@ -255,7 +271,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"canonical version    : {expected}")
     print(f"каталог артефактов   : {temp_root}")
 
-    assert_clean(repo_root, "до сборки")
+    before_state = tree_state(repo_root)
+    if before_state:
+        print("предупреждение: дерево изменено до сборки не этим шагом:")
+        for line in before_state:
+            print(f"  {line}")
     source = source_copy(repo_root, temp_root / "src")
     if canonical_version(source / INIT_RELPATH) != expected:
         raise BuildGateError("версия в одноразовой копии не совпала с canonical")
@@ -296,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     if observed["metadata"] != expected:
         raise BuildGateError(f"metadata {observed['metadata']!r} != {expected!r}")
 
-    assert_clean(repo_root, "после сборки")
+    ensure_unchanged(repo_root, before_state)
     print(f"build gate ({mode}) пройден: версия {expected} согласована")
     return 0
 
