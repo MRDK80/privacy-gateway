@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "privacy-gateway"
-version = "0.5.0"
+dynamic = ["version"]
 description = "Локальный инструмент для безопасной подготовки корпоративных текстов перед ручной передачей во внешнюю языковую модель."
 requires-python = ">=3.11"
 license = {text = "MIT"}
@@ -44,6 +44,9 @@ Repository = "https://github.com/MRDK80/privacy-gateway"
 
 [project.scripts]
 pgw = "privacy_gateway.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "privacy_gateway.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
