@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -62,9 +63,14 @@ def test_batched_splits_into_chunks() -> None:
     assert list(guard.batched(["a", "b", "c"], 2)) == [["a", "b"], ["c"]]
 
 
-def test_sha256_of_known_content(tmp_path: Path) -> None:
-    target = tmp_path / "payload.txt"
-    target.write_bytes(b"abc")
-    assert guard.sha256_of(target) == (
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    )
+def test_sha256_of_reads_file_in_chunks(tmp_path: Path) -> None:
+    payload = b"abc" * 40000
+    target = tmp_path / "payload.bin"
+    target.write_bytes(payload)
+    assert guard.sha256_of(target) == hashlib.sha256(payload).hexdigest()
+
+
+def test_sha256_of_empty_file(tmp_path: Path) -> None:
+    target = tmp_path / "empty.bin"
+    target.write_bytes(b"")
+    assert guard.sha256_of(target) == hashlib.sha256(b"").hexdigest()
