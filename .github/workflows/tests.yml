@@ -42,27 +42,8 @@ jobs:
       - name: Статическая типизация mypy
         run: mypy .
 
-      - name: Проверка baseline detect-secrets — Linux
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          detect-secrets scan \
-            --all-files \
-            --baseline .secrets.baseline \
-            --exclude-files '(^|/)(\.git|\.venv|\.mypy_cache|\.pytest_cache|\.ruff_cache|.*\.egg-info)(/|$)' \
-            > /dev/null
-          echo "Проверка detect-secrets baseline завершена."
-
-      - name: Проверка baseline detect-secrets — Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          detect-secrets scan `
-            --all-files `
-            --baseline .secrets.baseline `
-            --exclude-files '(^|/)(\.git|\.venv|\.mypy_cache|\.pytest_cache|\.ruff_cache|.*\.egg-info)(/|$)' `
-            | Out-Null
-          Write-Host "Проверка detect-secrets baseline завершена."
+      - name: Проверка secret-drift без мутации baseline
+        run: python tools/check_secrets_baseline.py --temp-root "${{ runner.temp }}"
 
       - name: Сборка дистрибутива и сверка версии
         run: python tools/verify_package_build.py --temp-root "${{ runner.temp }}"
