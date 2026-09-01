@@ -644,7 +644,7 @@ if sys.platform == "win32":  # pragma: no cover - платформенная в�
         if handle == _INVALID_HANDLE_VALUE or handle is None:
             raise ContextTrustError(_UNAVAILABLE)
         return cast(int, handle)
-    
+
     def _win_close(handle: int) -> None:
         """Закрыть handle, игнорируя отказ закрытия."""
         _kernel32.CloseHandle(handle)
