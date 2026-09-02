@@ -5,7 +5,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-
 from tools.verify_package_build import (
     BuildGateError,
     WheelFacts,
