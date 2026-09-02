@@ -7,6 +7,17 @@
 
 ### Changed
 
+<!-- issue-86-spdx-license-metadata -->
+- packaging: license metadata мигрирована на PEP 639: `project.license` теперь
+  содержит SPDX-выражение `MIT`, файл объявлен через
+  `project.license-files = ["LICENSE"]`, а устаревший MIT license classifier
+  удалён. Минимальная версия build backend повышена до
+  `setuptools>=77.0.3`; boundary cell использует точный пин `77.0.3`.
+  Build gate проверяет `License-Expression`, `License-File`, отсутствие legacy
+  metadata и целевых deprecation warnings, а также размещение LICENSE в корне
+  sdist и в `*.dist-info/licenses/LICENSE` внутри wheel. Runtime Python matrix,
+  production-код и наблюдаемая версия `0.5.0` не изменены (#86, ADR-86).
+
 <!-- issue-81-single-source-version -->
 - packaging: версия дистрибутива больше не дублируется вручную. Единственный
   источник — строковый литерал `__version__` в `src/privacy_gateway/__init__.py`;

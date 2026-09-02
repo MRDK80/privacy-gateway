@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70.1", "wheel"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +7,8 @@ name = "privacy-gateway"
 dynamic = ["version"]
 description = "Локальный инструмент для безопасной подготовки корпоративных текстов перед ручной передачей во внешнюю языковую модель."
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
   {name = "Mikhail Iofik"}
 ]
@@ -16,7 +17,6 @@ keywords = ["privacy", "llm", "pii", "anonymization", "tokenization"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
