@@ -48,9 +48,9 @@ jobs:
       - name: Сборка дистрибутива и сверка версии
         run: python tools/verify_package_build.py --temp-root "${{ runner.temp }}"
 
-      - name: Нижняя граница setuptools 70.1
+      - name: Нижняя граница setuptools 77.0.3
         if: runner.os == 'Linux' && matrix.python-version == '3.11'
         run: >-
           python tools/verify_package_build.py
           --temp-root "${{ runner.temp }}"
-          --setuptools-pin 70.1.0
+          --setuptools-pin 77.0.3
