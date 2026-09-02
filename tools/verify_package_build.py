@@ -102,7 +102,11 @@ def canonical_version(init_path: Path) -> str:
         names: list[str] = []
         value: ast.expr | None = None
         if isinstance(node, ast.Assign):
-            names = [target.id for target in node.targets if isinstance(target, ast.Name)]
+            names = [
+                target.id
+                for target in node.targets
+                if isinstance(target, ast.Name)
+            ]
             value = node.value
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             names = [node.target.id]
