@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import tomllib
 from dataclasses import replace
 from pathlib import Path
-import tomllib
 
 import pytest
 
@@ -73,7 +73,10 @@ def test_build_gate_rejects_each_license_metadata_violation() -> None:
 @pytest.mark.parametrize(
     "warning",
     [
-        "SetuptoolsDeprecationWarning: `project.license` as a TOML table is deprecated",
+        (
+            "SetuptoolsDeprecationWarning: `project.license` as a TOML table "
+            "is deprecated"
+        ),
         "SetuptoolsDeprecationWarning: License classifiers are deprecated",
     ],
 )
