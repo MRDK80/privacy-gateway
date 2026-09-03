@@ -1,0 +1,43 @@
+name: Main source guard
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  main-source-guard:
+    name: main-source-guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require same-repository roadmap source branch
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          TARGET_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [[ "$HEAD_REPOSITORY" != "$TARGET_REPOSITORY" ]]; then
+            echo "::error::Pull requests to main must originate in $TARGET_REPOSITORY."
+            echo "::error::Actual head repository: $HEAD_REPOSITORY"
+            exit 1
+          fi
+
+          case "$HEAD_REF" in
+            roadmap/*)
+              echo "Allowed source branch: $HEAD_REF"
+              ;;
+            *)
+              echo "::error::Pull requests to main must originate from roadmap/*."
+              echo "::error::Actual source branch: $HEAD_REF"
+              exit 1
+              ;;
+          esac
