@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches:
+      - main
+      - "roadmap/**"
   pull_request:
-    branches: ["**"]
+    branches:
+      - main
+      - "roadmap/**"
 
 jobs:
   test:
