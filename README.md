@@ -480,3 +480,14 @@ gateway.discard(prepared.context)
 Полный контракт — модели, исключения, жизненный цикл контекста,
 потокобезопасность и правила очистки — в
 [`docs/LIBRARY_API.md`](docs/LIBRARY_API.md).
+
+\
+## Примеры
+
+Воспроизводимые примеры публичного library API и требования к их запуску —
+в [`examples/README.md`](examples/README.md). Минимальный round-trip
+`prepare` -> `restore` -> `discard` запускается из корня репозитория:
+
+```bash
+python examples/01_quickstart.py
+```
