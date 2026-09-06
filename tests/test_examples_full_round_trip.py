@@ -143,7 +143,9 @@ def test_protected_text_hides_supported_values(temp_root: Path) -> None:
 
     def recording_provider(protected_text: str) -> str:
         seen.append(protected_text)
-        return namespace["fake_provider"](protected_text)
+        response = namespace["fake_provider"](protected_text)
+        assert isinstance(response, str)
+        return response
 
     key = generate_key()
     with (
