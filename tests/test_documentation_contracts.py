@@ -9,7 +9,9 @@
 - активные документы не обещают CLI-команду ``pgw key delete``;
 - документ примера ротации согласован с фактическим CLI-контрактом;
 - документ примера ротации не обещает окно retention глубже
-  ``[active, retired]``.
+  ``[active, retired]``;
+- ``docs/LIBRARY_API.md`` ссылается на канонический индекс примеров
+  ``examples/README.md``.
 
 Тесты характеризуют ``main()`` через ``sys.argv`` и проверяют семантику
 активных документов, а не полные markdown-строки. Реальный системный keyring
@@ -36,6 +38,8 @@ USAGE_ERROR_EXIT = 3
 DUPLICATE_CREATE_EXIT = 3
 STRICT_RESTORE_EXIT = 5
 ROTATION_EXAMPLE = Path("examples") / "05_key_rotation.md"
+LIBRARY_API_DOC = Path("docs") / "LIBRARY_API.md"
+EXAMPLES_INDEX_LINK = "(../examples/README.md)"
 
 ACTIVE_DOCS = (
     "README.md",
@@ -176,3 +180,19 @@ def test_rotation_example_does_not_claim_transactional_rollback() -> None:
     text = _rotation_example_text()
     assert "не является транзакцией keyring" in text
     assert "не следует называть rollback" in text
+
+
+def test_library_api_links_to_examples_index() -> None:
+    """Library API ведёт к каноническому индексу исполняемых примеров."""
+    document = REPO_ROOT / LIBRARY_API_DOC
+    text = document.read_text(encoding="utf-8")
+    assert EXAMPLES_INDEX_LINK in text
+    target = (document.parent / "../examples/README.md").resolve()
+    assert target == (REPO_ROOT / "examples" / "README.md").resolve()
+    assert target.is_file()
+
+
+def test_library_api_does_not_duplicate_example_commands() -> None:
+    """Library API не дублирует команды запуска примеров."""
+    text = (REPO_ROOT / LIBRARY_API_DOC).read_text(encoding="utf-8")
+    assert "python examples/" not in text
