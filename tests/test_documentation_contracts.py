@@ -48,6 +48,7 @@ ACTIVE_DOCS = (
     "docs/ARCHITECTURE.md",
     "docs/LIBRARY_API.md",
     "examples/05_key_rotation.md",
+    "docs/article-sync-31.md",
 )
 
 
@@ -196,3 +197,42 @@ def test_library_api_does_not_duplicate_example_commands() -> None:
     """Library API не дублирует команды запуска примеров."""
     text = (REPO_ROOT / LIBRARY_API_DOC).read_text(encoding="utf-8")
     assert "python examples/" not in text
+
+
+ARTICLE_SYNC_REPORT = Path("docs") / "article-sync-31.md"
+EXAMPLES_REVISION_SHA = (
+    "b88259c4d08fa37190b37d7b0c66a33aaf1e75db"  # pragma: allowlist secret
+)
+STALE_ARTICLE_SHA = (
+    "4685779ea71ec38049317bb49589db542f7728bd"  # pragma: allowlist secret
+)
+NER_BOUNDARY_STATEMENT = "NER не реализован"
+
+
+def _article_sync_report_text() -> str:
+    """Текст отчёта синхронизации статьи с примерами."""
+    return (REPO_ROOT / ARTICLE_SYNC_REPORT).read_text(encoding="utf-8")
+
+
+def test_article_sync_report_pins_examples_revision() -> None:
+    """Отчёт закрепляет полный commit SHA ревизии примеров."""
+    assert EXAMPLES_REVISION_SHA in _article_sync_report_text()
+
+
+def test_article_sync_report_links_examples_index() -> None:
+    """Отчёт ведёт к каноническому индексу исполняемых примеров."""
+    document = REPO_ROOT / ARTICLE_SYNC_REPORT
+    assert EXAMPLES_INDEX_LINK in document.read_text(encoding="utf-8")
+    target = (document.parent / "../examples/README.md").resolve()
+    assert target == (REPO_ROOT / "examples" / "README.md").resolve()
+    assert target.is_file()
+
+
+def test_article_sync_report_states_detection_boundary() -> None:
+    """Отчёт явно фиксирует границу детекции без обещания NER."""
+    assert NER_BOUNDARY_STATEMENT in _article_sync_report_text()
+
+
+def test_article_sync_report_has_no_stale_revision() -> None:
+    """Отчёт не ссылается на устаревшую ревизию черновика статьи."""
+    assert STALE_ARTICLE_SHA not in _article_sync_report_text()
