@@ -1,6 +1,11 @@
 # AGENTS.md
 
-Обязательные инструкции для автоматизированных исполнителей (coding agents) в репозитории `privacy-gateway`. Файл tool-agnostic: он не описывает настройки конкретного инструмента. Полный источник правил процесса — [`CONTRIBUTING.md`](CONTRIBUTING.md); этот файл не заменяет и не переопределяет его.
+Обязательные инструкции для автоматизированных исполнителей (coding agents)
+в репозитории `privacy-gateway`. Файл tool-agnostic: он не описывает настройки
+конкретного инструмента. Он действует для всего дерева репозитория; вложенных
+`AGENTS.md` сейчас нет. Полный источник правил процесса —
+[`CONTRIBUTING.md`](CONTRIBUTING.md); этот файл не заменяет и не переопределяет
+его.
 
 ## Назначение и trust boundary
 
@@ -19,7 +24,10 @@
 
 Остальные модули — internal implementation details: `pipeline`, `detector`, `tokenizer`, `manifest`, `restore`, `routing`, `crypto`, `keystore`, `validator`, `context_trust`, `publish`, `input_parser`, `models`. Не документируй их как публичный контракт и не считай стабильными.
 
-`keystore.delete_key()` — library-only API. Он не является CLI-командой и не должен так описываться: группа `pgw key` содержит ровно три подкоманды — `create`, `status`, `rotate`.
+`keystore.delete_key()` — library-only low-level Python API внутреннего модуля,
+не экспортируемый публичным facade. Он не является CLI-командой. Подкоманды
+`delete` в группе `pgw key` нет: группа содержит только `create`, `status` и
+`rotate`.
 
 ## Структура репозитория
 
@@ -45,15 +53,30 @@ config.example/        примеры конфигурации детектор�
 
 ## Development setup
 
-Поддерживается Python 3.11 и новее (`requires-python = ">=3.11"`). Инструментальная конфигурация целиком находится в [`pyproject.toml`](pyproject.toml): отдельных `tox.ini`, `pytest.ini`, `setup.cfg` и `mypy.ini` в репозитории нет.
+Метаданные пакета разрешают установку на Python 3.11 и новее
+(`requires-python = ">=3.11"`), но это не обещание поддержки каждой будущей
+minor-версии. Официально поддерживаются Python 3.11 и 3.12: они перечислены в
+classifiers и проверяются exact CI на Ubuntu и Windows. Другие minor-версии
+этим CI не подтверждены; каноническая политика приведена в
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Настройки pytest, Ruff и mypy находятся в
+[`pyproject.toml`](pyproject.toml), а настройки pre-commit — в
+[`.pre-commit-config.yaml`](.pre-commit-config.yaml). Отдельных `tox.ini`,
+`pytest.ini`, `setup.cfg` и `mypy.ini` в репозитории нет.
+
+Linux- и Windows-команды создания и активации окружения бери из
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Установка проекта и объявленных
+репозиторием dev-зависимостей выполняется командой:
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
-pre-commit install
 ```
+
+Перед gate проверь доступность команды `pre-commit`, затем выполни
+`pre-commit install`. Сейчас `pre-commit` не объявлен в extra `dev`; его наличие
+в текущем окружении не доказывает обратного. Если команда недоступна, верни
+`BLOCKED`: не изменяй dependency metadata без отдельной issue.
 
 ## Локальный quality gate
 
@@ -64,29 +87,48 @@ pytest -q
 ruff check .
 mypy .
 pre-commit run --all-files
-git diff --check
 ```
 
-Дополнительно повторяют CI-шаги, заданные конфигурацией репозитория:
+`git diff --check` — полезная дополнительная проверка, но она не заменяет ни
+одну из четырёх обязательных команд.
 
-```bash
-python tools/check_secrets_baseline.py
-python tools/verify_package_build.py
-```
 
 Действующие настройки: `pytest` собирает только `tests`; `ruff` работает с `src` и `tests`, `line-length = 88`, правила `E`, `F`, `I`, `UP`; `mypy` запускается в режиме `strict` с `python_version = "3.11"`. Хуки [`.pre-commit-config.yaml`](.pre-commit-config.yaml): `detect-secrets` с `.secrets.baseline`, `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-toml`.
 
-Приводи первичные результаты: точную команду, рабочий каталог, exit code, passed/failed/skipped/xfailed/xpassed для pytest, число проверенных файлов для mypy, вывод Ruff и итог каждого pre-commit hook. Отсутствующий инструмент, незапущенная команда или ненулевой exit code не являются успешной проверкой.
+Приводи первичные результаты: точную команду, рабочий каталог, exit code,
+passed/failed/skipped/xfailed/xpassed для pytest, число проверенных файлов для
+mypy, вывод Ruff и итог каждого pre-commit hook. Отсутствующий инструмент,
+незапущенная команда или ненулевой exit code не являются успешной проверкой.
+
+В PR и handover также указывай base SHA, имя ветки, HEAD SHA и merge SHA при
+наличии; фактический `python --version`; значение `project.requires-python`;
+поддерживаемые minor-версии из classifiers и соответствующую exact CI matrix;
+точную команду установки `python -m pip install -e ".[dev]"`. Полный список
+требований к отчётности находится в [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## GitHub Actions
 
 Локальные результаты и GitHub check runs фиксируются отдельно: локальный gate не подтверждает CI, а CI не заменяет локальный gate.
 
-- `CI` ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) — матрица `ubuntu-latest` и `windows-latest` на Python 3.11 и 3.12; шаги `pytest`, `ruff check .`, `mypy .`, проверка secret-drift и сборка дистрибутива со сверкой версии.
+- `CI` ([`.github/workflows/tests.yml`](.github/workflows/tests.yml)) —
+  матрица `ubuntu-latest` и `windows-latest` на Python 3.11 и 3.12; шаги
+  `pytest`, `ruff check .`, `mypy .`, проверка secret-drift и сборка
+  дистрибутива со сверкой версии.
 - `pre-commit` ([`.github/workflows/pre-commit.yml`](.github/workflows/pre-commit.yml)) — Ubuntu, Python 3.11.
-- `Main source guard` ([`.github/workflows/main-source-guard.yml`](.github/workflows/main-source-guard.yml)) — PR в `main` допускаются только из того же репозитория и только из ветки `roadmap/*`.
+- `Main source guard`
+  ([`.github/workflows/main-source-guard.yml`](.github/workflows/main-source-guard.yml)) —
+  PR в `main` допускаются только из того же репозитория и только из ветки
+  `roadmap/*`.
 
-CI подтверждай только для текущего SHA, указывая conclusion и run/job ID. `queued`, `pending`, `in_progress`, `skipped`, `cancelled`, `timed_out`, `action_required` и отсутствующий check не являются успехом. После task merge проверяй post-merge CI нового SHA roadmap-ветки; после roadmap merge — post-merge CI нового SHA `main`.
+Packaging-проверки являются шагами внутри четырёх matrix cells, а не
+отдельными check runs. Всего обязательных check runs пять: четыре matrix cells
+и отдельный pre-commit workflow.
+
+CI подтверждай только для текущего SHA, указывая conclusion и run/job ID.
+`queued`, `pending`, `in_progress`, `skipped`, `cancelled`, `timed_out`,
+`action_required` и отсутствующий check не являются успехом. После task merge
+проверяй post-merge CI нового SHA roadmap-ветки; после roadmap merge —
+post-merge CI нового SHA `main`.
 
 ## CLI
 
@@ -103,7 +145,11 @@ pgw key status
 pgw key rotate
 ```
 
-`prepare` пишет `prompt.txt`, `route.json` и `manifest.json`. `restore` по умолчанию строгий; `--lenient` переводит неизвестные и искажённые токены в предупреждения (ADR-16). Путь `manifest.json` разрешается относительно каталога `route.json`, если не задан явно (ADR-15). Позиционный аргумент `-` означает stdin.
+`prepare` пишет `prompt.txt`, `route.json` и `manifest.json`. `restore` по
+умолчанию строгий; `--lenient` переводит неизвестные и искажённые токены в
+предупреждения (ADR-16). Путь `manifest.json` разрешается относительно каталога
+`route.json`, если не задан явно (ADR-15). Позиционный аргумент `-` означает
+stdin.
 
 Не добавляй, не переименовывай и не удаляй команды, подкоманды и опции без отдельного решения, ADR и contract tests.
 
@@ -176,7 +222,11 @@ push -> main                             # запрещено
 push -> roadmap/<roadmap-issue>-<slug>   # запрещено
 ```
 
-Также запрещено создавать task-ветку от `main` вместо roadmap-ветки. Если `main` изменился, сначала обнови roadmap-ветку, затем task-ветки; нельзя подмешивать новый `main` только в task-ветку. Проверяй фактические head, base и SHA через GitHub, а не по именам веток. Force push к `main` и roadmap-ветке, а также их удаление до завершения установленного процесса запрещены.
+Также запрещено создавать task-ветку от `main` вместо roadmap-ветки. Если
+`main` изменился, сначала обнови roadmap-ветку, затем task-ветки; нельзя
+подмешивать новый `main` только в task-ветку. Проверяй фактические head, base и
+SHA через GitHub, а не по именам веток. Force push к `main` и roadmap-ветке, а
+также их удаление до завершения установленного процесса запрещены.
 
 ## Запрещённые автоматические действия
 
@@ -191,4 +241,8 @@ push -> roadmap/<roadmap-issue>-<slug>   # запрещено
 
 ## Статусы
 
-Используй только `TASK READY FOR REVIEW`, `TASK READY FOR REVIEW WITH EXCEPTIONS`, `TASK DONE`, `ROADMAP READY FOR RELEASE`, `ROADMAP READY FOR RELEASE WITH EXCEPTIONS`, `ROADMAP DONE` или `BLOCKED`. Статус `DONE` без префикса запрещён. Merge не является доказательством GitHub Review.
+Используй только `TASK READY FOR REVIEW`,
+`TASK READY FOR REVIEW WITH EXCEPTIONS`, `TASK DONE`,
+`ROADMAP READY FOR RELEASE`, `ROADMAP READY FOR RELEASE WITH EXCEPTIONS`,
+`ROADMAP DONE` или `BLOCKED`. Статус `DONE` без префикса запрещён. Merge не
+является доказательством GitHub Review.

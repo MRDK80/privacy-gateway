@@ -47,7 +47,12 @@ AGENTS_GATE_COMMANDS = (
     "ruff check .",
     "mypy .",
     "pre-commit run --all-files",
-    "git diff --check",
+)
+AGENTS_ADDITIONAL_CHECKS = ("git diff --check",)
+AGENTS_WORKFLOW_LINKS = (
+    "(.github/workflows/tests.yml)",
+    "(.github/workflows/pre-commit.yml)",
+    "(.github/workflows/main-source-guard.yml)",
 )
 AGENTS_PR_DIRECTIONS = (
     "<task-branch> -> roadmap/<roadmap-issue>-<slug>",
@@ -281,6 +286,14 @@ def test_agents_doc_lists_mandatory_gate_commands() -> None:
         assert command in text, command
 
 
+def test_agents_doc_lists_additional_checks_separately() -> None:
+    """Дополнительные проверки присутствуют, но не входят в mandatory tuple."""
+    text = _agents_text()
+    for command in AGENTS_ADDITIONAL_CHECKS:
+        assert command in text, command
+        assert command not in AGENTS_GATE_COMMANDS
+
+
 def test_agents_doc_states_allowed_pull_request_directions() -> None:
     """AGENTS.md фиксирует разрешённые направления pull request."""
     text = _agents_text()
@@ -311,7 +324,22 @@ def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
 
 
 def test_agents_doc_separates_local_gate_from_github_actions() -> None:
-    """AGENTS.md отделяет локальный gate от GitHub Actions."""
+    """Команды local gate и ссылки GitHub Actions находятся в своих разделах."""
     text = _agents_text()
-    assert "## Локальный quality gate" in text
-    assert "## GitHub Actions" in text
+    local_heading = "## Локальный quality gate"
+    actions_heading = "## GitHub Actions"
+    cli_heading = "## CLI"
+
+    local_start = text.index(local_heading)
+    actions_start = text.index(actions_heading)
+    cli_start = text.index(cli_heading)
+    assert local_start < actions_start < cli_start
+
+    local_section = text[local_start:actions_start]
+    actions_section = text[actions_start:cli_start]
+
+    for command in (*AGENTS_GATE_COMMANDS, *AGENTS_ADDITIONAL_CHECKS):
+        assert command in local_section, command
+    for link in AGENTS_WORKFLOW_LINKS:
+        assert link in actions_section, link
+        assert link not in local_section, link
