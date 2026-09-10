@@ -332,3 +332,47 @@ def test_malformed_introspection_invocations(
     assert envelope["ok"] is False
     assert envelope["error"]["code"] == "invalid_arguments"
     assert err == ""
+
+_DOCS_ROOT = Path(__file__).resolve().parents[1]
+_INTROSPECTION_DOCS = (
+    "AGENTS.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DECISIONS.md",
+    "examples/06_cli_round_trip.md",
+)
+
+
+def test_documentation_references_introspection_invocation() -> None:
+    """Активные документы описывают вызов и не обещают отсутствующих команд."""
+    for relative in _INTROSPECTION_DOCS:
+        text = (_DOCS_ROOT / relative).read_text(encoding="utf-8")
+        assert "--describe" in text, relative
+        assert "pgw key delete" not in text, relative
+
+
+def test_agents_doc_links_introspection_adr() -> None:
+    """AGENTS.md ссылается на интерфейс интроспекции и остаётся в лимите."""
+    text = (_DOCS_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "pgw --describe" in text
+    assert "(docs/ADR-151-cli-introspection.md)" in text
+    assert len(text.splitlines()) <= 500
+
+
+def test_architecture_and_decisions_record_adr_151() -> None:
+    """Архитектурный reference и реестр решений содержат ADR-151."""
+    architecture = (_DOCS_ROOT / "docs" / "ARCHITECTURE.md").read_text(
+        encoding="utf-8"
+    )
+    decisions = (_DOCS_ROOT / "docs" / "DECISIONS.md").read_text(encoding="utf-8")
+    assert "(ADR-151-cli-introspection.md)" in architecture
+    assert "ADR-151" in decisions
+
+
+def test_agent_example_documents_safe_introspection() -> None:
+    """Пример содержит безопасный agent-сценарий без побочных эффектов."""
+    text = (_DOCS_ROOT / "examples" / "06_cli_round_trip.md").read_text(
+        encoding="utf-8"
+    )
+    assert "pgw --describe" in text
+    assert "не обращается к keyring" in text
+    assert "(../docs/ADR-151-cli-introspection.md)" in text
