@@ -32,7 +32,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from privacy_gateway.input_parser import read_input
 from privacy_gateway.keystore import KeystoreError, get_key
@@ -716,6 +716,321 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
     )
     return 0
 
+# ---------------------------------------------------------------------------
+# Машиночитаемая интроспекция CLI-контракта (#151, ADR-151)
+# ---------------------------------------------------------------------------
+
+_DESCRIBE_FLAG = "--describe"
+_CLI_CATALOG_SCHEMA_VERSION = "1.0"
+_CLI_CATALOG_KIND = "cli_catalog"
+
+_EXIT_CODE_REGISTRY: tuple[tuple[int, str], ...] = (
+    (0, "success"),
+    (1, "unexpected_error"),
+    (2, "pending"),
+    (3, "usage_input_config_integrity_or_blocked"),
+    (4, "keystore_error"),
+    (5, "strict_restore_rejection"),
+)
+
+_SIDE_EFFECT_VALUES: tuple[str, ...] = (
+    "reads_artifacts",
+    "reads_config",
+    "reads_input",
+    "reads_keyring",
+    "writes_artifacts",
+    "writes_keyring",
+    "writes_output",
+)
+
+_METAVAR_TYPES: dict[str, str] = {
+    "ФАЙЛ": "path",
+    "КАТАЛОГ": "path",
+    "ROUTE_JSON": "path",
+    "MANIFEST_JSON": "path",
+    "ROUTING_YAML": "path",
+    "ENTITIES_CONFIG": "path",
+    "ENC": "string",
+}
+
+_CLI_LEVEL_MACHINE_ERROR_CODES: tuple[str, ...] = (
+    "invalid_arguments",
+    "unsupported_command",
+)
+
+
+@dataclass(frozen=True)
+class _GlobalControl:
+    """Global pre-parser control, невидимый для argparse."""
+
+    option_string: str
+    kind: str
+    position: str
+    summary: str
+
+
+_GLOBAL_CONTROLS: tuple[_GlobalControl, ...] = (
+    _GlobalControl(
+        "--describe",
+        "introspection",
+        "only_argument",
+        "Печатает машиночитаемый каталог CLI-контракта.",
+    ),
+    _GlobalControl(
+        "--json",
+        "output_mode",
+        "before_command",
+        "Включает JSON-режим поддерживаемых операционных команд.",
+    ),
+)
+
+
+@dataclass(frozen=True)
+class _CommandFacts:
+    """Семантика, которую argparse не выражает."""
+
+    side_effects: tuple[str, ...]
+    exit_codes: tuple[int, ...]
+    machine_error_codes: tuple[str, ...]
+    json_mode_requires: tuple[str, ...] = ()
+
+
+_COMMAND_FACTS: dict[str, _CommandFacts] = {
+    "detect": _CommandFacts(
+        side_effects=("reads_config", "reads_input"),
+        exit_codes=(0, 1, 3),
+        machine_error_codes=(),
+    ),
+    "prepare": _CommandFacts(
+        side_effects=(
+            "reads_config",
+            "reads_input",
+            "reads_keyring",
+            "writes_artifacts",
+        ),
+        exit_codes=(0, 1, 2, 3, 4),
+        machine_error_codes=(
+            "blocked",
+            "configuration_error",
+            "input_error",
+            "internal_error",
+            "invalid_arguments",
+            "keystore_error",
+            "pending",
+        ),
+    ),
+    "restore": _CommandFacts(
+        side_effects=(
+            "reads_artifacts",
+            "reads_input",
+            "reads_keyring",
+            "writes_output",
+        ),
+        exit_codes=(0, 1, 3, 4, 5),
+        machine_error_codes=(
+            "configuration_error",
+            "input_error",
+            "internal_error",
+            "invalid_arguments",
+            "keystore_error",
+            "output_error",
+            "restore_error",
+            "restore_output_required",
+            "strict_restore_error",
+        ),
+        json_mode_requires=("--out",),
+    ),
+    "key create": _CommandFacts(
+        side_effects=("reads_keyring", "writes_keyring"),
+        exit_codes=(0, 1, 3, 4),
+        machine_error_codes=(
+            "internal_error",
+            "invalid_arguments",
+            "key_exists",
+            "keystore_error",
+        ),
+    ),
+    "key status": _CommandFacts(
+        side_effects=("reads_keyring",),
+        exit_codes=(0, 1, 3, 4),
+        machine_error_codes=(
+            "internal_error",
+            "invalid_arguments",
+            "key_not_found",
+            "keystore_error",
+        ),
+    ),
+    "key rotate": _CommandFacts(
+        side_effects=("reads_keyring", "writes_keyring"),
+        exit_codes=(0, 1, 4),
+        machine_error_codes=(
+            "internal_error",
+            "invalid_arguments",
+            "key_not_found",
+            "keystore_error",
+        ),
+    ),
+}
+
+
+def _parser_actions(parser: argparse.ArgumentParser) -> list[argparse.Action]:
+    """Список actions parser без зависимости от публичного API argparse."""
+    return cast(list[argparse.Action], getattr(parser, "_actions"))
+
+
+def _subcommands(
+    parser: argparse.ArgumentParser,
+) -> tuple[dict[str, argparse.ArgumentParser], dict[str, str]]:
+    """Вернуть (имя -> subparser, имя -> summary) одного уровня."""
+    parsers: dict[str, argparse.ArgumentParser] = {}
+    summaries: dict[str, str] = {}
+    for action in _parser_actions(parser):
+        choices = getattr(action, "choices", None)
+        if not isinstance(choices, dict):
+            continue
+        for name, sub in choices.items():
+            if isinstance(name, str) and isinstance(sub, argparse.ArgumentParser):
+                parsers[name] = sub
+        pseudo_actions = cast(
+            list[argparse.Action], getattr(action, "_choices_actions", [])
+        )
+        for pseudo in pseudo_actions:
+            summaries[str(pseudo.dest)] = str(pseudo.help or "")
+    return parsers, summaries
+
+
+def _public_arguments(parser: argparse.ArgumentParser) -> list[argparse.Action]:
+    """Actions команды без -h/--help и без subparsers action."""
+    result: list[argparse.Action] = []
+    for action in _parser_actions(parser):
+        if isinstance(getattr(action, "choices", None), dict):
+            continue
+        if action.dest == "help":
+            continue
+        result.append(action)
+    return result
+
+
+def _describe_argument(action: argparse.Action) -> dict[str, Any]:
+    """Сериализовать один argparse action в стабильную форму каталога."""
+    option_strings = list(action.option_strings)
+    positional = not option_strings
+    if action.nargs == 0:
+        argument_type = "boolean"
+        cardinality = "flag"
+    else:
+        metavar = action.metavar if isinstance(action.metavar, str) else None
+        if metavar is None or metavar not in _METAVAR_TYPES:
+            raise AssertionError(
+                f"нет машинного типа для параметра {action.dest!r}"
+            )
+        argument_type = _METAVAR_TYPES[metavar]
+        cardinality = "one"
+    raw_default = action.default
+    safe_default: Any = raw_default if isinstance(raw_default, bool) else None
+    choices = action.choices
+    return {
+        "name": str(action.dest),
+        "kind": "positional" if positional else "option",
+        "option_strings": option_strings,
+        "required": positional or bool(action.required),
+        "type": argument_type,
+        "cardinality": cardinality,
+        "choices": (
+            sorted(str(item) for item in choices) if choices is not None else None
+        ),
+        "default": safe_default,
+        "summary": str(action.help or ""),
+    }
+
+
+def _describe_command(
+    command_id: str,
+    path: list[str],
+    parser: argparse.ArgumentParser,
+    summary: str,
+) -> dict[str, Any]:
+    """Собрать запись каталога для одной конечной команды."""
+    facts = _COMMAND_FACTS[command_id]
+    json_supported = command_id in _JSON_COMMANDS
+    return {
+        "id": command_id,
+        "path": path,
+        "summary": summary,
+        "arguments": [
+            _describe_argument(action) for action in _public_arguments(parser)
+        ],
+        "output_formats": ["human", "json"] if json_supported else ["human"],
+        "json_mode_requires": list(facts.json_mode_requires),
+        "exit_codes": list(facts.exit_codes),
+        "machine_error_codes": list(facts.machine_error_codes),
+        "side_effects": list(facts.side_effects),
+    }
+
+
+def _build_catalog() -> dict[str, Any]:
+    """Построить каталог из фактического parser и typed registry."""
+    parser = _build_parser()
+    top_parsers, top_summaries = _subcommands(parser)
+    commands: list[dict[str, Any]] = []
+    for name in sorted(top_parsers):
+        child_parsers, child_summaries = _subcommands(top_parsers[name])
+        if child_parsers:
+            for child in sorted(child_parsers):
+                commands.append(
+                    _describe_command(
+                        f"{name} {child}",
+                        [name, child],
+                        child_parsers[child],
+                        child_summaries.get(child, ""),
+                    )
+                )
+            continue
+        commands.append(
+            _describe_command(
+                name,
+                [name],
+                top_parsers[name],
+                top_summaries.get(name, ""),
+            )
+        )
+    return {
+        "schema_version": _CLI_CATALOG_SCHEMA_VERSION,
+        "kind": _CLI_CATALOG_KIND,
+        "program": parser.prog,
+        "operational_json_schema_version": _JSON_SCHEMA_VERSION,
+        "global_controls": [
+            {
+                "option_string": control.option_string,
+                "kind": control.kind,
+                "position": control.position,
+                "summary": control.summary,
+            }
+            for control in _GLOBAL_CONTROLS
+        ],
+        "exit_codes": [
+            {"code": code, "meaning": meaning}
+            for code, meaning in _EXIT_CODE_REGISTRY
+        ],
+        "machine_error_codes": sorted(_JSON_ERROR_CODES),
+        "cli_level_machine_error_codes": sorted(_CLI_LEVEL_MACHINE_ERROR_CODES),
+        "side_effect_values": list(_SIDE_EFFECT_VALUES),
+        "commands": commands,
+    }
+
+
+def _run_describe(argv: list[str]) -> int:
+    """Напечатать каталог. Побочные эффекты отсутствуют (ADR-151)."""
+    if argv != [_DESCRIBE_FLAG]:
+        print(
+            f"{_DESCRIBE_FLAG} не принимает дополнительные аргументы.",
+            file=sys.stderr,
+        )
+        return 3
+    print(json.dumps(_build_catalog(), ensure_ascii=False, indent=2))
+    return 0
+
+
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
     """Разобрать argv; JSON-флаг допустим только перед командой."""
     argv = sys.argv[1:]
@@ -839,6 +1154,9 @@ def _run_json_command(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """Точка входа CLI с явным opt-in JSON-режимом."""
+    argv = sys.argv[1:]
+    if argv and argv[0] == _DESCRIBE_FLAG:
+        sys.exit(_run_describe(argv))
     parser = _build_parser()
     args = _parse_args(parser)
     if args.json:
