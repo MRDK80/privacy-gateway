@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -13,11 +14,12 @@ import pytest
 from privacy_gateway.keystore import KeyExistsError, KeyNotFoundError, KeystoreError
 from privacy_gateway.models import (
     ConfigurationError,
+    InputError,
     ProcessingStatus,
     RestoreStrictError,
 )
 from privacy_gateway.pipeline import PipelineResult
-from privacy_gateway.restore import RestoreResult
+from privacy_gateway.restore import RestoreError, RestoreResult
 
 _SECRET = "SYNTHETIC-PRIVATE-VALUE"  # pragma: allowlist secret
 _KEY = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="  # pragma: allowlist secret
@@ -82,6 +84,27 @@ def test_prepare_states(status: ProcessingStatus, exit_code: int, code: str,
     assert _SECRET not in out.out
 
 
+
+def test_input_error_code_is_independent_of_human_wording(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import privacy_gateway.cli as cli_module
+
+    translated_rule = replace(
+        cli_module._INPUT_RULES[0], prefix="Translated input failure"
+    )
+    with (
+        patch.object(cli_module, "_INPUT_RULES", (translated_rule,)),
+        patch.object(cli_module, "read_input", side_effect=InputError(_SECRET)),
+    ):
+        assert _run("--json", "prepare", "in.txt") == 3
+    out = capsys.readouterr()
+    assert out.err == ""
+    assert _payload(out.out)["error"]["code"] == "input_error"
+    assert "Translated input failure" not in out.out
+    assert _SECRET not in out.out
+
+
 def test_prepare_configuration_error(capsys: pytest.CaptureFixture[str]) -> None:
     with patch.multiple(
         "privacy_gateway.cli",
@@ -132,6 +155,30 @@ def test_restore_success_is_metadata_only(
     assert _payload(out.out)["result"] == {"status": "ok", "output_path": path}
     assert _SECRET not in out.out
     write_mock.assert_called_once()
+
+
+
+def test_restore_error_code_is_structured_and_safe(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            "privacy_gateway.cli.read_input",
+            return_value=SimpleNamespace(text=_SECRET),
+        ),
+        patch(
+            "privacy_gateway.restore.restore_text",
+            side_effect=RestoreError(_SECRET),
+        ),
+    ):
+        assert (
+            _run("--json", "restore", "reply", "--route", "route", "--out", "out")
+            == 3
+        )
+    out = capsys.readouterr()
+    assert out.err == ""
+    assert _payload(out.out)["error"]["code"] == "restore_error"
+    assert _SECRET not in out.out
 
 
 @pytest.mark.parametrize(
@@ -270,6 +317,29 @@ def test_unexpected_error_is_safe(capsys: pytest.CaptureFixture[str]) -> None:
     assert out.err == ""
     assert _payload(out.out)["error"]["code"] == "internal_error"
     assert _SECRET not in out.out and "Traceback" not in out.out
+
+
+
+def test_public_machine_error_registry_matches_contract() -> None:
+    from privacy_gateway.cli import _JSON_ERROR_CODES
+
+    covered_codes = {
+        "invalid_arguments",
+        "unsupported_command",
+        "restore_output_required",
+        "input_error",
+        "configuration_error",
+        "pending",
+        "blocked",
+        "output_error",
+        "restore_error",
+        "strict_restore_error",
+        "key_exists",
+        "key_not_found",
+        "keystore_error",
+        "internal_error",
+    }
+    assert _JSON_ERROR_CODES == covered_codes
 
 
 def test_contract_documentation_links() -> None:
