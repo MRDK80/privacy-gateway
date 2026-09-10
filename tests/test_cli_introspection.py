@@ -399,3 +399,119 @@ def test_agent_example_documents_safe_introspection() -> None:
     assert "(../docs/ADR-151-cli-introspection.md)" in text
     collapsed = _collapsed("examples/06_cli_round_trip.md")
     assert "не обращается к keyring и не создаёт файлов" in collapsed
+
+_LEAF_COMMAND_ARGV: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("detect", ("detect", "--unexpected")),
+    ("prepare", ("prepare", "--unexpected")),
+    ("restore", ("restore", "--unexpected")),
+    ("key create", ("key", "create", "--unexpected")),
+    ("key status", ("key", "status", "--unexpected")),
+    ("key rotate", ("key", "rotate", "--unexpected")),
+)
+
+_JSON_COMMAND_ARGV: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (command_id, argv)
+    for command_id, argv in _LEAF_COMMAND_ARGV
+    if command_id in cli._JSON_COMMANDS
+)
+
+
+def _catalog_entry(command_id: str) -> dict[str, Any]:
+    """Запись каталога без запуска CLI: побочные эффекты отсутствуют."""
+    catalog = cli._build_catalog()
+    entries = {str(item["id"]): item for item in catalog["commands"]}
+    return cast(dict[str, Any], entries[command_id])
+
+
+def test_leaf_commands_cover_every_parser_command() -> None:
+    """Наборы argv покрывают все конечные команды parser."""
+    assert {command_id for command_id, _ in _LEAF_COMMAND_ARGV} == set(_walk_parser())
+    assert {command_id for command_id, _ in _JSON_COMMAND_ARGV} == set(
+        cli._JSON_COMMANDS
+    )
+
+
+def test_command_facts_do_not_duplicate_usage_semantics() -> None:
+    """Universal usage-семантика не дублируется в typed registry."""
+    for command_id, facts in cli._COMMAND_FACTS.items():
+        assert cli._USAGE_MACHINE_ERROR_CODE not in facts.machine_error_codes, (
+            command_id
+        )
+
+
+@pytest.mark.parametrize(("command_id", "argv"), _LEAF_COMMAND_ARGV)
+def test_malformed_human_invocation_matches_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command_id: str,
+    argv: tuple[str, ...],
+) -> None:
+    """Malformed human invocation даёт код 3, и он есть в каталоге."""
+    exit_code, out, err = _run_describe(monkeypatch, capsys, list(argv))
+    assert exit_code == 3
+    assert out == ""
+    assert err.strip()
+    entry = _catalog_entry(command_id)
+    assert cli._USAGE_EXIT_CODE in [int(code) for code in entry["exit_codes"]]
+
+
+@pytest.mark.parametrize(("command_id", "argv"), _JSON_COMMAND_ARGV)
+def test_malformed_json_invocation_matches_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command_id: str,
+    argv: tuple[str, ...],
+) -> None:
+    """Malformed JSON invocation согласован с catalog entry команды."""
+    exit_code, out, err = _run_describe(
+        monkeypatch, capsys, ["--json", *argv]
+    )
+    assert exit_code == 3
+    assert err == ""
+    envelope = json.loads(out)
+    assert envelope["ok"] is False
+    assert envelope["command"] == command_id
+    assert envelope["error"]["code"] == cli._USAGE_MACHINE_ERROR_CODE
+    entry = _catalog_entry(command_id)
+    assert cli._USAGE_EXIT_CODE in [int(code) for code in entry["exit_codes"]]
+    assert cli._USAGE_MACHINE_ERROR_CODE in entry["machine_error_codes"]
+
+
+def test_json_key_rotate_malformed_regression(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Regression исходного дефекта: key rotate публикует код 3."""
+    exit_code, out, err = _run_describe(
+        monkeypatch, capsys, ["--json", "key", "rotate", "--unexpected"]
+    )
+    assert exit_code == 3
+    assert err == ""
+    envelope = json.loads(out)
+    assert envelope["command"] == "key rotate"
+    assert envelope["error"]["code"] == "invalid_arguments"
+    entry = _catalog_entry("key rotate")
+    assert entry["exit_codes"] == [0, 1, 3, 4]
+    assert "invalid_arguments" in entry["machine_error_codes"]
+
+
+def test_invalid_arguments_implies_usage_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Semantic invariant: invalid_arguments требует exit code 3."""
+    catalog = _catalog(monkeypatch, capsys)
+    for command in catalog["commands"]:
+        codes = [int(code) for code in command["exit_codes"]]
+        assert cli._USAGE_EXIT_CODE in codes, command["id"]
+        if cli._USAGE_MACHINE_ERROR_CODE in command["machine_error_codes"]:
+            assert cli._USAGE_EXIT_CODE in codes, command["id"]
+
+
+def test_detect_publishes_usage_exit_without_machine_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """detect имеет usage exit 3, но не JSON machine codes."""
+    catalog = _catalog(monkeypatch, capsys)
+    entry = {str(item["id"]): item for item in catalog["commands"]}["detect"]
+    assert cli._USAGE_EXIT_CODE in [int(code) for code in entry["exit_codes"]]
+    assert entry["machine_error_codes"] == []
+    assert entry["output_formats"] == ["human"]

@@ -758,6 +758,12 @@ _CLI_LEVEL_MACHINE_ERROR_CODES: tuple[str, ...] = (
     "unsupported_command",
 )
 
+# Usage error argparse — общая семантика каждой конечной команды: process exit
+# code 3 (ADR-29, ADR-30) и machine code invalid_arguments в JSON-режиме.
+# Эти значения выводятся автоматически и не дублируются в _COMMAND_FACTS.
+_USAGE_EXIT_CODE = 3
+_USAGE_MACHINE_ERROR_CODE = "invalid_arguments"
+
 
 @dataclass(frozen=True)
 class _GlobalControl:
@@ -814,7 +820,6 @@ _COMMAND_FACTS: dict[str, _CommandFacts] = {
             "configuration_error",
             "input_error",
             "internal_error",
-            "invalid_arguments",
             "keystore_error",
             "pending",
         ),
@@ -831,7 +836,6 @@ _COMMAND_FACTS: dict[str, _CommandFacts] = {
             "configuration_error",
             "input_error",
             "internal_error",
-            "invalid_arguments",
             "keystore_error",
             "output_error",
             "restore_error",
@@ -845,7 +849,6 @@ _COMMAND_FACTS: dict[str, _CommandFacts] = {
         exit_codes=(0, 1, 3, 4),
         machine_error_codes=(
             "internal_error",
-            "invalid_arguments",
             "key_exists",
             "keystore_error",
         ),
@@ -855,7 +858,6 @@ _COMMAND_FACTS: dict[str, _CommandFacts] = {
         exit_codes=(0, 1, 3, 4),
         machine_error_codes=(
             "internal_error",
-            "invalid_arguments",
             "key_not_found",
             "keystore_error",
         ),
@@ -865,7 +867,6 @@ _COMMAND_FACTS: dict[str, _CommandFacts] = {
         exit_codes=(0, 1, 4),
         machine_error_codes=(
             "internal_error",
-            "invalid_arguments",
             "key_not_found",
             "keystore_error",
         ),
@@ -953,6 +954,11 @@ def _describe_command(
     """Собрать запись каталога для одной конечной команды."""
     facts = _COMMAND_FACTS[command_id]
     json_supported = command_id in _JSON_COMMANDS
+    exit_codes = sorted(set(facts.exit_codes) | {_USAGE_EXIT_CODE})
+    machine_codes = set(facts.machine_error_codes)
+    if json_supported:
+        machine_codes.add(_USAGE_MACHINE_ERROR_CODE)
+    machine_error_codes = sorted(machine_codes)
     return {
         "id": command_id,
         "path": path,
@@ -962,8 +968,8 @@ def _describe_command(
         ],
         "output_formats": ["human", "json"] if json_supported else ["human"],
         "json_mode_requires": list(facts.json_mode_requires),
-        "exit_codes": list(facts.exit_codes),
-        "machine_error_codes": list(facts.machine_error_codes),
+        "exit_codes": exit_codes,
+        "machine_error_codes": machine_error_codes,
         "side_effects": list(facts.side_effects),
     }
 
