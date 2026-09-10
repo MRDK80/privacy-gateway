@@ -40,8 +40,33 @@ STRICT_RESTORE_EXIT = 5
 ROTATION_EXAMPLE = Path("examples") / "05_key_rotation.md"
 LIBRARY_API_DOC = Path("docs") / "LIBRARY_API.md"
 EXAMPLES_INDEX_LINK = "(../examples/README.md)"
+AGENTS_DOC = Path("AGENTS.md")
+AGENTS_MAX_LINES = 500
+AGENTS_GATE_COMMANDS = (
+    "pytest -q",
+    "ruff check .",
+    "mypy .",
+    "pre-commit run --all-files",
+)
+AGENTS_ADDITIONAL_CHECKS = ("git diff --check",)
+AGENTS_WORKFLOW_LINKS = (
+    "(.github/workflows/tests.yml)",
+    "(.github/workflows/pre-commit.yml)",
+    "(.github/workflows/main-source-guard.yml)",
+)
+AGENTS_PR_DIRECTIONS = (
+    "<task-branch> -> roadmap/<roadmap-issue>-<slug>",
+    "roadmap/<roadmap-issue>-<slug> -> main",
+)
+AGENTS_CANONICAL_DOC_LINKS = (
+    "(SECURITY.md)",
+    "(docs/SECURITY.md)",
+    "(docs/ARCHITECTURE.md)",
+    "(docs/LIBRARY_API.md)",
+)
 
 ACTIVE_DOCS = (
+    "AGENTS.md",
     "README.md",
     "SECURITY.md",
     "docs/SECURITY.md",
@@ -236,3 +261,85 @@ def test_article_sync_report_states_detection_boundary() -> None:
 def test_article_sync_report_has_no_stale_revision() -> None:
     """Отчёт не ссылается на устаревшую ревизию черновика статьи."""
     assert STALE_ARTICLE_SHA not in _article_sync_report_text()
+
+
+def _agents_text() -> str:
+    """Текст корневого AGENTS.md."""
+    return (REPO_ROOT / AGENTS_DOC).read_text(encoding="utf-8")
+
+
+def test_agents_doc_exists_in_repository_root() -> None:
+    """AGENTS.md лежит в корне репозитория."""
+    assert (REPO_ROOT / AGENTS_DOC).is_file()
+
+
+def test_agents_doc_within_line_budget() -> None:
+    """AGENTS.md не превышает согласованный максимальный объём."""
+    actual = len(_agents_text().splitlines())
+    assert actual <= AGENTS_MAX_LINES, actual
+
+
+def test_agents_doc_lists_mandatory_gate_commands() -> None:
+    """AGENTS.md перечисляет обязательные команды локального gate."""
+    text = _agents_text()
+    for command in AGENTS_GATE_COMMANDS:
+        assert command in text, command
+
+
+def test_agents_doc_lists_additional_checks_separately() -> None:
+    """Дополнительные проверки присутствуют, но не входят в mandatory tuple."""
+    text = _agents_text()
+    for command in AGENTS_ADDITIONAL_CHECKS:
+        assert command in text, command
+        assert command not in AGENTS_GATE_COMMANDS
+
+
+def test_agents_doc_states_allowed_pull_request_directions() -> None:
+    """AGENTS.md фиксирует разрешённые направления pull request."""
+    text = _agents_text()
+    for direction in AGENTS_PR_DIRECTIONS:
+        assert direction in text, direction
+
+
+def test_agents_doc_forbids_task_pull_request_into_main() -> None:
+    """AGENTS.md запрещает task PR напрямую в main."""
+    collapsed = re.sub(r"[ \t]+", " ", _agents_text())
+    assert "<task-branch> -> main # запрещено" in collapsed
+
+
+def test_agents_doc_marks_key_deletion_as_library_only() -> None:
+    """AGENTS.md отделяет library-only удаление ключа от CLI-подкоманд."""
+    text = _agents_text()
+    assert "keystore.delete_key()" in text
+    assert "library-only" in text
+    for name in sorted(EXPECTED_KEY_SUBCOMMANDS):
+        assert f"pgw key {name}" in text, name
+
+
+def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
+    """AGENTS.md ссылается на канонические документы, а не копирует их."""
+    text = _agents_text()
+    for link in AGENTS_CANONICAL_DOC_LINKS:
+        assert link in text, link
+
+
+def test_agents_doc_separates_local_gate_from_github_actions() -> None:
+    """Команды local gate и ссылки GitHub Actions находятся в своих разделах."""
+    text = _agents_text()
+    local_heading = "## Локальный quality gate"
+    actions_heading = "## GitHub Actions"
+    cli_heading = "## CLI"
+
+    local_start = text.index(local_heading)
+    actions_start = text.index(actions_heading)
+    cli_start = text.index(cli_heading)
+    assert local_start < actions_start < cli_start
+
+    local_section = text[local_start:actions_start]
+    actions_section = text[actions_start:cli_start]
+
+    for command in (*AGENTS_GATE_COMMANDS, *AGENTS_ADDITIONAL_CHECKS):
+        assert command in local_section, command
+    for link in AGENTS_WORKFLOW_LINKS:
+        assert link in actions_section, link
+        assert link not in local_section, link
