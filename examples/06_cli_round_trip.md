@@ -198,3 +198,20 @@ Remove-Item -Recurse -Force .\pgw_demo
 запускает те же команды отдельными процессами на Linux и Windows,
 подменяя keystore в изолированном `PYTHONPATH`, поэтому системный keyring
 и домашний каталог пользователя не используются.
+
+
+## Автоматизация через JSON
+
+```bash
+pgw --json prepare ./pgw_demo/request.txt --out ./pgw_demo/work
+pgw --json key status
+pgw --json restore ./pgw_demo/response.txt \
+  --route ./pgw_demo/work/route.json \
+  --out ./pgw_demo/restored.txt
+```
+
+`restore --json` требует `--out`: восстановленный чувствительный текст попадает
+только в указанный файл, а stdout содержит один служебный JSON object. Передавать
+`route.json`, `manifest.json` или восстановленный файл провайдеру нельзя.
+Контракт описан в
+[`docs/ADR-150-cli-json-contract.md`](../docs/ADR-150-cli-json-contract.md).

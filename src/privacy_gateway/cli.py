@@ -27,7 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +45,91 @@ from privacy_gateway.pipeline import PipelineResult, prepare_pipeline
 from privacy_gateway.routing import load_routing_config
 
 _DEFAULT_ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
+_JSON_SCHEMA_VERSION = "1.0"
+_JSON_COMMANDS = frozenset(
+    {"prepare", "restore", "key create", "key status", "key rotate"}
+)
+
+
+def _emit_json_success(command: str, result: dict[str, Any]) -> None:
+    payload = {
+        "schema_version": _JSON_SCHEMA_VERSION,
+        "ok": True,
+        "command": command,
+        "result": result,
+    }
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _emit_json_error(
+    command: str, code: str, error_type: str, message: str
+) -> None:
+    payload = {
+        "schema_version": _JSON_SCHEMA_VERSION,
+        "ok": False,
+        "command": command,
+        "error": {"code": code, "type": error_type, "message": message},
+    }
+    print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
+def _json_command_identifier(argv: list[str]) -> str:
+    if not argv:
+        return "cli"
+    if argv[0] == "key":
+        if len(argv) > 1:
+            candidate = f"key {argv[1]}"
+            return candidate if candidate in _JSON_COMMANDS else "key"
+        return "key"
+    return argv[0] if argv[0] in _JSON_COMMANDS else "cli"
+
+
+def _json_error_details(
+    command: str, exit_code: int, stderr: str
+) -> tuple[str, str, str]:
+    """Map stable human error categories to safe machine-facing details."""
+    if exit_code == 1:
+        return "internal_error", "internal_error", "Внутренняя ошибка."
+    if exit_code == 2:
+        return "pending", "processing_state", "Требуется ручное подтверждение."
+    if exit_code == 5:
+        return (
+            "strict_restore_error",
+            "restore_error",
+            "Строгое восстановление отклонено.",
+        )
+    if command == "key create" and stderr.startswith("Ключ уже существует."):
+        return "key_exists", "keystore_error", "Ключ уже существует."
+    if command == "key status" and exit_code == 3:
+        return "key_not_found", "keystore_error", "Ключ не найден."
+    if stderr.startswith("Ключ не найден."):
+        return "key_not_found", "keystore_error", "Ключ не найден."
+    if exit_code == 4:
+        return (
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        )
+    stderr_lines = stderr.splitlines()
+    if any(line.startswith("Ошибка чтения") for line in stderr_lines):
+        return "input_error", "input_error", "Не удалось прочитать входные данные."
+    if any(line.startswith("Ошибка конфигурации") for line in stderr_lines):
+        return (
+            "configuration_error",
+            "configuration_error",
+            "Недопустимая конфигурация.",
+        )
+    if any(
+        line.startswith("Ошибка записи") or line.startswith("Ошибка:")
+        for line in stderr_lines
+    ):
+        return "output_error", "output_error", "Не удалось записать результат."
+    if any(line.startswith("Ошибка восстановления") for line in stderr_lines):
+        return "restore_error", "restore_error", "Восстановление не выполнено."
+    if any(line.startswith("BLOCKED:") for line in stderr_lines):
+        return "blocked", "processing_state", "Обработка заблокирована политикой."
+    return "command_error", "command_error", "Команда не выполнена."
+
 
 
 # ---------------------------------------------------------------------------
@@ -517,44 +604,113 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
     return 0
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
-    """Первичный разбор argv: usage error argparse → код 3 (ADR-29, #26).
-
-    argparse к этому моменту уже напечатал usage/error в stderr — текст
-    не изменяется. help (код 0) и любые другие коды пробрасываются как есть.
-    """
+    """Разобрать argv; JSON-флаг допустим только перед командой."""
+    argv = sys.argv[1:]
+    json_mode = bool(argv and argv[0] == "--json")
+    parse_argv = argv[1:] if json_mode else argv
     try:
-        return parser.parse_args()
+        if json_mode:
+            with redirect_stderr(StringIO()):
+                args = parser.parse_args(parse_argv)
+        else:
+            args = parser.parse_args(parse_argv)
     except SystemExit as exc:
         if exc.code == 2:
+            if json_mode:
+                _emit_json_error(
+                    _json_command_identifier(parse_argv),
+                    "invalid_arguments",
+                    "usage_error",
+                    "Недопустимые аргументы командной строки.",
+                )
             raise SystemExit(3) from None
         raise
+    args.json = json_mode
+    return args
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "detect":
+        return _cmd_detect(args)
+    if args.command == "prepare":
+        return _cmd_prepare(args)
+    if args.command == "restore":
+        return _cmd_restore(args)
+    if args.command == "key":
+        if args.key_command == "create":
+            return _cmd_key_create(args)
+        if args.key_command == "status":
+            return _cmd_key_status(args)
+        if args.key_command == "rotate":
+            return _cmd_key_rotate(args)
+        raise AssertionError(f"нераспознанная key-подкоманда: {args.key_command!r}")
+    raise AssertionError(f"нераспознанная команда: {args.command!r}")
+
+
+def _json_success_result(command: str, args: argparse.Namespace) -> dict[str, Any]:
+    if command == "prepare":
+        return {"status": "ok"}
+    if command == "restore":
+        return {"status": "ok", "output_path": str(args.out)}
+    if command == "key create":
+        return {"created": True}
+    if command == "key status":
+        return {"present": True}
+    if command == "key rotate":
+        return {"rotated": True}
+    raise AssertionError(f"JSON не поддерживается для {command!r}")
+
+
+def _run_json_command(args: argparse.Namespace) -> int:
+    command = (
+        f"key {args.key_command}" if args.command == "key" else str(args.command)
+    )
+    if command not in _JSON_COMMANDS:
+        _emit_json_error(
+            "cli",
+            "unsupported_command",
+            "usage_error",
+            "Команда не поддерживает JSON-режим.",
+        )
+        return 3
+    if command == "restore" and not args.out:
+        _emit_json_error(
+            command,
+            "restore_output_required",
+            "usage_error",
+            "JSON-режим restore требует --out.",
+        )
+        return 3
+
+    captured_stdout = StringIO()
+    captured_stderr = StringIO()
+    try:
+        with redirect_stdout(captured_stdout), redirect_stderr(captured_stderr):
+            exit_code = _dispatch(args)
+    except Exception:  # noqa: BLE001
+        _emit_json_error(
+            command,
+            "internal_error",
+            "internal_error",
+            "Внутренняя ошибка.",
+        )
+        return 1
+
+    if exit_code == 0:
+        _emit_json_success(command, _json_success_result(command, args))
+        return 0
+
+    code, error_type, message = _json_error_details(
+        command, exit_code, captured_stderr.getvalue()
+    )
+    _emit_json_error(command, code, error_type, message)
+    return exit_code
+
 
 def main() -> None:
-    """Точка входа CLI.
-
-    Верхнеуровневая команда и подкоманда `key` обязательны (ADR-30):
-    отсутствие и неизвестное значение отклоняет argparse, а _parse_args()
-    транслирует usage error в код 3 (ADR-29).
-    """
+    """Точка входа CLI с явным opt-in JSON-режимом."""
     parser = _build_parser()
     args = _parse_args(parser)
-
-    if args.command == "detect":
-        sys.exit(_cmd_detect(args))
-    elif args.command == "prepare":
-        sys.exit(_cmd_prepare(args))
-    elif args.command == "restore":
-        sys.exit(_cmd_restore(args))
-    elif args.command == "key":
-        if args.key_command == "create":
-            sys.exit(_cmd_key_create(args))
-        elif args.key_command == "status":
-            sys.exit(_cmd_key_status(args))
-        elif args.key_command == "rotate":
-            sys.exit(_cmd_key_rotate(args))
-        else:  # pragma: no cover - argparse гарантирует choices
-            raise AssertionError(
-                f"нераспознанная key-подкоманда: {args.key_command!r}"
-            )
-    else:  # pragma: no cover - argparse гарантирует choices
-        raise AssertionError(f"нераспознанная команда: {args.command!r}")
+    if args.json:
+        sys.exit(_run_json_command(args))
+    sys.exit(_dispatch(args))

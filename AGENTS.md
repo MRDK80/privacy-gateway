@@ -21,6 +21,7 @@
 Публичный Library API — имена, экспортируемые пакетом `privacy_gateway`: `PrivacyGateway`, `GatewayConfig`, `PreparedPayload`, `RestoreContext`, `RestoredPayload`, `__version__` и исключения `PrivacyGatewayError`, `ConfigurationError`, `DetectionError`, `IntegrityError`, `KeyStoreError`, `RestoreError`, `StrictTokenError`. Reference: [`docs/LIBRARY_API.md`](docs/LIBRARY_API.md).
 
 Публичный CLI — консольный скрипт `pgw`, объявленный как `privacy_gateway.cli:main`.
+JSON-контракт operational commands задан в [`docs/ADR-150-cli-json-contract.md`](docs/ADR-150-cli-json-contract.md); не дублируй его envelope и machine codes.
 
 Остальные модули — internal implementation details: `pipeline`, `detector`, `tokenizer`, `manifest`, `restore`, `routing`, `crypto`, `keystore`, `validator`, `context_trust`, `publish`, `input_parser`, `models`. Не документируй их как публичный контракт и не считай стабильными.
 
