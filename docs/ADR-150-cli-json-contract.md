@@ -101,7 +101,6 @@ Machine codes не заменяют process exit codes и не создают н
 | `key_exists` | `keystore_error` | 3 | Повторное создание ключа |
 | `key_not_found` | `keystore_error` | 3 или 4 | Ключ отсутствует |
 | `keystore_error` | `keystore_error` | 4 | Прочий отказ keyring/rotation |
-| `command_error` | `command_error` | 3 | Прочий ожидаемый отказ |
 | `internal_error` | `internal_error` | 1 | Непредвиденная ошибка |
 
 Различие 3 и 4 для `key_not_found` сохраняет текущую семантику: `key status`
@@ -114,6 +113,14 @@ Machine codes не заменяют process exit codes и не создают н
 Человекочитаемый вывод команды перехватывается и наружу не публикуется. Текст
 исключения никогда не копируется в JSON. Unexpected exception становится
 фиксированным `internal_error`; traceback не печатается.
+
+Machine code, public type и безопасное сообщение формируются как внутренний
+структурированный `_MachineError`. Exception rules и явные command states
+записывают эту семантику независимо от human renderer. JSON adapter не читает и
+не анализирует stdout/stderr, локализованные prefixes или текст исключения.
+Изменение либо перевод human-readable сообщения поэтому не меняет machine code.
+Если команда завершилась ненулевым кодом без ровно одного структурированного
+machine error, adapter fail-closed возвращает `internal_error` с process code 1.
 
 Argparse errors при префиксе `--json` подавляют usage/error и возвращают
 безопасный `invalid_arguments`, не сериализуя argv. Без префикса поведение
@@ -143,6 +150,9 @@ major schema version. Порядок JSON keys не является контр�
 ## Последствия
 
 - Human mode без `--json` сохраняет stdout, stderr и exit codes.
-- Бизнес-операция выполняется один раз; JSON adapter публикует только allowlist.
+- Бизнес-операция выполняется один раз; human и JSON renderers получают одну
+  структурированную machine-error semantics.
+- Все объявленные machine codes имеют достижимый scenario и contract test;
+  недостижимый fallback `command_error` удалён до release.
 - Library API не меняется.
 - NDJSON, streaming, MCP, introspection и JSON для `detect` вне scope.

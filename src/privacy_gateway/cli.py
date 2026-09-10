@@ -28,6 +28,7 @@ import argparse
 import json
 import sys
 from contextlib import redirect_stderr, redirect_stdout
+from contextvars import ContextVar
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -49,6 +50,43 @@ _JSON_SCHEMA_VERSION = "1.0"
 _JSON_COMMANDS = frozenset(
     {"prepare", "restore", "key create", "key status", "key rotate"}
 )
+_JSON_ERROR_CODES = frozenset(
+    {
+        "invalid_arguments",
+        "unsupported_command",
+        "restore_output_required",
+        "input_error",
+        "configuration_error",
+        "pending",
+        "blocked",
+        "output_error",
+        "restore_error",
+        "strict_restore_error",
+        "key_exists",
+        "key_not_found",
+        "keystore_error",
+        "internal_error",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _MachineError:
+    code: str
+    public_type: str
+    safe_message: str
+
+
+_MACHINE_ERROR_SINK: ContextVar[list[_MachineError] | None] = ContextVar(
+    "privacy_gateway_cli_machine_error_sink", default=None
+)
+
+
+def _record_machine_error(code: str, public_type: str, safe_message: str) -> None:
+    """Record structured semantics only while the JSON adapter is active."""
+    sink = _MACHINE_ERROR_SINK.get()
+    if sink is not None:
+        sink.append(_MachineError(code, public_type, safe_message))
 
 
 def _emit_json_success(command: str, result: dict[str, Any]) -> None:
@@ -64,6 +102,8 @@ def _emit_json_success(command: str, result: dict[str, Any]) -> None:
 def _emit_json_error(
     command: str, code: str, error_type: str, message: str
 ) -> None:
+    if code not in _JSON_ERROR_CODES:
+        raise AssertionError(f"незарегистрированный machine error code: {code}")
     payload = {
         "schema_version": _JSON_SCHEMA_VERSION,
         "ok": False,
@@ -84,54 +124,6 @@ def _json_command_identifier(argv: list[str]) -> str:
     return argv[0] if argv[0] in _JSON_COMMANDS else "cli"
 
 
-def _json_error_details(
-    command: str, exit_code: int, stderr: str
-) -> tuple[str, str, str]:
-    """Map stable human error categories to safe machine-facing details."""
-    if exit_code == 1:
-        return "internal_error", "internal_error", "Внутренняя ошибка."
-    if exit_code == 2:
-        return "pending", "processing_state", "Требуется ручное подтверждение."
-    if exit_code == 5:
-        return (
-            "strict_restore_error",
-            "restore_error",
-            "Строгое восстановление отклонено.",
-        )
-    if command == "key create" and stderr.startswith("Ключ уже существует."):
-        return "key_exists", "keystore_error", "Ключ уже существует."
-    if command == "key status" and exit_code == 3:
-        return "key_not_found", "keystore_error", "Ключ не найден."
-    if stderr.startswith("Ключ не найден."):
-        return "key_not_found", "keystore_error", "Ключ не найден."
-    if exit_code == 4:
-        return (
-            "keystore_error",
-            "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
-        )
-    stderr_lines = stderr.splitlines()
-    if any(line.startswith("Ошибка чтения") for line in stderr_lines):
-        return "input_error", "input_error", "Не удалось прочитать входные данные."
-    if any(line.startswith("Ошибка конфигурации") for line in stderr_lines):
-        return (
-            "configuration_error",
-            "configuration_error",
-            "Недопустимая конфигурация.",
-        )
-    if any(
-        line.startswith("Ошибка записи") or line.startswith("Ошибка:")
-        for line in stderr_lines
-    ):
-        return "output_error", "output_error", "Не удалось записать результат."
-    if any(line.startswith("Ошибка восстановления") for line in stderr_lines):
-        return "restore_error", "restore_error", "Восстановление не выполнено."
-    if any(line.startswith("BLOCKED:") for line in stderr_lines):
-        return "blocked", "processing_state", "Обработка заблокирована политикой."
-    return "command_error", "command_error", "Команда не выполнена."
-
-
-
 # ---------------------------------------------------------------------------
 # Трансляция исключений в коды завершения (ADR-21)
 # ---------------------------------------------------------------------------
@@ -144,6 +136,7 @@ class _ExceptionRule:
     exception_type: type[Exception]
     exit_code: int
     prefix: str
+    machine_error: _MachineError
 
 
 def _report_exception(
@@ -164,8 +157,16 @@ def _report_exception(
     """
     for rule in rules:
         if isinstance(exc, rule.exception_type):
+            _record_machine_error(
+                rule.machine_error.code,
+                rule.machine_error.public_type,
+                rule.machine_error.safe_message,
+            )
             print(f"{rule.prefix}: {exc}", file=sys.stderr)
             return rule.exit_code
+    _record_machine_error(
+        "internal_error", "internal_error", "Внутренняя ошибка."
+    )
     print(f"{default_prefix}: {exc}", file=sys.stderr)
     return default_code
 
@@ -173,23 +174,63 @@ def _report_exception(
 # Правила для типов, доступных на уровне модуля. Правила для типов,
 # импортируемых лениво (restore, keystore), строятся в самих командах.
 _INPUT_RULES: tuple[_ExceptionRule, ...] = (
-    _ExceptionRule(InputError, 3, "Ошибка чтения"),
+    _ExceptionRule(
+        InputError,
+        3,
+        "Ошибка чтения",
+        _MachineError(
+            "input_error", "input_error", "Не удалось прочитать входные данные."
+        ),
+    ),
 )
 _LLM_INPUT_RULES: tuple[_ExceptionRule, ...] = (
-    _ExceptionRule(InputError, 3, "Ошибка чтения ответа LLM"),
+    _ExceptionRule(
+        InputError,
+        3,
+        "Ошибка чтения ответа LLM",
+        _MachineError(
+            "input_error", "input_error", "Не удалось прочитать входные данные."
+        ),
+    ),
 )
 _CONFIG_RULES: tuple[_ExceptionRule, ...] = (
-    _ExceptionRule(ConfigurationError, 3, "Ошибка конфигурации"),
+    _ExceptionRule(
+        ConfigurationError,
+        3,
+        "Ошибка конфигурации",
+        _MachineError(
+            "configuration_error", "configuration_error", "Недопустимая конфигурация."
+        ),
+    ),
 )
 _KEYSTORE_RULES: tuple[_ExceptionRule, ...] = (
-    _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+    _ExceptionRule(
+        KeystoreError,
+        4,
+        "Ошибка keystore",
+        _MachineError(
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        ),
+    ),
 )
 # Отказ записи результата restore — ожидаемый операционный отказ
 # окружения и даёт код 3 (#28, ADR-31). Правила не объединяются:
 # prefixes stderr различаются и сохраняются побайтово.
 _RESTORE_WRITE_RULES: tuple[_ExceptionRule, ...] = (
-    _ExceptionRule(FileExistsError, 3, "Ошибка"),
-    _ExceptionRule(ConfigurationError, 3, "Ошибка записи"),
+    _ExceptionRule(
+        FileExistsError,
+        3,
+        "Ошибка",
+        _MachineError("output_error", "output_error", "Не удалось записать результат."),
+    ),
+    _ExceptionRule(
+        ConfigurationError,
+        3,
+        "Ошибка записи",
+        _MachineError("output_error", "output_error", "Не удалось записать результат."),
+    ),
 )
 
 
@@ -446,9 +487,15 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
         )
         return 0
     elif result.status == ProcessingStatus.PENDING:
+        _record_machine_error(
+            "pending", "processing_state", "Требуется ручное подтверждение."
+        )
         print(f"PENDING: {result.message}", file=sys.stderr)
         return 2
     else:  # BLOCKED
+        _record_machine_error(
+            "blocked", "processing_state", "Обработка заблокирована политикой."
+        )
         print(f"BLOCKED: {result.message}", file=sys.stderr)
         return 3
 
@@ -469,10 +516,42 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     # Порядок правил повторяет прежнюю лестницу except: строгий отказ по
     # токенам (5) проверяется раньше общей ошибки восстановления (3).
     restore_rules: tuple[_ExceptionRule, ...] = (
-        _ExceptionRule(ConfigurationError, 3, "Ошибка конфигурации"),
-        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
-        _ExceptionRule(RestoreStrictError, 5, "Строгий отказ по токенам"),
-        _ExceptionRule(RestoreError, 3, "Ошибка восстановления"),
+        _ExceptionRule(
+        ConfigurationError,
+        3,
+        "Ошибка конфигурации",
+        _MachineError(
+            "configuration_error", "configuration_error", "Недопустимая конфигурация."
+        ),
+    ),
+        _ExceptionRule(
+        KeystoreError,
+        4,
+        "Ошибка keystore",
+        _MachineError(
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        ),
+    ),
+        _ExceptionRule(
+            RestoreStrictError,
+            5,
+            "Строгий отказ по токенам",
+            _MachineError(
+                "strict_restore_error",
+                "restore_error",
+                "Строгое восстановление отклонено.",
+            ),
+        ),
+        _ExceptionRule(
+            RestoreError,
+            3,
+            "Ошибка восстановления",
+            _MachineError(
+                "restore_error", "restore_error", "Восстановление не выполнено."
+            ),
+        ),
     )
 
     try:
@@ -536,12 +615,24 @@ def _cmd_key_create(args: argparse.Namespace) -> int:
     from privacy_gateway.keystore import KeyExistsError, KeystoreError, create_key
 
     rules: tuple[_ExceptionRule, ...] = (
-        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+        _ExceptionRule(
+        KeystoreError,
+        4,
+        "Ошибка keystore",
+        _MachineError(
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        ),
+    ),
     )
 
     try:
         create_key(force=args.force)
     except KeyExistsError:
+        _record_machine_error(
+            "key_exists", "keystore_error", "Ключ уже существует."
+        )
         # Фиксированное безопасное сообщение без str(exc).
         print(
             "Ключ уже существует. Используйте --force для перезаписи "
@@ -562,7 +653,16 @@ def _cmd_key_status(_args: argparse.Namespace) -> int:
     from privacy_gateway.keystore import KeystoreError, key_exists
 
     rules: tuple[_ExceptionRule, ...] = (
-        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+        _ExceptionRule(
+        KeystoreError,
+        4,
+        "Ошибка keystore",
+        _MachineError(
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        ),
+    ),
     )
 
     try:
@@ -573,6 +673,9 @@ def _cmd_key_status(_args: argparse.Namespace) -> int:
     if exists:
         print("Ключ присутствует в keyring.")
     else:
+        _record_machine_error(
+            "key_not_found", "keystore_error", "Ключ не найден."
+        )
         print("Ключ не найден. Запустите 'pgw key create'.", file=sys.stderr)
         return 3
     return 0
@@ -588,8 +691,18 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
             KeyNotFoundError,
             4,
             "Ключ не найден. Запустите 'pgw key create' сначала. Детали",
+            _MachineError("key_not_found", "keystore_error", "Ключ не найден."),
         ),
-        _ExceptionRule(KeystoreError, 4, "Ошибка keystore"),
+        _ExceptionRule(
+        KeystoreError,
+        4,
+        "Ошибка keystore",
+        _MachineError(
+            "keystore_error",
+            "keystore_error",
+            "Операция с хранилищем ключей не выполнена.",
+        ),
+    ),
     )
 
     try:
@@ -684,10 +797,28 @@ def _run_json_command(args: argparse.Namespace) -> int:
 
     captured_stdout = StringIO()
     captured_stderr = StringIO()
+    machine_errors: list[_MachineError] = []
+    sink_token = _MACHINE_ERROR_SINK.set(machine_errors)
     try:
-        with redirect_stdout(captured_stdout), redirect_stderr(captured_stderr):
-            exit_code = _dispatch(args)
-    except Exception:  # noqa: BLE001
+        try:
+            with redirect_stdout(captured_stdout), redirect_stderr(captured_stderr):
+                exit_code = _dispatch(args)
+        except Exception:  # noqa: BLE001
+            _emit_json_error(
+                command,
+                "internal_error",
+                "internal_error",
+                "Внутренняя ошибка.",
+            )
+            return 1
+    finally:
+        _MACHINE_ERROR_SINK.reset(sink_token)
+
+    if exit_code == 0:
+        _emit_json_success(command, _json_success_result(command, args))
+        return 0
+
+    if len(machine_errors) != 1:
         _emit_json_error(
             command,
             "internal_error",
@@ -696,14 +827,13 @@ def _run_json_command(args: argparse.Namespace) -> int:
         )
         return 1
 
-    if exit_code == 0:
-        _emit_json_success(command, _json_success_result(command, args))
-        return 0
-
-    code, error_type, message = _json_error_details(
-        command, exit_code, captured_stderr.getvalue()
+    machine_error = machine_errors[0]
+    _emit_json_error(
+        command,
+        machine_error.code,
+        machine_error.public_type,
+        machine_error.safe_message,
     )
-    _emit_json_error(command, code, error_type, message)
     return exit_code
 
 
