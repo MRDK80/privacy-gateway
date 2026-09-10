@@ -671,3 +671,8 @@ Migration существующих установок: глубокая исто
 | Logical / API | `get_all_keys()` -> не более `[active, retired]`, дедуплицировано | немедленно, всегда |
 | Physical legacy / partial failure | `fernet_key_retired` может содержать несколько ключей | до успешного prune: legacy-установка, отказ prune, verification failure |
 | Physical post-prune | `fernet_key_retired` содержит ровно один ключ | после успешной явной ротации с завершённым prune |
+
+
+## Машиночитаемый CLI [#150]
+
+Префикс `pgw --json` включает envelope версии `1.0` для `prepare`, `restore`, `key create`, `key status` и `key rotate`. Контракт, machine codes и безопасное требование `restore --json --out` определены в [ADR-150](ADR-150-cli-json-contract.md). Library API не меняется.
