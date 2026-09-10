@@ -342,11 +342,33 @@ _INTROSPECTION_DOCS = (
 )
 
 
+_ACTIVE_INTROSPECTION_DOCS = (
+    "AGENTS.md",
+    "docs/ARCHITECTURE.md",
+    "examples/06_cli_round_trip.md",
+)
+
+
+def _collapsed(relative: str) -> str:
+    """Текст документа с нормализованными пробелами и переводами строк."""
+    return " ".join((_DOCS_ROOT / relative).read_text(encoding="utf-8").split())
+
+
 def test_documentation_references_introspection_invocation() -> None:
-    """Активные документы описывают вызов и не обещают отсутствующих команд."""
+    """Документы описывают фактический вызов интроспекции."""
     for relative in _INTROSPECTION_DOCS:
         text = (_DOCS_ROOT / relative).read_text(encoding="utf-8")
         assert "--describe" in text, relative
+
+
+def test_active_introspection_docs_do_not_promise_key_delete() -> None:
+    """Активные документы не обещают отсутствующую CLI-команду удаления ключа.
+
+    Исторические ADR в docs/DECISIONS.md не переписываются (ADR-47), поэтому
+    реестр решений в этот набор не входит.
+    """
+    for relative in _ACTIVE_INTROSPECTION_DOCS:
+        text = (_DOCS_ROOT / relative).read_text(encoding="utf-8")
         assert "pgw key delete" not in text, relative
 
 
@@ -374,5 +396,6 @@ def test_agent_example_documents_safe_introspection() -> None:
         encoding="utf-8"
     )
     assert "pgw --describe" in text
-    assert "не обращается к keyring" in text
     assert "(../docs/ADR-151-cli-introspection.md)" in text
+    collapsed = _collapsed("examples/06_cli_round_trip.md")
+    assert "не обращается к keyring и не создаёт файлов" in collapsed
