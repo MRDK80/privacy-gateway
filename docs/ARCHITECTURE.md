@@ -676,3 +676,25 @@ Migration существующих установок: глубокая исто
 ## Машиночитаемый CLI [#150]
 
 Префикс `pgw --json` включает envelope версии `1.0` для `prepare`, `restore`, `key create`, `key status` и `key rotate`. Контракт, machine codes и безопасное требование `restore --json --out` определены в [ADR-150](ADR-150-cli-json-contract.md). Library API не меняется.
+## Машиночитаемая интроспекция CLI [#151]
+
+`pgw --describe` печатает JSON-каталог CLI-контракта: команды и подкоманды,
+параметры с признаком обязательности, машинными типами и допустимыми
+значениями, поддерживаемые форматы вывода, side effects, применимые process
+exit codes и стабильные machine error codes. Каталог имеет собственное поле
+`schema_version` и отдельно публикует `operational_json_schema_version`
+операционного JSON-режима.
+
+Каталог собирается из фактического `argparse`-parser, структурированного
+реестра global pre-parser controls (`--json`, `--describe`), а также из
+`_JSON_COMMANDS` и `_JSON_ERROR_CODES`. Расхождение каталога с реализацией
+обнаруживается contract-тестами `tests/test_cli_introspection.py`.
+
+Интроспекция не выполняет операционные команды, не обращается к keyring, не
+создаёт workspace и не пишет пользовательские файлы. Каталог не содержит
+ключевого материала, локальных абсолютных путей, значений окружения и
+backend-идентификаторов. `detect` указан как команда без JSON-режима, а для
+`restore` каталог отражает требование `--out` в JSON-режиме.
+
+Детали, versioning и ограничения первой версии:
+[ADR-151](ADR-151-cli-introspection.md).

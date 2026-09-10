@@ -215,3 +215,44 @@ pgw --json restore ./pgw_demo/response.txt \
 `route.json`, `manifest.json` или восстановленный файл провайдеру нельзя.
 Контракт описан в
 [`docs/ADR-150-cli-json-contract.md`](../docs/ADR-150-cli-json-contract.md).
+## Машиночитаемый каталог для агента
+
+До первого операционного вызова агент может получить фактический CLI-контракт
+без парсинга help:
+
+```bash
+pgw --describe
+```
+
+Вывод — один JSON object: команды, параметры с признаком обязательности,
+машинные типы, допустимые значения, форматы вывода, side effects, process exit
+codes и machine error codes.
+
+Безопасный сценарий использования — выбрать команды, поддерживающие
+JSON-режим, до запуска операционного вызова:
+
+```bash
+pgw --describe > ./pgw_demo/catalog.json
+python - <<'PY'
+import json
+
+with open("./pgw_demo/catalog.json", encoding="utf-8") as handle:
+    catalog = json.load(handle)
+
+print(catalog["schema_version"], catalog["kind"])
+for command in catalog["commands"]:
+    if "json" in command["output_formats"]:
+        print(command["id"], command["json_mode_requires"])
+PY
+```
+
+`pgw --describe` не читает `request.txt`, `route.json` и `manifest.json`, не
+обращается к keyring и не создаёт файлов, поэтому его можно выполнять до
+`pgw key create`. Каталог не содержит ключевого материала, исходных значений,
+локальных абсолютных путей и значений окружения. Повторный вызов на той же
+версии кода даёт побайтово одинаковый результат.
+
+Каталог отражает фактическое состояние: `detect` работает только в
+человекочитаемом режиме, а `restore` в JSON-режиме требует `--out`. Контракт
+каталога описан в
+[`docs/ADR-151-cli-introspection.md`](../docs/ADR-151-cli-introspection.md).

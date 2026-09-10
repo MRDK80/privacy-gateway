@@ -23,6 +23,13 @@
 Публичный CLI — консольный скрипт `pgw`, объявленный как `privacy_gateway.cli:main`.
 JSON-контракт operational commands задан в [`docs/ADR-150-cli-json-contract.md`](docs/ADR-150-cli-json-contract.md); не дублируй его envelope и machine codes.
 
+Машиночитаемая интроспекция CLI выполняется командой `pgw --describe`: она
+печатает каталог команд, параметров, форматов вывода, process exit codes и
+machine codes. Контракт каталога задан в
+[`docs/ADR-151-cli-introspection.md`](docs/ADR-151-cli-introspection.md).
+Каталог формируется из фактического parser, поэтому не копируй его содержимое
+в документацию и не поддерживай параллельный список команд вручную.
+
 Остальные модули — internal implementation details: `pipeline`, `detector`, `tokenizer`, `manifest`, `restore`, `routing`, `crypto`, `keystore`, `validator`, `context_trust`, `publish`, `input_parser`, `models`. Не документируй их как публичный контракт и не считай стабильными.
 
 `keystore.delete_key()` — library-only low-level Python API внутреннего модуля,
@@ -151,6 +158,19 @@ pgw key rotate
 предупреждения (ADR-16). Путь `manifest.json` разрешается относительно каталога
 `route.json`, если не задан явно (ADR-15). Позиционный аргумент `-` означает
 stdin.
+
+Машиночитаемый вид того же контракта:
+
+```bash
+pgw --describe
+```
+
+Вызов печатает один JSON object и не имеет побочных эффектов: он не читает
+пользовательские файлы, `route.json` и `manifest.json`, не обращается к
+keyring и не выполняет операционные команды. Вывод детерминирован при
+неизменной версии кода. Лишние аргументы после `--describe` дают код `3`.
+`--describe` является pre-parser control, поэтому существующий
+человекочитаемый help не изменяется.
 
 Не добавляй, не переименовывай и не удаляй команды, подкоманды и опции без отдельного решения, ADR и contract tests.
 

@@ -1415,3 +1415,68 @@ CI matrix, feature #41.
 **Статус:** действует.
 
 ---
+## ADR-151. Машиночитаемая интроспекция CLI-контракта (#151)
+
+Дата: 2026-09-10. Дополняет ADR-150; исторические ADR не переписываются.
+
+### Контекст
+
+AI-агентам и автоматизации требуется фактический CLI-контракт без парсинга
+README и человекочитаемого help. Операционный JSON-режим ADR-150 описывает
+результат выполнения команды, но не структуру интерфейса.
+
+Измерения на ревизии roadmap-ветки перед реализацией: `pgw --help` и
+`pgw --json --help` дают побайтово одинаковый stdout (sha256
+`4a3f6f5f6019bd94ed104cb916ab199451f93569a2edfb4e66962314dd37ea31`), help
+каждой подкоманды совпадает с её вариантом под префиксом `--json`, а вызовы
+`pgw --describe`, `pgw describe` и `pgw commands --json` завершались кодом 3 с
+пустым stdout.
+
+### Решение
+
+1. Интроспекция вызывается как `pgw --describe` — pre-parser control рядом с
+   `--json`, обрабатываемый до `argparse`. Вариант `describe` как argparse
+   subcommand отклонён: он изменил бы список подкоманд внутри `pgw --help` и
+   нарушил критерий неизменности help. Вариант `pgw commands --json` требует
+   двух изменений контракта одновременно.
+2. Каталог — один JSON object с полями `schema_version` (`1.0`), `kind`
+   (`cli_catalog`), `program`, `operational_json_schema_version`,
+   `global_controls`, `exit_codes`, `machine_error_codes`,
+   `cli_level_machine_error_codes`, `side_effect_values` и `commands`. Версия
+   каталога не смешивается ни с версией пакета, ни с версией envelope ADR-150.
+3. Источники истины: синтаксис и параметры — фактический
+   `argparse.ArgumentParser`; pre-parser controls — типизированный реестр
+   рядом с реализацией; JSON-поддержка — `_JSON_COMMANDS`; machine codes —
+   `_JSON_ERROR_CODES`; exit codes — единый реестр 0–5 без новых значений;
+   side effects и применимость кодов — небольшой typed registry.
+4. Defaults публикуются по allowlist: только `false` для boolean-флагов,
+   остальные значения — `null`. Локальные пути, cwd, home, environment,
+   keyring metadata и repr внутренних объектов не публикуются.
+5. Вызов не имеет операционных побочных эффектов и детерминирован побайтово
+   при неизменной версии кода.
+
+### Последствия
+
+- `pgw --help`, help подкоманд, human stdout/stderr, process exit codes и
+  операционный JSON ADR-150 не изменяются.
+- Добавлен `tests/test_cli_introspection.py`: эквивалентность parser и
+  каталога, реестры JSON-команд, machine codes и exit codes, стабильный
+  side-effect enum, отсутствие доступа к keyring и dispatch, отсутствие утечек
+  и детерминированность вывода; искусственное расхождение parser и каталога
+  приводит к падению тестов.
+- Агентам не требуется парсить help; ручной параллельный список команд в
+  документации запрещён.
+
+### Границы
+
+Не входит: генерация MCP tools, исполнение команд через каталог, shell
+completion, TTY auto-detection, NDJSON, streaming, JSON-режим для `detect`,
+изменения Library API, новые process exit codes, изменение существующего help,
+изменение envelope ADR-150, version bump и release-операции. Применимость
+machine codes и exit codes к отдельным командам в первой версии курируется в
+typed registry: тесты доказывают включение в глобальные реестры и полноту
+объединения, но не выводят эти списки автоматически из кода команд.
+
+**Статус:** действует.
+
+---
