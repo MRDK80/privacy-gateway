@@ -144,3 +144,48 @@ argparse-default этих параметров равен `None`.
 - Каталог не описывает library API, MCP tools, shell completion и NDJSON.
 - JSON-режим для `detect` не добавляется; в каталоге он честно указан как
   `output_formats: ["human"]`.
+## Дополнение от 2026-09-10: usage-семантика exit codes (corrective)
+
+Первая версия каталога перечисляла process exit codes команды вручную в
+`_COMMAND_FACTS`. Это привело к доказанному расхождению: запись `key rotate`
+публиковала `exit_codes = [0, 1, 4]` и одновременно machine code
+`invalid_arguments`, тогда как malformed invocation
+`pgw --json key rotate --unexpected` фактически завершается кодом 3.
+
+Решение:
+
+1. Usage error argparse — общая семантика каждой конечной команды, а не
+   свойство отдельной команды. Каталог формирует её автоматически.
+2. `_USAGE_EXIT_CODE = 3` добавляется к `exit_codes` каждой конечной
+   команды при построении каталога.
+3. `_USAGE_MACHINE_ERROR_CODE = "invalid_arguments"` автоматически
+   добавляется в `machine_error_codes` каждой команды, поддерживающей
+   JSON-режим.
+4. `detect` публикует exit code 3, но не публикует machine codes: JSON-режим
+   для него не поддержан, поэтому `unsupported_command` относится к уровню
+   CLI, а не к команде.
+5. `_COMMAND_FACTS` содержат только операционные коды и не дублируют
+   universal usage-семантику; contract test запрещает присутствие
+   `invalid_arguments` в typed registry.
+
+Проверки:
+
+- parameterized test выполняет malformed human invocation для всех шести
+  конечных команд и требует exit 3 и наличия кода 3 в каталоге;
+- parameterized test выполняет malformed JSON invocation для всех пяти
+  JSON-supported команд и сверяет exit code, machine code, command ID,
+  пустой stderr и содержимое catalog entry;
+- отдельный regression test закрывает исходный случай
+  `pgw --json key rotate --unexpected`;
+- semantic invariant: наличие `invalid_arguments` в каталоге требует
+  присутствия exit code 3;
+- покрытие проверяется сверкой набора argv с фактическим обходом parser и с
+  `_JSON_COMMANDS`, поэтому новая команда не останется без теста.
+
+Registry больше не проверяет сам себя: источником истины для exit code
+выступает фактический вызов CLI.
+
+`schema_version` каталога остаётся `1.0`: набор полей и их типы не
+изменились, изменилось только содержимое отдельных значений, которое ранее
+расходилось с фактическим поведением. Process exit codes продуктом не
+добавлялись и не изменялись; operational JSON контракт ADR-150 не менялся.
