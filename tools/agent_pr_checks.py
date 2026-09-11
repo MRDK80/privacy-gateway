@@ -41,6 +41,8 @@ PRIVATE_PATTERNS = (
     "controller-notes/",
     "pending-lessons/",
     "known-pitfalls/",
+    "usage-metrics/",
+    "config.local/",
 )
 EXIT_CODES = {
     "OK": 0,

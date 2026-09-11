@@ -136,12 +136,28 @@ def test_protected_path_requires_human_approval() -> None:
 
 
 def test_private_artifact_is_blocked_before_ci() -> None:
+    private_paths = (
+        "raw-retrospectives/run.json",
+        "known-pitfalls/pending.json",
+        "usage-metrics/run.json",
+        "config.local/agent.json",
+    )
+    for private_path in private_paths:
+        client = FakeGitHub(
+            [[_check("CI", "SUCCESS")]],
+            files=[{"path": private_path}],
+        )
+        result = checks.verify(_options(), client)
+        assert result.machine_code == "PRIVATE_ARTIFACT"
+
+
+def test_public_synthetic_fixture_is_not_treated_as_private() -> None:
     client = FakeGitHub(
         [[_check("CI", "SUCCESS")]],
-        files=[{"path": "raw-retrospectives/run.json"}],
+        files=[{"path": "tests/fixtures/synthetic-retrospective.json"}],
     )
     result = checks.verify(_options(), client)
-    assert result.machine_code == "PRIVATE_ARTIFACT"
+    assert result.machine_code == "OK"
 
 
 def test_failure_evidence_keeps_link_but_not_untrusted_description() -> None:
