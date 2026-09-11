@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MRDK80/privacy-gateway/docs/schemas/controller-verdict.schema.json",
+  "title": "Privacy Gateway controller verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "role", "task_issue", "base_sha", "head_sha", "review_basis", "verdict", "repair_iteration", "escalation_reason", "blocking_findings", "notes"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "role": {"const": "controller"},
+    "task_issue": {"type": "integer", "minimum": 1},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "review_basis": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trust_source_kind", "head_policy_applied", "executor_self_assessment_treated_as_evidence_only"],
+      "properties": {
+        "trust_source_kind": {"enum": ["base_sha", "local_read_only_bundle"]},
+        "head_policy_applied": {"const": false},
+        "executor_self_assessment_treated_as_evidence_only": {"const": true}
+      }
+    },
+    "verdict": {"enum": ["PASS", "PASS_WITH_NOTES", "FAIL_RETRY", "FAIL_ESCALATE"]},
+    "repair_iteration": {"type": "integer", "minimum": 0, "maximum": 2},
+    "escalation_reason": {
+      "type": ["string", "null"],
+      "enum": [null, "policy_change", "permissions_change", "approval_gate_change", "trust_source_change", "ambiguous_requirement", "scope_change", "budget_exhausted"]
+    },
+    "blocking_findings": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["severity", "requirement", "evidence", "required_fix"],
+        "properties": {
+          "severity": {"enum": ["critical", "high", "medium", "low"]},
+          "requirement": {"type": "string", "minLength": 1},
+          "location": {
+            "type": "object", "additionalProperties": false,
+            "required": ["file"],
+            "properties": {"file": {"type": "string", "minLength": 1}, "line": {"type": "integer", "minimum": 1}}
+          },
+          "evidence": {"type": "string", "minLength": 1},
+          "required_fix": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  },
+  "allOf": [
+    {"if": {"properties": {"verdict": {"enum": ["PASS", "PASS_WITH_NOTES"]}}}, "then": {"properties": {"blocking_findings": {"maxItems": 0}, "escalation_reason": {"const": null}}}},
+    {"if": {"properties": {"verdict": {"enum": ["FAIL_RETRY"]}}}, "then": {"properties": {"blocking_findings": {"minItems": 1}, "escalation_reason": {"const": null}}}},
+    {"if": {"properties": {"verdict": {"enum": ["FAIL_ESCALATE"]}}}, "then": {"properties": {"blocking_findings": {"minItems": 1}, "escalation_reason": {"type": "string"}}}}
+  ]
+}
