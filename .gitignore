@@ -10,6 +10,12 @@ local/
 secrets/
 keys/
 private/
+.agent-private/
+.agent-logs/
+agent-memory/
+raw-retrospectives/
+controller-notes/
+pending-lessons/
 dictionaries.local/
 config.local/
 
