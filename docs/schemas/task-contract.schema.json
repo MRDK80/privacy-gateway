@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MRDK80/privacy-gateway/docs/schemas/task-contract.schema.json",
+  "title": "Privacy Gateway agent task contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "task", "git", "scope", "permissions", "budget", "required_checks", "trust_source"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "task": {
+      "type": "object", "additionalProperties": false,
+      "required": ["issue", "epic", "acceptance_criteria"],
+      "properties": {
+        "issue": {"type": "integer", "minimum": 1},
+        "epic": {"type": "integer", "minimum": 1},
+        "acceptance_criteria": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "git": {
+      "type": "object", "additionalProperties": false,
+      "required": ["base_ref", "base_sha", "head_ref", "head_sha"],
+      "properties": {
+        "base_ref": {"type": "string", "pattern": "^roadmap/"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "head_ref": {"type": "string", "minLength": 1},
+        "head_sha": {"type": ["string", "null"], "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["allowed_paths", "excluded_changes"],
+      "properties": {
+        "allowed_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "excluded_changes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "permissions": {
+      "type": "object", "additionalProperties": false,
+      "required": ["allowed_tools", "workspace_write", "external_write", "commit", "push", "merge"],
+      "properties": {
+        "allowed_tools": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "workspace_write": {"type": "boolean"},
+        "external_write": {"const": false},
+        "commit": {"type": "boolean"},
+        "push": {"type": "boolean"},
+        "merge": {"const": false}
+      }
+    },
+    "budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_minutes", "max_repair_iterations", "max_report_chars"],
+      "properties": {
+        "max_minutes": {"type": "integer", "minimum": 1},
+        "max_repair_iterations": {"type": "integer", "minimum": 0, "maximum": 2},
+        "max_report_chars": {"type": "integer", "minimum": 1}
+      }
+    },
+    "required_checks": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "trust_source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "pinned_before_head_checkout"],
+      "properties": {
+        "kind": {"enum": ["base_sha", "local_read_only_bundle"]},
+        "pinned_before_head_checkout": {"const": true}
+      }
+    }
+  }
+}
