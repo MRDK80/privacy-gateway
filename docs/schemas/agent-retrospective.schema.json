@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MRDK80/privacy-gateway/docs/schemas/agent-retrospective.schema.json",
+  "title": "Private agent task retrospective",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_id", "recorded_at", "task_issue", "epic_issue", "task_class", "base_sha", "head_sha", "duration_seconds", "executor_calls", "controller_calls", "iterations", "repair_loops", "verdicts", "failures", "false_positives", "manual_interventions", "findings", "usage"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "record_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "recorded_at": {"type": "string", "minLength": 1},
+    "task_issue": {"type": "integer", "minimum": 1},
+    "epic_issue": {"type": "integer", "minimum": 1},
+    "task_class": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "duration_seconds": {"type": "integer", "minimum": 0},
+    "executor_calls": {"type": "integer", "minimum": 0},
+    "controller_calls": {"type": "integer", "minimum": 0},
+    "iterations": {"type": "integer", "minimum": 0},
+    "repair_loops": {"type": "integer", "minimum": 0, "maximum": 2},
+    "verdicts": {"type": "array", "minItems": 1, "items": {"enum": ["PASS", "PASS_WITH_NOTES", "FAIL_RETRY", "FAIL_ESCALATE"]}},
+    "failures": {"type": "array", "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$"}},
+    "false_positives": {"type": "integer", "minimum": 0},
+    "manual_interventions": {"type": "integer", "minimum": 0},
+    "findings": {"type": "integer", "minimum": 0},
+    "usage": {
+      "type": "object", "additionalProperties": false, "required": ["source", "units"],
+      "properties": {
+        "source": {"enum": ["unavailable", "provider", "host"]},
+        "units": {"type": ["integer", "null"], "minimum": 0}
+      }
+    }
+  }
+}

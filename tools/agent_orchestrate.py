@@ -16,6 +16,21 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, cast
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.agent_memory import (  # noqa: E402
+    MemoryError as AgentMemoryError,
+)
+from tools.agent_memory import (
+    RetrospectiveStore,
+    Usage,
+    new_record,
+)
+from tools.agent_memory import (
+    default_directory as default_memory_directory,
+)
+
 SCHEMA_VERSION = "1.0"
 MAX_CAPTURE_CHARS = 200_000
 POLICY_FILES = (
@@ -72,6 +87,7 @@ class TaskContract:
     base_sha: str
     head_ref: str
     allowed_paths: tuple[str, ...]
+    task_class: str = "unspecified"
     max_minutes: int = 60
     max_repair_iterations: int = 2
     max_report_chars: int = 20_000
@@ -140,6 +156,7 @@ def build_contract(
     head_ref: str,
     root: Path,
     allowed_paths: Sequence[str] = (".",),
+    task_class: str = "unspecified",
     max_minutes: int = 60,
     max_repair_iterations: int = 2,
     max_report_chars: int = 20_000,
@@ -166,6 +183,7 @@ def build_contract(
         base_sha=base_sha,
         head_ref=head_ref,
         allowed_paths=tuple(allowed_paths),
+        task_class=task_class,
         max_minutes=max_minutes,
         max_repair_iterations=max_repair_iterations,
         max_report_chars=max_report_chars,
@@ -455,6 +473,8 @@ def run(
     storage: StateStore,
     adapter: AgentAdapter,
     gate: Gate | None = None,
+    memory: RetrospectiveStore | None = None,
+    usage: Usage = Usage(),
 ) -> RunResult:
     """Run or safely resume the bounded executor/gate/controller loop."""
     try:
@@ -479,14 +499,68 @@ def run(
         else time.monotonic()
     )
     repairs = int(previous.get("repair_iterations", 0)) if previous else 0
+    executor_calls = int(previous.get("executor_calls", 0)) if previous else 0
+    controller_calls = int(previous.get("controller_calls", 0)) if previous else 0
+    findings = int(previous.get("findings", 0)) if previous else 0
+    verdicts: list[str] = list(previous.get("verdicts", [])) if previous else []
+    failures: list[str] = list(previous.get("failures", [])) if previous else []
+    head_sha_for_memory = contract.base_sha
+    memory_store = memory or RetrospectiveStore(
+        storage.directory.parent / "agent-memory", root
+    )
 
     def finish(status: str, machine_code: str) -> RunResult:
         result = RunResult(status, machine_code, repairs, run_id)
-        storage.save(run_key, {**asdict(result), "terminal": True, "started": started})
+        final_verdicts = list(verdicts)
+        if status in {"PASS", "PASS_WITH_NOTES", "FAIL_ESCALATE"} and (
+            not final_verdicts or final_verdicts[-1] != status
+        ):
+            final_verdicts.append(status)
+        final_failures = list(failures)
+        if machine_code != "OK":
+            final_failures.append(machine_code)
+        try:
+            memory_store.append(
+                new_record(
+                    record_id=run_id,
+                    task_issue=contract.issue,
+                    epic_issue=contract.epic,
+                    task_class=contract.task_class,
+                    base_sha=contract.base_sha,
+                    head_sha=head_sha_for_memory,
+                    duration_seconds=max(0, int(time.monotonic() - started)),
+                    executor_calls=executor_calls,
+                    controller_calls=controller_calls,
+                    iterations=controller_calls,
+                    repair_loops=repairs,
+                    verdicts=tuple(final_verdicts or ("FAIL_ESCALATE",)),
+                    failures=tuple(final_failures),
+                    false_positives=0,
+                    manual_interventions=0,
+                    findings=findings,
+                    usage=usage,
+                )
+            )
+        except AgentMemoryError:
+            result = RunResult("FAIL_ESCALATE", "MEMORY_WRITE_FAILED", repairs, run_id)
+        storage.save(
+            run_key,
+            {
+                **asdict(result),
+                "terminal": True,
+                "started": started,
+                "executor_calls": executor_calls,
+                "controller_calls": controller_calls,
+                "findings": findings,
+                "verdicts": final_verdicts,
+                "failures": final_failures,
+            },
+        )
         return result
 
     try:
         head_sha = _head_sha(root, contract)
+        head_sha_for_memory = head_sha
         _assert_private_artifacts_safe(root)
         paths = _changed_files(root, contract)
         _assert_scope(paths, contract)
@@ -496,6 +570,7 @@ def run(
             if time.monotonic() - started > contract.max_minutes * 60:
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
             executor_session = uuid.uuid4().hex
+            executor_calls += 1
             report = adapter.execute(
                 {
                     "contract": asdict(contract),
@@ -513,6 +588,7 @@ def run(
             _assert_scope(paths, contract)
             gate_result = gate_runner(contract)
             if gate_result.get("status") != "passed":
+                failures.append(str(gate_result.get("machine_code", "GATE_FAILED")))
                 if repairs >= contract.max_repair_iterations:
                     return finish("FAIL_ESCALATE", "GATE_FAILED")
                 repairs += 1
@@ -525,11 +601,17 @@ def run(
                         "terminal": False,
                         "status": "running",
                         "machine_code": "GATE_FAILED",
+                        "executor_calls": executor_calls,
+                        "controller_calls": controller_calls,
+                        "findings": findings,
+                        "verdicts": verdicts,
+                        "failures": failures,
                     },
                 )
                 continue
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
+            controller_calls += 1
             verdict_payload = adapter.review(
                 {
                     "issue": contract.issue,
@@ -544,6 +626,8 @@ def run(
                 controller_session,
             )
             verdict = _validate_verdict(verdict_payload, contract, head_sha)
+            verdicts.append(verdict)
+            findings += len(verdict_payload["blocking_findings"])
             if verdict in {"PASS", "PASS_WITH_NOTES"}:
                 return finish(verdict, "OK")
             if verdict == "FAIL_ESCALATE" or repairs >= contract.max_repair_iterations:
@@ -558,6 +642,11 @@ def run(
                     "terminal": False,
                     "status": "running",
                     "machine_code": "REPAIR_REQUIRED",
+                    "executor_calls": executor_calls,
+                    "controller_calls": controller_calls,
+                    "findings": findings,
+                    "verdicts": verdicts,
+                    "failures": failures,
                 },
             )
     except OrchestrationError as error:
@@ -657,7 +746,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-minutes", type=int, default=60)
     parser.add_argument("--max-repairs", type=int, default=2)
     parser.add_argument("--max-report-chars", type=int, default=20_000)
+    parser.add_argument("--task-class", default="unspecified")
     parser.add_argument("--storage", type=Path)
+    parser.add_argument("--memory-storage", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help=argparse.SUPPRESS)
     return parser
@@ -677,6 +768,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_minutes=args.max_minutes,
             max_repair_iterations=args.max_repairs,
             max_report_chars=args.max_report_chars,
+            task_class=args.task_class,
         )
         if args.dry_run:
             _head_sha(args.root, contract)
@@ -703,8 +795,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             root=args.root,
             storage=StateStore(args.storage) if args.storage else default_storage(),
             adapter=adapter,
+            memory=RetrospectiveStore(
+                args.memory_storage or default_memory_directory(), args.root
+            ),
         )
-    except OrchestrationError as error:
+    except (OrchestrationError, AgentMemoryError) as error:
         result = RunResult("FAIL_ESCALATE", error.machine_code, 0, "not-started")
     print(json.dumps(asdict(result), sort_keys=True))
     return 0 if result.status in {"PASS", "PASS_WITH_NOTES"} else 20
