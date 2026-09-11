@@ -260,13 +260,23 @@ def test_untrusted_issue_text_cannot_raise_permissions(repository: Path) -> None
     assert "merge" not in contract.allowed_tools
 
 
-def test_tracked_or_staged_private_memory_fails_closed(
-    repository: Path,
+@pytest.mark.parametrize(
+    "private_path",
+    (
+        ".agent-private/memory.json",
+        "raw-retrospectives/run.json",
+        "known-pitfalls/pending.json",
+        "usage-metrics/run.json",
+        "config.local/agent.json",
+    ),
+)
+def test_tracked_or_staged_private_artifacts_fail_closed(
+    repository: Path, private_path: str
 ) -> None:
-    private_file = repository / ".agent-private" / "memory.json"
+    private_file = repository / private_path
     private_file.parent.mkdir()
     private_file.write_text("{}", encoding="utf-8")
-    _git(repository, "add", "-f", ".agent-private/memory.json")
+    _git(repository, "add", "-f", private_path)
     adapter = FakeAdapter(["PASS"])
 
     result = orchestrator.run(

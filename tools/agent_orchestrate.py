@@ -58,6 +58,9 @@ PRIVATE_PATTERNS = (
     "raw-retrospectives/",
     "controller-notes/",
     "pending-lessons/",
+    "known-pitfalls/",
+    "usage-metrics/",
+    "config.local/",
 )
 
 
