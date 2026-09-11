@@ -168,6 +168,31 @@ def test_happy_path_uses_independent_sessions_and_minimal_review_input(
     assert "executor_report" not in adapter.controller_requests[0]
 
 
+def test_terminal_run_writes_one_observable_private_retrospective(
+    repository: Path,
+) -> None:
+    contract = _contract(repository)
+    private = repository.parent / "retrospectives"
+    memory = orchestrator.RetrospectiveStore(private, repository)
+
+    result = orchestrator.run(
+        contract,
+        root=repository,
+        storage=_storage(repository),
+        adapter=FakeAdapter(["PASS"]),
+        gate=_passing_gate,
+        memory=memory,
+    )
+
+    records = list(memory.records())
+    assert result.status == "PASS"
+    assert len(records) == 1
+    assert records[0]["iterations"] == 1
+    assert records[0]["executor_calls"] == 1
+    assert records[0]["controller_calls"] == 1
+    assert records[0]["usage"] == {"source": "unavailable", "units": None}
+
+
 def test_gate_failure_does_not_invoke_controller(repository: Path) -> None:
     adapter = FakeAdapter(["PASS"])
 
