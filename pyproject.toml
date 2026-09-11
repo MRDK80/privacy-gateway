@@ -35,8 +35,9 @@ dev = [
   "pytest-cov>=5",
   "ruff>=0.6",
   "mypy>=1.11",
+  "pre-commit>=3.7",
   "detect-secrets>=1.5",
-    "types-PyYAML",
+  "types-PyYAML",
 ]
 
 [project.urls]
