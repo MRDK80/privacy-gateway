@@ -39,10 +39,9 @@
 
 ## Обязательный local quality gate
 
-При первоначальной настройке репозитория выполни `pre-commit install`.
-Перед local gate убедись, что `pre-commit` доступен. Если инструмент
-отсутствует, верни `BLOCKED` и не меняй dependencies без
-отдельной issue. Полный gate обязателен и для documentation-only diff:
+Установи developer-окружение и hooks по канонической инструкции в
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Полный gate обязателен и для
+documentation-only diff:
 
 ```bash
 pytest -q
