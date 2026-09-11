@@ -41,7 +41,7 @@ ROTATION_EXAMPLE = Path("examples") / "05_key_rotation.md"
 LIBRARY_API_DOC = Path("docs") / "LIBRARY_API.md"
 EXAMPLES_INDEX_LINK = "(../examples/README.md)"
 AGENTS_DOC = Path("AGENTS.md")
-AGENTS_MAX_LINES = 500
+AGENTS_MAX_LINES = 150
 AGENTS_GATE_COMMANDS = (
     "pytest -q",
     "ruff check .",
@@ -49,20 +49,36 @@ AGENTS_GATE_COMMANDS = (
     "pre-commit run --all-files",
 )
 AGENTS_ADDITIONAL_CHECKS = ("git diff --check",)
-AGENTS_WORKFLOW_LINKS = (
-    "(.github/workflows/tests.yml)",
-    "(.github/workflows/pre-commit.yml)",
-    "(.github/workflows/main-source-guard.yml)",
-)
 AGENTS_PR_DIRECTIONS = (
     "<task-branch> -> roadmap/<roadmap-issue>-<slug>",
     "roadmap/<roadmap-issue>-<slug> -> main",
 )
 AGENTS_CANONICAL_DOC_LINKS = (
+    "(CONTRIBUTING.md)",
     "(SECURITY.md)",
     "(docs/SECURITY.md)",
     "(docs/ARCHITECTURE.md)",
     "(docs/LIBRARY_API.md)",
+    "(docs/ADR-150-cli-json-contract.md)",
+    "(docs/ADR-151-cli-introspection.md)",
+)
+AGENTS_SENSITIVE_DATA_MARKERS = (
+    "plaintext",
+    "PII",
+    "восстановленные значения",
+    "key material",
+    "manifest.json",
+    "route.json",
+    "чувствительные логи",
+)
+AGENTS_FORBIDDEN_AUTOMATION_MARKERS = (
+    "merge",
+    "закрывай issues",
+    "force push",
+    "tags",
+    "releases",
+    "branch protection",
+    "visibility",
 )
 
 ACTIVE_DOCS = (
@@ -303,17 +319,33 @@ def test_agents_doc_states_allowed_pull_request_directions() -> None:
 
 def test_agents_doc_forbids_task_pull_request_into_main() -> None:
     """AGENTS.md запрещает task PR напрямую в main."""
-    collapsed = re.sub(r"[ \t]+", " ", _agents_text())
-    assert "<task-branch> -> main # запрещено" in collapsed
+    text = _agents_text().replace("`", "")
+    assert re.search(r"<task-branch>\s*->\s*main.{0,40}запрещ", text)
 
 
-def test_agents_doc_marks_key_deletion_as_library_only() -> None:
-    """AGENTS.md отделяет library-only удаление ключа от CLI-подкоманд."""
+def test_agents_doc_uses_cli_introspection_instead_of_command_catalog() -> None:
+    """AGENTS.md направляет к интроспекции и не копирует CLI-каталог."""
     text = _agents_text()
-    assert "keystore.delete_key()" in text
-    assert "library-only" in text
+    assert "pgw --describe" in text
     for name in sorted(EXPECTED_KEY_SUBCOMMANDS):
-        assert f"pgw key {name}" in text, name
+        assert f"pgw key {name}" not in text, name
+
+
+def test_agents_doc_preserves_trust_boundary() -> None:
+    """Краткая policy сохраняет запреты на утечку чувствительных данных."""
+    text = _agents_text().casefold()
+    assert "за trust boundary" in text
+    assert "только защищённый текст" in text
+    assert "не является анонимизацией" in text
+    for marker in AGENTS_SENSITIVE_DATA_MARKERS:
+        assert marker.casefold() in text, marker
+
+
+def test_agents_doc_forbids_dangerous_automation() -> None:
+    """Краткая policy сохраняет запреты на опасные автоматические действия."""
+    text = _agents_text()
+    for marker in AGENTS_FORBIDDEN_AUTOMATION_MARKERS:
+        assert marker in text, marker
 
 
 def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
@@ -323,23 +355,11 @@ def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
         assert link in text, link
 
 
-def test_agents_doc_separates_local_gate_from_github_actions() -> None:
-    """Команды local gate и ссылки GitHub Actions находятся в своих разделах."""
+def test_agents_doc_delegates_detailed_workflow_to_canonical_source() -> None:
+    """AGENTS.md хранит gate, но делегирует подробный workflow."""
     text = _agents_text()
-    local_heading = "## Локальный quality gate"
-    actions_heading = "## GitHub Actions"
-    cli_heading = "## CLI"
-
-    local_start = text.index(local_heading)
-    actions_start = text.index(actions_heading)
-    cli_start = text.index(cli_heading)
-    assert local_start < actions_start < cli_start
-
-    local_section = text[local_start:actions_start]
-    actions_section = text[actions_start:cli_start]
-
     for command in (*AGENTS_GATE_COMMANDS, *AGENTS_ADDITIONAL_CHECKS):
-        assert command in local_section, command
-    for link in AGENTS_WORKFLOW_LINKS:
-        assert link in actions_section, link
-        assert link not in local_section, link
+        assert command in text, command
+    assert "(CONTRIBUTING.md)" in text
+    assert "ubuntu-latest" not in text
+    assert "windows-latest" not in text

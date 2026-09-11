@@ -61,12 +61,13 @@ git clone https://github.com/MRDK80/privacy-gateway.git
 cd privacy-gateway
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
 ```
 
 В Windows PowerShell используйте `py -3.11 -m venv .venv` и
 `.venv\Scripts\Activate.ps1`, далее та же команда установки. Варианты
-окружения и политика поддерживаемых версий Python — в
+developer-окружения, включая единую установку всех инструментов quality gate,
+и политика поддерживаемых версий Python — в
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Первый запуск
