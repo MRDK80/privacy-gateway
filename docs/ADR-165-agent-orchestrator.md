@@ -58,3 +58,60 @@ LLM-провайдеру и не требует реального API в тес
 человеком до запуска.
 
 **Статус:** действует.
+
+## Обновление #180: fail-closed allowlist путей в CLI
+
+`tools.agent_orchestrate` больше не подставляет `allowed_paths=["."]`.
+Причина: широкий default разрешал любой непротектированный путь и переносил
+фактическую защиту scope на post-executor diff, то есть уже после физического
+изменения workspace.
+
+### Контракт CLI
+
+- `--allowed-path PATH` — повторяемый аргумент; задаёт repository-relative
+  файл или каталог.
+- Реальный запуск executor без хотя бы одного `--allowed-path` останавливается
+  до создания adapter с machine code `ALLOWLIST_REQUIRED`.
+- `--dry-run` без allowlist разрешён как диагностика: scope не проверяется и не
+  сужается, поле `scope.mode` равно `unscoped_dry_run`, `scope.enforced` равно
+  `false`, запись state и memory не выполняется.
+- `--dry-run` с allowlist проверяет фактические изменённые файлы против того же
+  нормализованного списка и печатает `scope.mode` равным `explicit`.
+- `build_contract()` по умолчанию получает пустой allowlist; `run()`
+  отказывается стартовать с пустым allowlist до вызова executor.
+
+### Grammar допустимого пути
+
+Принимается непустая строка без ведущих и завершающих пробелов, состоящая из
+segments, разделённых `/`. Завершающий `/` нормализуется. Отклоняются: пустое
+значение, `.`, `..`, любой segment `.`, `..` или пустой, `\` в любой позиции,
+ведущий `/` или `~`, drive-форма `X:`, NUL, значение длиннее 4096 символов.
+Разделителем на Linux и Windows является только `/`.
+
+Каталог в allowlist разрешает себя и всё поддерево; файл разрешает только сам
+файл. Дубликаты удаляются, порядок сохраняется.
+
+### Machine codes
+
+| Code | Причина |
+|---|---|
+| `ALLOWLIST_REQUIRED` | Реальный запуск или `run()` без явного allowlist. |
+| `ALLOWED_PATH_INVALID` | Нарушена grammar пути, включая `.`, `..` и абсолютные формы. |
+| `ALLOWED_PATH_ESCAPES_ROOT` | Реальный путь выходит за repository root, в том числе через symlink. |
+| `ALLOWED_PATH_PROTECTED` | Путь попадает в protected или private policy patterns. |
+| `SCOPE_VIOLATION` | Фактическое изменение вне allowlist после executor. |
+
+Symlink внутри root допускается; symlink, ведущий наружу, отклоняется по
+`os.path.realpath` до запуска executor.
+
+### Security и compatibility
+
+Allowlist не может разрешить `PROTECTED_PATTERNS`, `PRIVATE_PATTERNS` или
+`POLICY_FILES`; post-executor проверка по-прежнему возвращает
+`HEAD_POLICY_CHANGED` для policy surface. Прежний bypass `"." in allowed`
+в `_assert_scope` удалён, поэтому contract со значением `.` больше не
+отключает проверку scope.
+
+Изменение несовместимо намеренно: вызовы `build_contract()` и запуски CLI,
+которые полагались на неявный `.`, теперь останавливаются с ненулевым exit
+code вместо молчаливого получения полного доступа к репозиторию.
