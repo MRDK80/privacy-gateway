@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MRDK80/privacy-gateway/docs/schemas/executor-report.schema.json",
+  "title": "Privacy Gateway executor report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "role", "task_issue", "base_sha", "head_sha", "status", "acceptance_criteria", "changed_files", "checks", "residual_risks", "stop_reason"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "role": {"const": "executor"},
+    "task_issue": {"type": "integer", "minimum": 1},
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "status": {"enum": ["completed", "blocked", "needs_human"]},
+    "acceptance_criteria": {
+      "type": "array", "minItems": 1, "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["requirement", "status", "evidence"],
+        "properties": {
+          "requirement": {"type": "string", "minLength": 1},
+          "status": {"enum": ["met", "not_met", "unknown"]},
+          "evidence": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "changed_files": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "checks": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "status", "machine_code", "exit_code"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "status": {"enum": ["passed", "failed", "not_run"]},
+          "machine_code": {"type": ["string", "null"]},
+          "exit_code": {"type": ["integer", "null"]}
+        }
+      }
+    },
+    "residual_risks": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "stop_reason": {"enum": ["scope_complete", "budget_exhausted", "unsafe_to_continue", "ambiguous_requirement", "human_decision_required"]}
+  }
+}

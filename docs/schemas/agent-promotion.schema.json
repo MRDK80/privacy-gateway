@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/MRDK80/privacy-gateway/docs/schemas/agent-promotion.schema.json",
+  "title": "Sanitized durable-rule promotion candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate_id", "target", "evidence_count", "classified", "sanitized", "secret_privacy_scan_passed", "safe_for_full_disclosure", "independent_review_passed", "trust_source", "head_instructions_applied", "separate_change", "human_approval"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "candidate_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "target": {"enum": ["test", "validator", "policy", "role", "skill", "configuration"]},
+    "evidence_count": {"type": "integer", "minimum": 2},
+    "classified": {"const": true},
+    "sanitized": {"const": true},
+    "secret_privacy_scan_passed": {"const": true},
+    "safe_for_full_disclosure": {"const": true},
+    "independent_review_passed": {"const": true},
+    "trust_source": {"enum": ["base_sha", "local_read_only_bundle"]},
+    "head_instructions_applied": {"const": false},
+    "separate_change": {"const": true},
+    "human_approval": {"type": "boolean"}
+  }
+}

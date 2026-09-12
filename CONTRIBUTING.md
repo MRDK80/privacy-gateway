@@ -144,6 +144,28 @@ pre-commit run --all-files
 - `git diff --check` — полезная дополнительная проверка, но она не заменяет ни одну из четырёх обязательных команд.
 - Если любая из четырёх команд не выполнена или падает, используется `BLOCKED` либо `READY FOR REVIEW WITH EXCEPTIONS` с явным перечислением непройденного.
 
+### Детерминированная проверка task-ветки
+
+Для agent workflow те же проверки объединены проектным инструментом. Запуск
+из корня репозитория перед push:
+
+```bash
+python tools/agent_verify.py pre-push \
+  --base roadmap/162-agent-orchestration \
+  --head build/163-agent-verification-gate
+```
+
+Имена веток в примере заменяются фактическими именами текущей задачи.
+`pre-commit` допускает незакоммиченные изменения и проверяет branch/ancestry и
+diff. `pre-push` требует clean worktree и запускает все четыре обязательные
+команды. После явного push фаза `post-push` дополнительно сравнивает `HEAD` с
+уже имеющимся `origin/<head>`; инструмент не выполняет `fetch` и не доказывает
+свежесть remote-tracking ref. Для машинного результата используется
+`--format json`, для сохранения полного вывода команд — явный `--log-dir`
+вне working tree. Raw logs считаются приватными и не коммитятся.
+Схема, machine codes и exit codes определены в
+[`ADR-163`](docs/ADR-163-agent-verification-gate.md).
+
 ## Exact GitHub CI
 
 После создания PR подтверждаются фактические GitHub check runs для каждой поддерживаемой комбинации:

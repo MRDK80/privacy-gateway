@@ -1,0 +1,6 @@
+{
+  "schema_version": "1.0", "role": "controller", "task_issue": 164,
+  "base_sha": "1111111111111111111111111111111111111111", "head_sha": "2222222222222222222222222222222222222222",
+  "review_basis": {"trust_source_kind": "base_sha", "head_policy_applied": false, "executor_self_assessment_treated_as_evidence_only": true},
+  "verdict": "PASS", "repair_iteration": 0, "escalation_reason": null, "blocking_findings": [], "notes": []
+}

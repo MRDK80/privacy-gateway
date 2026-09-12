@@ -182,6 +182,9 @@ gateway.discard(prepared.context)
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Модель угроз, границы доверия, обращение с ключом |
 | [`docs/detection.md`](docs/detection.md) | Поддерживаемые сущности и ограничения детектора |
 | [`docs/token-format.md`](docs/token-format.md) | Синтаксис токенов, нумерация, поведение при восстановлении |
+| [`docs/agent-contracts.md`](docs/agent-contracts.md) | Роли, trust boundaries и JSON-контракты executor/controller |
+| [`docs/ADR-165-agent-orchestrator.md`](docs/ADR-165-agent-orchestrator.md) | Изолированный budgeted executor-controller loop и fail-closed границы |
+| [`docs/ADR-166-agent-learning-memory.md`](docs/ADR-166-agent-learning-memory.md) | Приватные append-only retrospectives, агрегированные метрики и promotion policy |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Журнал архитектурных решений (ADR) |
 | [`examples/README.md`](examples/README.md) | Индекс воспроизводимых примеров |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Definition of Done, quality gate, модель ветвления |

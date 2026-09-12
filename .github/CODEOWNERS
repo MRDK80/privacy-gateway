@@ -1,0 +1,11 @@
+# Agent instruction and orchestration control surface (#167).
+/AGENTS.md @MRDK80
+/.agents/ @MRDK80
+/.codex/ @MRDK80
+/.github/CODEOWNERS @MRDK80
+/.github/hooks/ @MRDK80
+/.github/workflows/ @MRDK80
+/docs/agent-contracts.md @MRDK80
+/docs/schemas/ @MRDK80
+/tools/agent_orchestrate.py @MRDK80
+/tools/agent_pr_checks.py @MRDK80

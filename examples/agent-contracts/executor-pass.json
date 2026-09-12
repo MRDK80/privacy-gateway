@@ -1,0 +1,9 @@
+{
+  "schema_version": "1.0", "role": "executor", "task_issue": 164,
+  "base_sha": "1111111111111111111111111111111111111111", "head_sha": "2222222222222222222222222222222222222222",
+  "status": "completed",
+  "acceptance_criteria": [{"requirement": "Schemas and examples pass deterministic contract tests.", "status": "met", "evidence": "The focused contract test command exited with code 0."}],
+  "changed_files": ["docs/agent-contracts.md"],
+  "checks": [{"name": "agent verification gate", "status": "passed", "machine_code": "OK", "exit_code": 0}],
+  "residual_risks": [], "stop_reason": "scope_complete"
+}
