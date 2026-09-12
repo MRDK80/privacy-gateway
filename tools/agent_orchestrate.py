@@ -120,6 +120,54 @@ class AgentAdapter(Protocol):
 Gate = Callable[[TaskContract], dict[str, Any]]
 
 
+ALLOWED_PATH_MAX_CHARS = 4096
+
+
+def _denied_scope_path(path: str) -> bool:
+    """Report whether a repository-relative path is never delegable (#180)."""
+    if path == "AGENTS.md" or path.endswith("/AGENTS.md"):
+        return True
+    for pattern in (*PROTECTED_PATTERNS, *PRIVATE_PATTERNS, *POLICY_FILES):
+        bare = pattern.rstrip("/")
+        if path == bare or path.startswith(f"{bare}/"):
+            return True
+    return False
+
+
+def normalize_allowed_path(root: Path, value: str) -> str:
+    """Normalize one repository-relative allowlist entry or fail closed."""
+    if not value or value != value.strip():
+        raise OrchestrationError("ALLOWED_PATH_INVALID")
+    if len(value) > ALLOWED_PATH_MAX_CHARS:
+        raise OrchestrationError("ALLOWED_PATH_INVALID")
+    if "\x00" in value or "\\" in value or value.startswith(("/", "~")):
+        raise OrchestrationError("ALLOWED_PATH_INVALID")
+    if len(value) >= 2 and value[1] == ":":
+        raise OrchestrationError("ALLOWED_PATH_INVALID")
+    segments = value.rstrip("/").split("/")
+    if any(
+        segment in {"", ".", ".."} or segment != segment.strip()
+        for segment in segments
+    ):
+        raise OrchestrationError("ALLOWED_PATH_INVALID")
+    normalized = PurePosixPath("/".join(segments)).as_posix()
+    anchor = Path(os.path.realpath(root))
+    target = Path(os.path.realpath(anchor / normalized))
+    if target == anchor or anchor not in target.parents:
+        raise OrchestrationError("ALLOWED_PATH_ESCAPES_ROOT")
+    if _denied_scope_path(normalized):
+        raise OrchestrationError("ALLOWED_PATH_PROTECTED")
+    return normalized
+
+
+def normalize_allowed_paths(root: Path, values: Sequence[str]) -> tuple[str, ...]:
+    """Normalize the allowlist, preserving order and dropping duplicates."""
+    normalized: list[str] = []
+    for value in values:
+        candidate = normalize_allowed_path(root, value)
+        if candidate not in normalized:
+            normalized.append(candidate)
+    return tuple(normalized)
 def _run(root: Path, command: Sequence[str], timeout: float | None = None) -> str:
     try:
         completed = subprocess.run(
@@ -158,7 +206,7 @@ def build_contract(
     base_ref: str,
     head_ref: str,
     root: Path,
-    allowed_paths: Sequence[str] = (".",),
+    allowed_paths: Sequence[str] = (),
     task_class: str = "unspecified",
     max_minutes: int = 60,
     max_repair_iterations: int = 2,
@@ -185,7 +233,7 @@ def build_contract(
         base_ref=base_ref,
         base_sha=base_sha,
         head_ref=head_ref,
-        allowed_paths=tuple(allowed_paths),
+        allowed_paths=normalize_allowed_paths(root, allowed_paths),
         task_class=task_class,
         max_minutes=max_minutes,
         max_repair_iterations=max_repair_iterations,
@@ -291,7 +339,9 @@ def _assert_scope(paths: Sequence[str], contract: TaskContract) -> None:
     allowed = tuple(
         PurePosixPath(item).as_posix().rstrip("/") for item in contract.allowed_paths
     )
-    if "." in allowed:
+    if not allowed:
+        if paths:
+            raise OrchestrationError("ALLOWLIST_REQUIRED")
         return
     for path in paths:
         if not any(path == item or path.startswith(f"{item}/") for item in allowed):
@@ -486,6 +536,8 @@ def run(
         pass
     else:
         return RunResult("FAIL_ESCALATE", "UNSAFE_STORAGE", 0, "not-started")
+    if not contract.allowed_paths:
+        return RunResult("FAIL_ESCALATE", "ALLOWLIST_REQUIRED", 0, "not-started")
     run_key = _run_key(contract)
     previous = storage.load(run_key)
     if previous and previous.get("terminal") is True:
@@ -752,6 +804,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-class", default="unspecified")
     parser.add_argument("--storage", type=Path)
     parser.add_argument("--memory-storage", type=Path)
+    parser.add_argument(
+        "--allowed-path",
+        action="append",
+        metavar="PATH",
+        help=(
+            "repository-relative file or directory the executor may change; "
+            "repeatable, required for a real run, rejects '.', absolute paths, "
+            "traversal, symlink escape and protected or private policy paths"
+        ),
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help=argparse.SUPPRESS)
     return parser
@@ -772,18 +834,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_repair_iterations=args.max_repairs,
             max_report_chars=args.max_report_chars,
             task_class=args.task_class,
+            allowed_paths=args.allowed_path or (),
         )
         if args.dry_run:
             _head_sha(args.root, contract)
             _assert_private_artifacts_safe(args.root)
-            _assert_scope(_changed_files(args.root, contract), contract)
+            if contract.allowed_paths:
+                _assert_scope(_changed_files(args.root, contract), contract)
             _load_trusted_policy(args.root, contract)
             print(
                 json.dumps(
-                    {"status": "DRY_RUN", "contract": asdict(contract)}, sort_keys=True
+                    {
+                        "status": "DRY_RUN",
+                        "contract": asdict(contract),
+                        "scope": {
+                            "mode": (
+                                "explicit"
+                                if contract.allowed_paths
+                                else "unscoped_dry_run"
+                            ),
+                            "allowed_paths": list(contract.allowed_paths),
+                            "enforced": bool(contract.allowed_paths),
+                        },
+                    },
+                    sort_keys=True,
                 )
             )
             return 0
+        if not contract.allowed_paths:
+            raise OrchestrationError("ALLOWLIST_REQUIRED")
         if not args.executor_command or not args.controller_command:
             raise OrchestrationError("ADAPTER_REQUIRED")
         adapter = CommandAdapter(
