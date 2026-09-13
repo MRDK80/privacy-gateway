@@ -242,6 +242,65 @@ def validate(instance: Any, schema: Any, *, path: str = "$", depth: int = 0) -> 
             validate(instance, branch["then"], path=path, depth=depth + 1)
 
 
+def _json_type_name(value: object) -> str | None:
+    """Map a JSON literal to the schema type name it belongs to."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, str):
+        return "string"
+    if value is None:
+        return "null"
+    if isinstance(value, Mapping):
+        return "object"
+    if isinstance(value, (list, tuple)):
+        return "array"
+    return None
+
+
+def _infer_generation_type(derived: Mapping[str, Any], path: str) -> str:
+    """Infer the type implied by ``const`` or by a homogeneous ``enum``.
+
+    Strict structured output modes require an explicit ``type`` on every
+    subschema, while JSON Schema lets it stay implied. Anything that cannot be
+    inferred without guessing raises :class:`DeriveUnsupported` (#186).
+    """
+    if "const" in derived:
+        name = _json_type_name(derived["const"])
+        if name is None:
+            raise DeriveUnsupported(path, "const-type")
+        return name
+    options = list(_as_sequence(derived["enum"], path))
+    if not options:
+        raise DeriveUnsupported(path, "enum-empty")
+    names = {_json_type_name(option) for option in options}
+    if None in names or len(names) != 1:
+        raise DeriveUnsupported(path, "enum-heterogeneous")
+    return str(names.pop())
+
+
+def assert_generation_ready(schema: Any, *, path: str = "$", depth: int = 0) -> None:
+    """Fail closed when a derived schema is unusable for structured output.
+
+    Every subschema reachable through ``properties`` and ``items`` must declare
+    ``type``. The check runs locally before Codex is invoked, so an unusable
+    generation schema never degrades into an opaque remote HTTP 400.
+    """
+    if depth > MAX_DEPTH:
+        raise DeriveUnsupported(path, "max-depth")
+    node = _as_mapping(schema, path)
+    if "type" not in node:
+        raise DeriveUnsupported(path, "missing-type")
+    properties = node.get("properties")
+    if properties is not None:
+        for key, child in _as_mapping(properties, path).items():
+            assert_generation_ready(child, path=f"{path}.{key}", depth=depth + 1)
+    items = node.get("items")
+    if items is not None:
+        assert_generation_ready(items, path=f"{path}[]", depth=depth + 1)
+
+
 def derive_generation_schema(
     schema: Any, *, path: str = "$", depth: int = 0
 ) -> dict[str, Any]:
@@ -277,8 +336,12 @@ def derive_generation_schema(
             )
             continue
         raise DeriveUnsupported(path, keyword)
+    if "type" not in derived and ("const" in derived or "enum" in derived):
+        derived["type"] = _infer_generation_type(derived, path)
     if derived.get("type") == "object" and "additionalProperties" not in derived:
         derived["additionalProperties"] = False
+    if depth == 0:
+        assert_generation_ready(derived)
     return derived
 
 

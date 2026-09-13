@@ -74,8 +74,11 @@ CONTROLLER_INSTRUCTIONS: Final[str] = (
 class AdapterError(Exception):
     """Controlled failure carrying a machine code that is safe to report."""
 
-    def __init__(self, machine_code: str) -> None:
+    def __init__(
+        self, machine_code: str, *, detail: str | None = None
+    ) -> None:
         super().__init__(machine_code)
+        self.detail = detail
         self.machine_code = machine_code
 
 
@@ -97,6 +100,38 @@ def _json_command(value: str) -> list[str]:
     return [str(item) for item in command]
 
 
+DIAGNOSTIC_TOKENS: Final[tuple[str, ...]] = (
+    "invalid_json_schema",
+    "invalid_request_error",
+    "unsupported_model",
+    "model_not_found",
+    "context_length_exceeded",
+    "rate_limit_exceeded",
+    "insufficient_quota",
+    "authentication_error",
+    "permission_denied",
+    "unauthorized",
+    "usage_limit_reached",
+    "sandbox_denied",
+)
+
+
+def _redacted_reason(exit_code: int, stderr: str) -> str:
+    """Describe a Codex failure using a fixed vocabulary only.
+
+    Codex stderr may contain prompts, absolute paths and credentials, so
+    nothing is forwarded verbatim: only the exit code and whitelisted tokens
+    survive. This is what turns an opaque `MODEL_UNAVAILABLE` into an
+    actionable, still redacted, signal (#186).
+    """
+    lowered = stderr.lower()
+    found = tuple(token for token in DIAGNOSTIC_TOKENS if token in lowered)
+    parts = [f"codex_exit={exit_code}"]
+    if found:
+        parts.append("tokens=" + ",".join(found))
+    return " ".join(parts)
+
+
 def _parse_version(text: str) -> tuple[int, int, int]:
     for token in text.split():
         parts = token.split(".")
@@ -116,10 +151,12 @@ def _assert_version(command: Sequence[str], root: Path) -> None:
             check=False,
             timeout=60,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise AdapterError("MODEL_UNAVAILABLE") from error
+    except OSError as error:
+        raise AdapterError("CODEX_NOT_FOUND") from error
+    except subprocess.TimeoutExpired as error:
+        raise AdapterError("VERSION_PROBE_FAILED") from error
     if completed.returncode != 0:
-        raise AdapterError("MODEL_UNAVAILABLE")
+        raise AdapterError("VERSION_PROBE_FAILED")
     if _parse_version(completed.stdout) < MINIMUM_CODEX_VERSION:
         raise AdapterError("VERSION_MISMATCH")
 
@@ -220,9 +257,12 @@ def _run_codex(
     except subprocess.TimeoutExpired as error:
         raise AdapterError("ADAPTER_TIMEOUT") from error
     except OSError as error:
-        raise AdapterError("MODEL_UNAVAILABLE") from error
+        raise AdapterError("CODEX_NOT_FOUND") from error
     if completed.returncode != 0:
-        raise AdapterError("MODEL_UNAVAILABLE")
+        raise AdapterError(
+            "MODEL_UNAVAILABLE",
+            detail=_redacted_reason(completed.returncode, completed.stderr),
+        )
 
 
 def _read_payload(output_path: Path, limit: int) -> dict[str, Any]:
@@ -331,6 +371,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (AdapterError, SchemaError) as error:
         machine_code = getattr(error, "machine_code", "SCHEMA_ERROR")
         print(str(machine_code), file=sys.stderr)
+        detail = getattr(error, "detail", None)
+        if detail:
+            print(f"detail={detail}", file=sys.stderr)
         return 20
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     sys.stdout.write(chr(10))
