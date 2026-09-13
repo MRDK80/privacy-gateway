@@ -710,6 +710,54 @@ def run(
         return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
 
 
+ADAPTER_MACHINE_CODES: frozenset[str] = frozenset(
+    {
+        "INVALID_REQUEST",
+        "VERSION_MISMATCH",
+        "VERSION_PROBE_FAILED",
+        "CODEX_NOT_FOUND",
+        "MODEL_UNAVAILABLE",
+        "ADAPTER_TIMEOUT",
+        "OUTPUT_LIMIT",
+        "MALFORMED_OUTPUT",
+        "SCHEMA_VIOLATION",
+        "SCHEMA_UNSUPPORTED",
+        "SCHEMA_DERIVE_UNSUPPORTED",
+        "SCHEMA_ERROR",
+    }
+)
+DETAIL_ALLOWED_CHARS: frozenset[str] = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_=,.- "
+)
+DETAIL_MAX_CHARS = 200
+
+
+def _report_adapter_diagnostic(exit_code: int, stderr: str) -> None:
+    """Re-emit the role adapter machine code on the orchestrator stderr.
+
+    The adapter already prints a redacted machine code and an optional
+    `detail=` line, but the orchestrator captures both streams, so the signal
+    used to be lost. Only a known machine code and a character-filtered detail
+    line are re-emitted; raw adapter output is never echoed (#186).
+    """
+    candidates = [line.strip() for line in stderr.splitlines() if line.strip()]
+    code = next(
+        (line for line in candidates if line in ADAPTER_MACHINE_CODES), "UNKNOWN"
+    )
+    detail = ""
+    for line in candidates:
+        if not line.startswith("detail="):
+            continue
+        body = line[len("detail=") :][:DETAIL_MAX_CHARS]
+        if body and all(character in DETAIL_ALLOWED_CHARS for character in body):
+            detail = body
+        break
+    message = f"adapter_diagnostic exit_code={exit_code} machine_code={code}"
+    if detail:
+        message = f"{message} detail={detail}"
+    print(message, file=sys.stderr)
+
+
 class CommandAdapter:
     """Provider-neutral JSON-over-stdin adapter using a fresh process per role call."""
 
@@ -747,6 +795,7 @@ class CommandAdapter:
         except OSError as error:
             raise OrchestrationError("MODEL_UNAVAILABLE") from error
         if completed.returncode != 0:
+            _report_adapter_diagnostic(completed.returncode, completed.stderr)
             raise OrchestrationError("MODEL_UNAVAILABLE")
         if len(completed.stdout) > self.output_limit:
             raise OrchestrationError("OUTPUT_LIMIT")

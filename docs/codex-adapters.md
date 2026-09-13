@@ -56,8 +56,11 @@ the model.
 
 Version assumptions, verified against `codex-cli 0.154.0`:
 
-* `--output-schema` requires a model from the `gpt-5` family and cannot be
-  combined with `codex exec resume`;
+* `--output-schema` cannot be combined with `codex exec resume`; the earlier
+  assumption that it requires a model from the `gpt-5` family was disproved
+  experimentally in #186: a trivial schema is accepted on `gpt-6-astra`,
+  while a schema whose properties lack `type` is rejected with
+  `invalid_json_schema` on the same model;
 * `--output-schema` is known to be ignored when tools or MCP servers are active
   in the trajectory, which is exactly the executor scenario.
 
@@ -84,7 +87,9 @@ closed with `SCOPE_VIOLATION` and exit code 20.
 |---|---|
 | `INVALID_REQUEST` | stdin is not a role request with usable identity fields |
 | `VERSION_MISMATCH` | Codex CLI older than 0.154.0 or unparseable version |
-| `MODEL_UNAVAILABLE` | binary missing or non-zero exit from Codex |
+| `CODEX_NOT_FOUND` | the Codex binary cannot be launched (`OSError`) |
+| `VERSION_PROBE_FAILED` | `codex --version` timed out or exited non-zero |
+| `MODEL_UNAVAILABLE` | non-zero exit from `codex exec` |
 | `ADAPTER_TIMEOUT` | role call exceeded the timeout |
 | `OUTPUT_LIMIT` | stdin or role output exceeded its limit |
 | `MALFORMED_OUTPUT` | role output is not a single JSON object |
@@ -92,9 +97,13 @@ closed with `SCOPE_VIOLATION` and exit code 20.
 | `SCHEMA_UNSUPPORTED` | canonical schema uses an uninterpretable construct |
 | `SCHEMA_DERIVE_UNSUPPORTED` | generation schema cannot be derived safely |
 
-The adapter exits with code `20` on every failure and prints only the machine
-code to stderr. Raw Codex events, chain-of-thought, prompts and credentials are
-never written to stdout or to the repository.
+The adapter exits with code `20` on every failure. Its first stderr line is the
+machine code; an optional second line is `detail=`, built from a fixed
+vocabulary of the Codex exit code plus whitelisted tokens such as
+`invalid_json_schema`. `tools/agent_orchestrate.py` re-emits that machine code
+and the filtered detail line on its own stderr, while its stdout JSON contract
+stays unchanged. Raw Codex events, chain-of-thought, prompts and credentials
+are never written to stdout, to stderr or to the repository. See ADR-186.
 
 ## Validator ownership
 
