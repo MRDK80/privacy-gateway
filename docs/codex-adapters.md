@@ -21,7 +21,10 @@ python tools/agent_orchestrate.py 181 \
 Both roles use a fresh ephemeral session per call. Common flags are
 `exec --ephemeral --ignore-user-config --ignore-rules --strict-config
 --color never`, the result is collected with `-o` into a temporary file outside
-the worktree, and the prompt is passed as a single argument. `--json` is not
+the worktree, and the prompt is streamed on stdin with the positional
+argument `-`. It is not passed as one argv entry: Linux caps a single
+argument at `MAX_ARG_STRLEN` (131072 bytes) and the controller prompt,
+which embeds the trusted policy bundle, exceeds that cap. `--json` is not
 used, because the role contract requires exactly one JSON object on stdout.
 
 | Aspect | Executor | Controller |
@@ -96,6 +99,7 @@ closed with `SCOPE_VIOLATION` and exit code 20.
 | `SCHEMA_VIOLATION` | response fails the canonical schema |
 | `SCHEMA_UNSUPPORTED` | canonical schema uses an uninterpretable construct |
 | `SCHEMA_DERIVE_UNSUPPORTED` | generation schema cannot be derived safely |
+| `PROMPT_TOO_LARGE` | the role prompt hit an OS limit (`E2BIG`) |
 
 The adapter exits with code `20` on every failure. Its first stderr line is the
 machine code; an optional second line is `detail=`, built from a fixed

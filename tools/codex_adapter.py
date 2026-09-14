@@ -22,6 +22,7 @@ Security boundaries enforced here:
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import subprocess
 import sys
@@ -243,12 +244,12 @@ def _run_codex(
         argv.append("--skip-git-repo-check")
     if model is not None:
         argv += ["-m", model]
-    argv.append(prompt)
+    argv.append("-")
     try:
         completed = subprocess.run(
             argv,
             cwd=workdir,
-            input="",
+            input=prompt,
             capture_output=True,
             text=True,
             check=False,
@@ -257,6 +258,8 @@ def _run_codex(
     except subprocess.TimeoutExpired as error:
         raise AdapterError("ADAPTER_TIMEOUT") from error
     except OSError as error:
+        if error.errno == errno.E2BIG:
+            raise AdapterError("PROMPT_TOO_LARGE") from error
         raise AdapterError("CODEX_NOT_FOUND") from error
     if completed.returncode != 0:
         raise AdapterError(
