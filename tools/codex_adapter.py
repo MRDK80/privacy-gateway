@@ -15,6 +15,9 @@ Security boundaries enforced here:
   model;
 * ``--output-schema`` is treated as a generation hint only, and every response
   is validated against the full canonical schema before it is emitted;
+* the generation schema keeps canonically optional properties as nullable
+  unions, so nulls the canonical schema does not require are pruned out of the
+  response before that validation runs (#192);
 * any unavailable binary, version mismatch, timeout, non-zero exit, oversized
   or malformed output fails closed.
 """
@@ -38,6 +41,7 @@ from tools.schema_validate import (  # noqa: E402
     SchemaError,
     derive_generation_schema,
     load_schema,
+    prune_generation_nulls,
     validate,
 )
 
@@ -344,6 +348,10 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         )
         payload = _read_payload(output_path, args.output_limit)
 
+    pruned = prune_generation_nulls(payload, schema)
+    if not isinstance(pruned, dict):
+        raise AdapterError("MALFORMED_OUTPUT")
+    payload = {str(key): item for key, item in pruned.items()}
     payload = _apply_authority(payload, args.role, request)
     validate(payload, schema)
     return payload

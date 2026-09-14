@@ -48,14 +48,24 @@ def test_const_false_yields_boolean_type() -> None:
 
 def test_homogeneous_string_enum_yields_string_type() -> None:
     derived = derive_generation_schema(
-        {"type": "object", "properties": {"status": {"enum": ["PASS", "FAIL"]}}}
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["status"],
+            "properties": {"status": {"enum": ["PASS", "FAIL"]}},
+        }
     )
     assert derived["properties"]["status"]["type"] == "string"
 
 
 def test_declared_type_is_preserved_and_constraints_dropped() -> None:
     derived = derive_generation_schema(
-        {"type": "object", "properties": {"count": {"type": "integer", "minimum": 0}}}
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["count"],
+            "properties": {"count": {"type": "integer", "minimum": 0}},
+        }
     )
     assert derived["properties"]["count"]["type"] == "integer"
     assert "minimum" not in derived["properties"]["count"]
@@ -97,7 +107,9 @@ def test_composition_removed_without_losing_type() -> None:
     assert "allOf" not in derived
     assert derived["properties"]["role"]["type"] == "string"
     assert derived["properties"]["status"]["type"] == "string"
-    assert derived["properties"]["stop_reason"]["type"] == "string"
+    assert derived["properties"]["stop_reason"]["type"] == ["string", "null"]
+    assert derived["properties"]["stop_reason"]["enum"] == [None, "SCOPE", "GATE"]
+    assert derived["required"] == ["role", "status", "stop_reason"]
 
 
 @pytest.mark.parametrize(
