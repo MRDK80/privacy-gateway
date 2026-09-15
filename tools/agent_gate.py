@@ -36,6 +36,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -215,6 +216,29 @@ def _text(value: bytes) -> str:
     return value.decode("utf-8", "strict").strip()
 
 
+def _remove_workspace(workspace: Path) -> None:
+    """Remove the disposable workspace, including read-only Git objects.
+
+    Git marks object files read-only, and on Windows a read-only file cannot
+    be unlinked, so a single suppressed ``rmtree`` can silently leave the
+    snapshot workspace behind. Write permission is restored before the second
+    attempt.
+    """
+    shutil.rmtree(workspace, ignore_errors=True)
+    if not workspace.exists():
+        return
+    for path in sorted(workspace.rglob("*"), reverse=True):
+        try:
+            path.chmod(stat.S_IWRITE | stat.S_IREAD)
+        except OSError:
+            continue
+    try:
+        workspace.chmod(stat.S_IWRITE | stat.S_IREAD)
+    except OSError:
+        pass
+    shutil.rmtree(workspace, ignore_errors=True)
+
+
 def _changed_paths(root: Path, base_sha: str) -> list[str]:
     environment = _environment()
     sources = (
@@ -314,7 +338,7 @@ def trusted_snapshot_session(
             checkout=checkout,
         )
     finally:
-        shutil.rmtree(workspace, ignore_errors=True)
+        _remove_workspace(workspace)
 
 
 def verify_environment(
