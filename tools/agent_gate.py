@@ -594,8 +594,29 @@ def build_evidence(
 
 
 def gate_evidence_is_passing(evidence: Mapping[str, Any]) -> bool:
-    """Report whether evidence proves a complete and fully passing profile."""
-    return bool(evidence.get("complete")) and evidence.get("status") == "passed"
+    """Evidence is accepted only for the mandatory full profile."""
+    if not is_repository_full(evidence):
+        return False
+    expected = list(PROFILES[FULL_PROFILE])
+    if evidence.get("executed_checks") != expected:
+        return False
+    checks = evidence.get("checks")
+    if not isinstance(checks, list) or len(checks) != len(expected):
+        return False
+    check_ids: list[str] = []
+    for check in checks:
+        if not isinstance(check, Mapping):
+            return False
+        check_id = check.get("id")
+        if not isinstance(check_id, str) or check.get("status") != "passed":
+            return False
+        check_ids.append(check_id)
+    return (
+        check_ids == expected
+        and evidence.get("complete") is True
+        and evidence.get("status") == "passed"
+        and evidence.get("machine_code") == "OK"
+    )
 
 
 def is_repository_full(evidence: Mapping[str, Any]) -> bool:
@@ -603,7 +624,7 @@ def is_repository_full(evidence: Mapping[str, Any]) -> bool:
     return (
         evidence.get("profile") == FULL_PROFILE
         and evidence.get("profile_version") == PROFILE_VERSION
-        and list(evidence.get("expected_checks") or ()) == list(PROFILES[FULL_PROFILE])
+        and evidence.get("expected_checks") == list(PROFILES[FULL_PROFILE])
     )
 
 

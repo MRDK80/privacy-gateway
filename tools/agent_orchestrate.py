@@ -22,6 +22,7 @@ from typing import Any, Protocol, cast
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import agent_gate  # noqa: E402
 from tools.agent_memory import (  # noqa: E402
     MemoryError as AgentMemoryError,
 )
@@ -719,6 +720,57 @@ def _default_gate(root: Path, contract: TaskContract) -> dict[str, Any]:
     return cast(dict[str, Any], result)
 
 
+
+def _production_gate(root: Path, contract: TaskContract) -> dict[str, Any]:
+    """Run the mandatory snapshot-aware profile and preserve its machine code."""
+    try:
+        return agent_gate.run_repository_full(
+            root=root,
+            base_sha=contract.base_sha,
+            allowed_paths=contract.allowed_paths,
+        )
+    except agent_gate.GateError as error:
+        raise OrchestrationError(error.machine_code) from error
+
+
+def _assert_gate_snapshot_unchanged(
+    root: Path, contract: TaskContract, evidence: dict[str, Any]
+) -> None:
+    """Bind controller review to the source tree represented by gate evidence."""
+    snapshot = evidence.get("snapshot")
+    required = {
+        "base_sha",
+        "snapshot_method",
+        "snapshot_commit",
+        "tree_hash",
+        "diff_sha256",
+        "provenance_complete",
+    }
+    if not isinstance(snapshot, dict) or set(snapshot) != required:
+        raise OrchestrationError("GATE_EVIDENCE_INCOMPLETE")
+    if snapshot.get("base_sha") != contract.base_sha:
+        raise OrchestrationError("GATE_PROFILE_MISMATCH")
+    values = (
+        snapshot.get("snapshot_method"),
+        snapshot.get("snapshot_commit"),
+        snapshot.get("tree_hash"),
+        snapshot.get("diff_sha256"),
+    )
+    if not all(isinstance(value, str) and value for value in values):
+        raise OrchestrationError("GATE_EVIDENCE_INCOMPLETE")
+    if snapshot.get("provenance_complete") is not True:
+        raise OrchestrationError("GATE_EVIDENCE_INCOMPLETE")
+    provenance = SnapshotEvidence(
+        base_sha=contract.base_sha,
+        snapshot_method=str(snapshot["snapshot_method"]),
+        snapshot_commit=str(snapshot["snapshot_commit"]),
+        tree_hash=str(snapshot["tree_hash"]),
+        diff_sha256=str(snapshot["diff_sha256"]),
+        provenance_complete=True,
+        allowed_paths=contract.allowed_paths,
+    )
+    assert_tree_unchanged(provenance, root=root)
+
 def run(
     contract: TaskContract,
     *,
@@ -820,7 +872,8 @@ def run(
         paths = _changed_files(root, contract)
         _assert_scope(paths, contract)
         trusted_policy = _load_trusted_policy(root, contract)
-        gate_runner = gate or (lambda value: _default_gate(root, value))
+        production_gate = gate is None
+        gate_runner = gate or (lambda value: _production_gate(root, value))
         while True:
             if time.monotonic() - started > contract.max_minutes * 60:
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
@@ -842,10 +895,20 @@ def run(
             paths = _changed_files(root, contract)
             _assert_scope(paths, contract)
             gate_result = gate_runner(contract)
-            if gate_result.get("status") != "passed":
-                failures.append(str(gate_result.get("machine_code", "GATE_FAILED")))
+            gate_passed = (
+                agent_gate.gate_evidence_is_passing(gate_result)
+                if production_gate
+                else gate_result.get("status") == "passed"
+            )
+            if not gate_passed:
+                gate_code = (
+                    str(gate_result.get("machine_code", "GATE_FAILED"))
+                    if production_gate
+                    else "GATE_FAILED"
+                )
+                failures.append(gate_code)
                 if repairs >= contract.max_repair_iterations:
-                    return finish("FAIL_ESCALATE", "GATE_FAILED")
+                    return finish("FAIL_ESCALATE", gate_code)
                 repairs += 1
                 storage.save(
                     run_key,
@@ -855,7 +918,7 @@ def run(
                         "repair_iterations": repairs,
                         "terminal": False,
                         "status": "running",
-                        "machine_code": "GATE_FAILED",
+                        "machine_code": gate_code,
                         "executor_calls": executor_calls,
                         "controller_calls": controller_calls,
                         "findings": findings,
@@ -864,6 +927,8 @@ def run(
                     },
                 )
                 continue
+            if production_gate:
+                _assert_gate_snapshot_unchanged(root, contract, gate_result)
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
             controller_calls += 1
