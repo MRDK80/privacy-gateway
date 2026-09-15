@@ -64,6 +64,8 @@ def repository(tmp_path: Path) -> Path:
     _git(root, "init", "-b", "main")
     _git(root, "config", "user.name", "Synthetic User")
     _git(root, "config", "user.email", "synthetic@example.invalid")
+    _git(root, "config", "core.autocrlf", "false")
+    _git(root, "config", "core.eol", "lf")
     (root / "AGENTS.md").write_text("trusted policy\n", encoding="utf-8")
     (root / "CONTRIBUTING.md").write_text("trusted process\n", encoding="utf-8")
     (root / "code.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -225,6 +227,7 @@ def test_snapshot_works_without_global_git_identity(
 ) -> None:
     """CI-раннеры не имеют глобальной идентичности; snapshot обязан её задать."""
     empty_config = tmp_path / "absent-gitconfig"
+    empty_config.write_text("", encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_config))
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(empty_config))
     for name in (
