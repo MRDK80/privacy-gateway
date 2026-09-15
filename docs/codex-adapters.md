@@ -129,3 +129,33 @@ runtime dependency. CI installs only `pip install -e ".[dev]"`, and
 `.github/workflows/` is a protected path, so an additional extra could not be
 installed by the pipeline. All checks raise explicit exceptions instead of
 using `assert`, so the validator keeps enforcing under `python -O`.
+
+## Review basis trust source (#194)
+
+`tools/agent_orchestrate.py` validates the controller verdict independently of the
+canonical JSON Schema. Until #194 that manual check compared `review_basis` with a
+single hardcoded literal, `trust_source_kind: "base_sha"`, while the production
+controller adapter truthfully reports `local_read_only_bundle`: the controller runs
+read-only over a temporary policy bundle materialized from the pinned `base_sha`,
+which is exactly what keeps `head_policy_applied` equal to `false`. The canonical
+schema allows both values, so the orchestrator rejected a truthful verdict with
+`MALFORMED_OUTPUT`.
+
+The orchestrator now checks trust boundary invariants instead of one source string:
+
+- `head_policy_applied` must be exactly `false`;
+- `executor_self_assessment_treated_as_evidence_only` must be exactly `true`;
+- `trust_source_kind` must belong to the canonical enum of
+  `docs/schemas/controller-verdict.schema.json`;
+- `review_basis` must contain exactly these three keys.
+
+The canonical enum is read from the orchestrator's own trusted checkout, never from
+the task head worktree, so a task branch cannot widen the accepted set. Unknown
+values, missing keys and non-boolean stand-ins such as `0` or `1` remain fail-closed
+with `MALFORMED_OUTPUT` and process exit code 20. If the canonical schema cannot be
+read or does not expose a non-empty enum of strings, the orchestrator fails closed
+with `TRUST_SCHEMA_UNAVAILABLE`.
+
+The executor path is unchanged: `_validate_report` never inspected `review_basis`,
+and a characterization test now pins that behaviour. Canonical schemas in
+`docs/schemas/` are not modified. See `docs/ADR-194-review-basis-trust-source.md`.

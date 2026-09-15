@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -30,8 +31,14 @@ from tools.agent_memory import (
 from tools.agent_memory import (
     default_directory as default_memory_directory,
 )
+from tools.schema_validate import SchemaError, load_schema  # noqa: E402
 
 SCHEMA_VERSION = "1.0"
+CONTROLLER_VERDICT_SCHEMA = Path("docs") / "schemas" / "controller-verdict.schema.json"
+TRUST_BOUNDARY_INVARIANTS = {
+    "head_policy_applied": False,
+    "executor_self_assessment_treated_as_evidence_only": True,
+}
 MAX_CAPTURE_CHARS = 200_000
 POLICY_FILES = (
     "AGENTS.md",
@@ -416,6 +423,28 @@ def _validate_report(value: Any, contract: TaskContract, head_sha: str) -> None:
         raise OrchestrationError("OUTPUT_LIMIT")
 
 
+@functools.lru_cache(maxsize=1)
+def _canonical_trust_source_kinds() -> frozenset[str]:
+    """Return the canonical ``trust_source_kind`` enum, fail-closed on any doubt.
+
+    The schema is read from the orchestrator's own trusted checkout, never from
+    the task head worktree, so a task branch cannot widen the accepted set.
+    """
+
+    schema_path = Path(__file__).resolve().parents[1] / CONTROLLER_VERDICT_SCHEMA
+    try:
+        schema = load_schema(schema_path)
+        node = schema["properties"]["review_basis"]["properties"]["trust_source_kind"]
+        values = node["enum"]
+    except (OSError, ValueError, KeyError, TypeError, SchemaError) as error:
+        raise OrchestrationError("TRUST_SCHEMA_UNAVAILABLE") from error
+    if not isinstance(values, list) or not values:
+        raise OrchestrationError("TRUST_SCHEMA_UNAVAILABLE")
+    if not all(isinstance(item, str) and item for item in values):
+        raise OrchestrationError("TRUST_SCHEMA_UNAVAILABLE")
+    return frozenset(str(item) for item in values)
+
+
 def _validate_verdict(value: Any, contract: TaskContract, head_sha: str) -> str:
     if not isinstance(value, dict):
         raise OrchestrationError("MALFORMED_OUTPUT")
@@ -440,11 +469,15 @@ def _validate_verdict(value: Any, contract: TaskContract, head_sha: str) -> str:
         for key in ("schema_version", "role", "task_issue", "base_sha", "head_sha")
     )
     basis = value.get("review_basis")
-    valid_basis = isinstance(basis, dict) and basis == {
-        "trust_source_kind": "base_sha",
-        "head_policy_applied": False,
-        "executor_self_assessment_treated_as_evidence_only": True,
-    }
+    valid_basis = (
+        isinstance(basis, dict)
+        and set(basis) == {"trust_source_kind", *TRUST_BOUNDARY_INVARIANTS}
+        and all(
+            basis[key] is expected
+            for key, expected in TRUST_BOUNDARY_INVARIANTS.items()
+        )
+        and basis["trust_source_kind"] in _canonical_trust_source_kinds()
+    )
     verdict = value.get("verdict")
     if (
         actual != expected
