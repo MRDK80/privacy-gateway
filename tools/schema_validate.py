@@ -280,6 +280,48 @@ def _infer_generation_type(derived: Mapping[str, Any], path: str) -> str:
     return str(names.pop())
 
 
+def _nullable_generation_type(derived: Mapping[str, Any], path: str) -> dict[str, Any]:
+    """Widen a derived subschema with ``null`` so it can stay in ``required``.
+
+    Strict structured output modes require ``required`` to list every property,
+    so an optional property is expressed as a nullable union instead of being
+    omitted (#192). A constant property is never widened: it is listed in
+    ``required`` unchanged, because its only permitted value is always
+    acceptable to the canonical schema.
+    """
+    node = dict(derived)
+    declared = node.get("type")
+    if declared is None:
+        raise DeriveUnsupported(path, "optional-missing-type")
+    names = list(_type_names(declared, path))
+    if "null" not in names:
+        names.append("null")
+    node["type"] = names
+    if "enum" in node:
+        options = list(_as_sequence(node["enum"], path))
+        if not any(option is None for option in options):
+            options = [None, *options]
+        node["enum"] = options
+    return node
+
+
+def _close_generation_required(derived: dict[str, Any], path: str) -> None:
+    """List every property in ``required``, making the optional ones nullable.
+
+    A constant property is listed without being widened, so a schema whose
+    objects declare no ``required`` at all keeps its constants intact (#192).
+    """
+    properties = dict(_as_mapping(derived["properties"], path))
+    required = [str(name) for name in _as_sequence(derived.get("required", []), path)]
+    for key in list(properties):
+        child = properties[key]
+        if key in required or "const" in _as_mapping(child, f"{path}.{key}"):
+            continue
+        properties[key] = _nullable_generation_type(child, f"{path}.{key}")
+    derived["properties"] = properties
+    derived["required"] = list(properties)
+
+
 def assert_generation_ready(schema: Any, *, path: str = "$", depth: int = 0) -> None:
     """Fail closed when a derived schema is unusable for structured output.
 
@@ -294,8 +336,14 @@ def assert_generation_ready(schema: Any, *, path: str = "$", depth: int = 0) -> 
         raise DeriveUnsupported(path, "missing-type")
     properties = node.get("properties")
     if properties is not None:
-        for key, child in _as_mapping(properties, path).items():
+        mapping = _as_mapping(properties, path)
+        for key, child in mapping.items():
             assert_generation_ready(child, path=f"{path}.{key}", depth=depth + 1)
+        if node.get("additionalProperties") is not False:
+            raise DeriveUnsupported(path, "open-object")
+        required = [str(name) for name in _as_sequence(node.get("required", []), path)]
+        if sorted(required) != sorted(mapping):
+            raise DeriveUnsupported(path, "partial-required")
     items = node.get("items")
     if items is not None:
         assert_generation_ready(items, path=f"{path}[]", depth=depth + 1)
@@ -340,9 +388,53 @@ def derive_generation_schema(
         derived["type"] = _infer_generation_type(derived, path)
     if derived.get("type") == "object" and "additionalProperties" not in derived:
         derived["additionalProperties"] = False
+    if "properties" in derived:
+        _close_generation_required(derived, path)
     if depth == 0:
         assert_generation_ready(derived)
     return derived
+
+
+def prune_generation_nulls(
+    instance: Any, schema: Any, *, path: str = "$", depth: int = 0
+) -> Any:
+    """Drop the nulls the generation schema allowed but the canonical one forbids.
+
+    The derived schema keeps optional properties inside ``required`` as nullable
+    unions (#192), so a role may answer ``null`` where the canonical schema
+    expects the property to be absent. Only those properties are removed: a
+    property the canonical schema requires keeps its ``null`` value and is
+    validated as is.
+    """
+    if depth > MAX_DEPTH:
+        raise SchemaViolation(path, "max-depth")
+    node = _as_mapping(schema, path)
+    if isinstance(instance, dict):
+        properties = _as_mapping(node.get("properties", {}), path)
+        required = {str(name) for name in _as_sequence(node.get("required", []), path)}
+        pruned: dict[str, Any] = {}
+        for key, value in instance.items():
+            if value is None and key not in required:
+                continue
+            child = properties.get(key)
+            if child is None:
+                pruned[key] = value
+                continue
+            pruned[key] = prune_generation_nulls(
+                value, child, path=f"{path}.{key}", depth=depth + 1
+            )
+        return pruned
+    if isinstance(instance, list):
+        items = node.get("items")
+        if items is None:
+            return list(instance)
+        return [
+            prune_generation_nulls(
+                value, items, path=f"{path}[{index}]", depth=depth + 1
+            )
+            for index, value in enumerate(instance)
+        ]
+    return instance
 
 
 def load_schema(path: Path) -> Mapping[str, Any]:

@@ -52,6 +52,19 @@ composition keywords (`allOf`, `if`, `then`) and constraint keywords
 them. A keyword without a derivation rule raises `SCHEMA_DERIVE_UNSUPPORTED`
 rather than silently degrading.
 
+Strict structured output also demands `additionalProperties: false` on every
+object and a `required` array that lists every property. The derivation
+therefore closes `required` and expresses a canonically optional property as a
+nullable union, for example `["object", "null"]`, instead of omitting it
+(#192). `assert_generation_ready` enforces both invariants locally, so a
+defective generation schema fails closed before Codex is invoked instead of
+coming back as `invalid_json_schema` from the API. Because the canonical schema
+still forbids `location: null`, `tools.schema_validate.prune_generation_nulls`
+removes exactly those nulls the canonical schema does not require, and only
+then does canonical validation run. A null the canon does require, such as
+`escalation_reason`, is preserved. Canonical schemas stay unchanged.
+See ADR-192.
+
 `--output-schema` is therefore a generation hint only. Every response is
 validated against the full canonical schema before it is emitted, and identity
 fields plus `review_basis` are written by the adapter rather than taken from

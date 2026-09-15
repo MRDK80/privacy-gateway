@@ -18,9 +18,11 @@ from tools.schema_validate import (  # noqa: E402
     DeriveUnsupported,
     SchemaViolation,
     UnsupportedKeyword,
+    assert_generation_ready,
     assert_supported,
     derive_generation_schema,
     load_schema,
+    prune_generation_nulls,
     validate,
 )
 
@@ -133,3 +135,109 @@ def test_validator_still_enforces_under_optimized_interpreter(tmp_path: Path) ->
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def _generation_defects(node: Any, path: str = "$") -> list[str]:
+    """Collect strict structured output defects of a derived schema (#192)."""
+    defects: list[str] = []
+    if isinstance(node, dict):
+        if "properties" in node:
+            names = sorted(node["properties"])
+            required = sorted(str(item) for item in node.get("required", []))
+            if node.get("additionalProperties") is not False:
+                defects.append(path + ":open-object")
+            if names != required:
+                defects.append(path + ":partial-required")
+        for key, child in node.items():
+            defects += _generation_defects(child, f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, child in enumerate(node):
+            defects += _generation_defects(child, f"{path}[{index}]")
+    return defects
+
+
+def test_derived_schemas_close_required_and_additional_properties() -> None:
+    for name in sorted(path.name for path in SCHEMA_DIR.glob("*.schema.json")):
+        derived = derive_generation_schema(load_schema(SCHEMA_DIR / name))
+        assert _generation_defects(derived) == [], name
+
+
+def test_derived_optional_property_is_nullable_and_required() -> None:
+    schema = load_schema(SCHEMA_DIR / "controller-verdict.schema.json")
+    finding = derive_generation_schema(schema)["properties"]["blocking_findings"][
+        "items"
+    ]
+    assert "location" in finding["required"]
+    assert finding["properties"]["location"]["type"] == ["object", "null"]
+    assert finding["properties"]["location"]["properties"]["line"]["type"] == [
+        "integer",
+        "null",
+    ]
+
+
+def test_generation_ready_rejects_partial_required() -> None:
+    with pytest.raises(DeriveUnsupported) as failure:
+        assert_generation_ready(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["kept"],
+                "properties": {
+                    "kept": {"type": "string"},
+                    "dropped": {"type": "string"},
+                },
+            }
+        )
+    assert failure.value.keyword == "partial-required"
+
+
+def test_generation_ready_rejects_open_object() -> None:
+    with pytest.raises(DeriveUnsupported) as failure:
+        assert_generation_ready(
+            {
+                "type": "object",
+                "required": ["kept"],
+                "properties": {"kept": {"type": "string"}},
+            }
+        )
+    assert failure.value.keyword == "open-object"
+
+
+def test_derive_keeps_an_optional_const_without_widening() -> None:
+    derived = derive_generation_schema(
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"role": {"const": "controller"}},
+        }
+    )
+    assert derived["required"] == ["role"]
+    assert derived["properties"]["role"] == {"const": "controller", "type": "string"}
+
+
+def test_generation_ready_reports_the_child_defect_first() -> None:
+    with pytest.raises(DeriveUnsupported) as failure:
+        assert_generation_ready({"type": "object", "properties": {"role": {}}})
+    assert failure.value.path == "$.role"
+    assert failure.value.keyword == "missing-type"
+
+
+def test_pruning_restores_canonical_shape_for_nullable_optionals() -> None:
+    schema = load_schema(SCHEMA_DIR / "controller-verdict.schema.json")
+    response = _load(EXAMPLE_DIR / "controller-fail.json")
+    response["blocking_findings"][0]["location"] = None
+    validate(response, derive_generation_schema(schema))
+    with pytest.raises(SchemaViolation):
+        validate(response, schema)
+    pruned = prune_generation_nulls(response, schema)
+    validate(pruned, schema)
+    assert "location" not in pruned["blocking_findings"][0]
+
+
+def test_pruning_keeps_null_required_by_the_canonical_schema() -> None:
+    schema = load_schema(SCHEMA_DIR / "controller-verdict.schema.json")
+    response = _load(EXAMPLE_DIR / "controller-pass.json")
+    response["escalation_reason"] = None
+    pruned = prune_generation_nulls(response, schema)
+    assert pruned["escalation_reason"] is None
+    validate(pruned, schema)
