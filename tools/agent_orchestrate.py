@@ -8,8 +8,10 @@ import functools
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -353,6 +355,171 @@ def _assert_scope(paths: Sequence[str], contract: TaskContract) -> None:
     for path in paths:
         if not any(path == item or path.startswith(f"{item}/") for item in allowed):
             raise OrchestrationError("SCOPE_VIOLATION")
+
+
+SNAPSHOT_METHOD = "commit-tree"
+SNAPSHOT_MESSAGE = "privacy-gateway trusted snapshot"
+SNAPSHOT_IDENTITY: dict[str, str] = {
+    "GIT_AUTHOR_NAME": "privacy-gateway orchestrator",
+    "GIT_AUTHOR_EMAIL": "orchestrator@privacy-gateway.invalid",
+    "GIT_AUTHOR_DATE": "1970-01-01T00:00:00+00:00",
+    "GIT_COMMITTER_NAME": "privacy-gateway orchestrator",
+    "GIT_COMMITTER_EMAIL": "orchestrator@privacy-gateway.invalid",
+    "GIT_COMMITTER_DATE": "1970-01-01T00:00:00+00:00",
+}
+
+
+@dataclass(frozen=True)
+class SnapshotEvidence:
+    """Provenance одного проверенного состояния рабочего дерева (#196)."""
+
+    base_sha: str
+    snapshot_method: str
+    snapshot_commit: str
+    tree_hash: str
+    diff_sha256: str
+    provenance_complete: bool
+    allowed_paths: tuple[str, ...]
+
+
+def _snapshot_environment(**overrides: str) -> dict[str, str]:
+    environment = dict(os.environ)
+    environment.update(SNAPSHOT_IDENTITY)
+    environment.update(overrides)
+    return environment
+
+
+def _snapshot_run(
+    arguments: Sequence[str],
+    *,
+    cwd: Path,
+    environment: dict[str, str],
+) -> bytes:
+    """Выполнить git в bytes-режиме и упасть закрыто на любой проблеме."""
+    try:
+        completed = subprocess.run(
+            ["git", *arguments],
+            cwd=cwd,
+            capture_output=True,
+            check=False,
+            env=environment,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OrchestrationError("SNAPSHOT_FAILED") from error
+    if completed.returncode != 0:
+        raise OrchestrationError("SNAPSHOT_FAILED")
+    return completed.stdout
+
+
+def _snapshot_changed_paths(root: Path, base_sha: str) -> list[str]:
+    """Собрать изменённые пути, включая staged и разрешённые untracked."""
+    environment = _snapshot_environment()
+    sources = (
+        ("diff", "--name-only", "-z", f"{base_sha}...HEAD"),
+        ("diff", "--name-only", "-z"),
+        ("diff", "--cached", "--name-only", "-z"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    )
+    found: set[str] = set()
+    for source in sources:
+        output = _snapshot_run(source, cwd=root, environment=environment)
+        found.update(
+            item for item in output.decode("utf-8", "strict").split("\0") if item
+        )
+    return sorted(found)
+
+
+def _assert_snapshot_scope(paths: Sequence[str], allowed: Sequence[str]) -> None:
+    """Запретить snapshot для protected, policy и out-of-scope путей."""
+    if any(
+        _matches_prefix(path, (*PROTECTED_PATTERNS, *POLICY_FILES))
+        or path.endswith("/AGENTS.md")
+        for path in paths
+    ):
+        raise OrchestrationError("SNAPSHOT_SCOPE_VIOLATION")
+    scope = tuple(PurePosixPath(item).as_posix().rstrip("/") for item in allowed)
+    if not scope:
+        raise OrchestrationError("SNAPSHOT_SCOPE_VIOLATION")
+    for path in paths:
+        if not any(path == item or path.startswith(f"{item}/") for item in scope):
+            raise OrchestrationError("SNAPSHOT_SCOPE_VIOLATION")
+
+
+def _build_snapshot_state(
+    root: Path, base_sha: str, allowed: Sequence[str]
+) -> tuple[str, str, str]:
+    """Создать snapshot в disposable clone и вернуть tree, commit и diff hash."""
+    anchor = Path(os.path.realpath(root))
+    paths = _snapshot_changed_paths(anchor, base_sha)
+    _assert_snapshot_scope(paths, allowed)
+    workspace = Path(tempfile.mkdtemp(prefix="pgw-snapshot-"))
+    try:
+        mirror = workspace / "mirror.git"
+        index = workspace / "snapshot-index"
+        _snapshot_run(
+            ("clone", "--quiet", "--bare", "--no-hardlinks", str(anchor), str(mirror)),
+            cwd=workspace,
+            environment=_snapshot_environment(),
+        )
+        environment = _snapshot_environment(
+            GIT_DIR=str(mirror),
+            GIT_WORK_TREE=str(anchor),
+            GIT_INDEX_FILE=str(index),
+        )
+        _snapshot_run(("read-tree", base_sha), cwd=anchor, environment=environment)
+        if paths:
+            _snapshot_run(
+                ("add", "--all", "--", *paths), cwd=anchor, environment=environment
+            )
+        tree_hash = (
+            _snapshot_run(("write-tree",), cwd=anchor, environment=environment)
+            .decode("utf-8", "strict")
+            .strip()
+        )
+        snapshot_commit = (
+            _snapshot_run(
+                ("commit-tree", tree_hash, "-p", base_sha, "-m", SNAPSHOT_MESSAGE),
+                cwd=anchor,
+                environment=environment,
+            )
+            .decode("utf-8", "strict")
+            .strip()
+        )
+        diff = _snapshot_run(
+            ("diff", "--binary", "--no-ext-diff", base_sha, tree_hash),
+            cwd=anchor,
+            environment=environment,
+        )
+        return tree_hash, snapshot_commit, hashlib.sha256(diff).hexdigest()
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def create_trusted_snapshot(
+    contract: TaskContract, *, root: Path
+) -> SnapshotEvidence:
+    """Зафиксировать проверяемое состояние рабочего дерева без записи refs."""
+    tree_hash, snapshot_commit, diff_sha256 = _build_snapshot_state(
+        root, contract.base_sha, contract.allowed_paths
+    )
+    return SnapshotEvidence(
+        base_sha=contract.base_sha,
+        snapshot_method=SNAPSHOT_METHOD,
+        snapshot_commit=snapshot_commit,
+        tree_hash=tree_hash,
+        diff_sha256=diff_sha256,
+        provenance_complete=True,
+        allowed_paths=tuple(contract.allowed_paths),
+    )
+
+
+def assert_tree_unchanged(evidence: SnapshotEvidence, *, root: Path) -> None:
+    """Проверить, что дерево совпадает со snapshot, иначе упасть закрыто."""
+    tree_hash, _commit, _digest = _build_snapshot_state(
+        root, evidence.base_sha, evidence.allowed_paths
+    )
+    if tree_hash != evidence.tree_hash:
+        raise OrchestrationError("TREE_MUTATED_AFTER_SNAPSHOT")
 
 
 def _load_trusted_policy(root: Path, contract: TaskContract) -> dict[str, str]:
