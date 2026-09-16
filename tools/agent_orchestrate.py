@@ -8,13 +8,14 @@ import functools
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol, cast
@@ -771,6 +772,369 @@ def _assert_gate_snapshot_unchanged(
     )
     assert_tree_unchanged(provenance, root=root)
 
+PUBLIC_RECORD_SCHEMA_VERSION = "1.0"
+EVIDENCE_REDACTION_VERSION = "1"
+PUBLIC_GATE_FIELDS = (
+    "profile",
+    "profile_version",
+    "complete",
+    "status",
+    "machine_code",
+    "expected_checks",
+    "executed_checks",
+)
+PUBLIC_CHECK_FIELDS = ("name", "status", "exit_code")
+PUBLIC_SNAPSHOT_FIELDS = (
+    "base_sha",
+    "snapshot_commit",
+    "tree_hash",
+    "diff_sha256",
+    "snapshot_method",
+    "provenance_complete",
+    "tree_unchanged",
+)
+SUMMARY_ALLOWED_CHARS = frozenset(agent_gate.SUMMARY_ALLOWED_CHARS)
+SUMMARY_MAX_CHARS = int(agent_gate.SUMMARY_MAX_CHARS)
+SECRET_SHAPE_RE = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
+FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
+SEVERITY_KEYS = ("severity", "level")
+CATEGORY_KEYS = ("category", "code", "kind", "type")
+SUMMARY_KEYS = ("summary", "message", "description", "title", "detail")
+PATH_KEYS = ("path", "file", "filename")
+LINE_KEYS = ("line_start", "line", "start_line")
+END_LINE_KEYS = ("line_end", "end_line")
+CHECK_KEYS = ("check_id", "check", "check_name")
+
+
+def _looks_like_secret(text: str) -> bool:
+    """Сообщить, похож ли фрагмент на секрет или ключевой материал."""
+    if "PRIVATE KEY" in text:
+        return True
+    for candidate in SECRET_SHAPE_RE.findall(text):
+        has_digit = any(character.isdigit() for character in candidate)
+        has_alpha = any(character.isalpha() for character in candidate)
+        if has_digit and has_alpha:
+            return True
+    return False
+
+
+def _safe_text(value: Any) -> str | None:
+    """Нормализовать текст модели или отбросить его целиком, fail-closed."""
+    if not isinstance(value, str):
+        return None
+    collapsed = " ".join(value.split())
+    if not collapsed:
+        return None
+    filtered = "".join(
+        character for character in collapsed if character in SUMMARY_ALLOWED_CHARS
+    )
+    filtered = " ".join(filtered.split())[:SUMMARY_MAX_CHARS]
+    if not filtered:
+        return None
+    if _looks_like_secret(filtered):
+        return None
+    if filtered.startswith(("/", "~", "\\")) or "\\" in filtered:
+        return None
+    if ".." in filtered:
+        return None
+    return filtered
+
+
+def _safe_relative_path(value: Any) -> str | None:
+    """Вернуть путь относительно корня репозитория либо ничего."""
+    if not isinstance(value, str) or not value:
+        return None
+    candidate = value.strip()
+    if not candidate or candidate.startswith(("/", "~", "\\")):
+        return None
+    if "\\" in candidate or "\x00" in candidate:
+        return None
+    if len(candidate) >= 2 and candidate[1] == ":":
+        return None
+    normalized = PurePosixPath(candidate.lstrip("./")).as_posix()
+    if not normalized or normalized == "." or ".." in normalized.split("/"):
+        return None
+    return normalized
+
+
+def _safe_identifier(value: Any) -> str | None:
+    if not isinstance(value, str) or not IDENTIFIER_RE.match(value):
+        return None
+    return value
+
+
+def _safe_line(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _first_present(value: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    for key in keys:
+        if key in value:
+            return value[key]
+    return None
+
+
+def _finding_fingerprint(raw: Any) -> str:
+    payload = json.dumps(
+        raw, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")
+    )
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _failed_finding(raw: Any) -> dict[str, Any]:
+    return {
+        "severity": "unknown",
+        "category": FINDING_REDACTION_FAILED,
+        "location": {"path": None, "line_start": None, "line_end": None},
+        "summary": None,
+        "check_id": None,
+        "finding_fingerprint": _finding_fingerprint(raw),
+        "redaction": {
+            "applied": True,
+            "version": EVIDENCE_REDACTION_VERSION,
+            "summary_dropped": True,
+        },
+    }
+
+
+def redact_finding(raw: Any) -> dict[str, Any]:
+    """Свести blocking finding к структурированной redacted-выжимке (#200)."""
+    if not isinstance(raw, Mapping):
+        return _failed_finding(raw)
+    severity = _first_present(raw, SEVERITY_KEYS)
+    category = _safe_identifier(_first_present(raw, CATEGORY_KEYS))
+    summary = _safe_text(_first_present(raw, SUMMARY_KEYS))
+    location = _first_present(raw, PATH_KEYS)
+    if isinstance(location, Mapping):
+        path = _safe_relative_path(_first_present(location, PATH_KEYS))
+        line_start = _safe_line(_first_present(location, LINE_KEYS))
+        line_end = _safe_line(_first_present(location, END_LINE_KEYS))
+    else:
+        path = _safe_relative_path(location)
+        line_start = _safe_line(_first_present(raw, LINE_KEYS))
+        line_end = _safe_line(_first_present(raw, END_LINE_KEYS))
+    return {
+        "severity": severity if severity in FINDING_SEVERITIES else "unknown",
+        "category": category or "unclassified",
+        "location": {
+            "path": path,
+            "line_start": line_start,
+            "line_end": line_end,
+        },
+        "summary": summary,
+        "check_id": _safe_identifier(_first_present(raw, CHECK_KEYS)),
+        "finding_fingerprint": _finding_fingerprint(raw),
+        "redaction": {
+            "applied": True,
+            "version": EVIDENCE_REDACTION_VERSION,
+            "summary_dropped": summary is None,
+        },
+    }
+
+
+def _redact_metrics(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    metrics: dict[str, Any] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not IDENTIFIER_RE.match(key):
+            continue
+        if isinstance(item, bool) or isinstance(item, int | float) or item is None:
+            metrics[key] = item
+    return metrics
+
+
+def _redact_check(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    name = _safe_identifier(_first_present(value, ("name", "id", "check")))
+    if name is None:
+        return None
+    duration = value.get("duration_seconds")
+    if isinstance(duration, bool) or not isinstance(duration, int | float):
+        duration = None
+    exit_code = value.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int):
+        exit_code = None
+    status = value.get("status")
+    return {
+        "name": name,
+        "status": status if isinstance(status, str) else None,
+        "exit_code": exit_code,
+        "duration_seconds": duration,
+        "metrics": _redact_metrics(value.get("metrics")),
+    }
+
+
+def _string_list(value: Any) -> list[str] | None:
+    if not isinstance(value, list | tuple):
+        return None
+    return [item for item in value if isinstance(item, str) and item]
+
+
+def redact_gate_evidence(gate_result: Any) -> dict[str, Any]:
+    """Построить единственную redacted-структуру gate evidence прогона."""
+    if not isinstance(gate_result, Mapping):
+        return {
+            "profile": None,
+            "profile_version": None,
+            "complete": None,
+            "status": None,
+            "machine_code": None,
+            "expected_checks": None,
+            "executed_checks": None,
+            "checks": None,
+        }
+    raw_checks = gate_result.get("checks")
+    checks: list[dict[str, Any]] | None = None
+    if isinstance(raw_checks, Mapping):
+        raw_checks = list(raw_checks.values())
+    if isinstance(raw_checks, list):
+        checks = [
+            check for check in map(_redact_check, raw_checks) if check is not None
+        ]
+    complete = gate_result.get("complete")
+    profile = gate_result.get("profile")
+    version = gate_result.get("profile_version")
+    status = gate_result.get("status")
+    machine_code = gate_result.get("machine_code")
+    return {
+        "profile": profile if isinstance(profile, str) else None,
+        "profile_version": version if isinstance(version, str) else None,
+        "complete": complete if isinstance(complete, bool) else None,
+        "status": status if isinstance(status, str) else None,
+        "machine_code": machine_code if isinstance(machine_code, str) else None,
+        "expected_checks": _string_list(gate_result.get("expected_checks")),
+        "executed_checks": _string_list(gate_result.get("executed_checks")),
+        "checks": checks,
+    }
+
+
+def redact_snapshot_identity(
+    gate_result: Any, *, tree_unchanged: bool | None
+) -> dict[str, Any]:
+    """Взять идентичность snapshot из gate evidence, не пересчитывая её."""
+    snapshot = gate_result.get("snapshot") if isinstance(gate_result, Mapping) else None
+    values: dict[str, Any] = {field_name: None for field_name in PUBLIC_SNAPSHOT_FIELDS}
+    values["tree_unchanged"] = tree_unchanged
+    if not isinstance(snapshot, Mapping):
+        return values
+    for key in ("base_sha", "snapshot_commit", "tree_hash", "diff_sha256"):
+        item = snapshot.get(key)
+        values[key] = item if isinstance(item, str) and item else None
+    method = snapshot.get("snapshot_method")
+    values["snapshot_method"] = method if isinstance(method, str) else None
+    complete = snapshot.get("provenance_complete")
+    values["provenance_complete"] = complete if isinstance(complete, bool) else None
+    return values
+
+
+def redact_verdict(payload: Any) -> dict[str, Any]:
+    """Сохранить суждение контроллера без сырого текста модели."""
+    if not isinstance(payload, Mapping):
+        return {
+            "verdict": None,
+            "review_basis": None,
+            "escalation_reason": None,
+            "blocking_findings": None,
+        }
+    basis = payload.get("review_basis")
+    safe_basis: dict[str, Any] | None = None
+    if isinstance(basis, Mapping):
+        safe_basis = {
+            key: item
+            for key, item in basis.items()
+            if isinstance(key, str) and isinstance(item, bool | str)
+        }
+    raw_findings = payload.get("blocking_findings")
+    findings: list[dict[str, Any]] | None = None
+    if isinstance(raw_findings, list):
+        findings = [redact_finding(item) for item in raw_findings]
+    verdict = payload.get("verdict")
+    return {
+        "verdict": verdict if isinstance(verdict, str) else None,
+        "review_basis": safe_basis,
+        "escalation_reason": _safe_text(payload.get("escalation_reason")),
+        "blocking_findings": findings,
+    }
+
+
+def _new_evidence_state() -> dict[str, Any]:
+    return {
+        "gate": None,
+        "snapshot": None,
+        "verdict": None,
+        "tree_unchanged": None,
+        "total_seconds": None,
+        "executor_seconds": None,
+        "controller_seconds": None,
+        "gate_seconds": None,
+    }
+
+
+def _record_gate_evidence(state: dict[str, Any], gate_result: Any) -> None:
+    state["gate"] = redact_gate_evidence(gate_result)
+    state["snapshot"] = redact_snapshot_identity(
+        gate_result, tree_unchanged=state.get("tree_unchanged")
+    )
+
+
+def _record_verdict(state: dict[str, Any], payload: Any) -> None:
+    state["verdict"] = redact_verdict(payload)
+
+
+def _durations(state: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "total_seconds": state.get("total_seconds"),
+        "executor_seconds": state.get("executor_seconds"),
+        "controller_seconds": state.get("controller_seconds"),
+        "gate_seconds": state.get("gate_seconds"),
+    }
+
+
+def private_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Полный redacted пакет для приватной retrospective."""
+    return {
+        "gate": state.get("gate"),
+        "snapshot": state.get("snapshot"),
+        "verdict": state.get("verdict"),
+        "durations": _durations(state),
+    }
+
+
+def public_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Явный whitelist детерминированных фактов для записи прогона."""
+    gate = state.get("gate")
+    snapshot = state.get("snapshot")
+    public_gate: dict[str, Any] | None = None
+    if isinstance(gate, Mapping):
+        public_gate = {key: gate.get(key) for key in PUBLIC_GATE_FIELDS}
+        checks = gate.get("checks")
+        if isinstance(checks, list):
+            public_gate["checks"] = [
+                {key: check.get(key) for key in PUBLIC_CHECK_FIELDS}
+                for check in checks
+                if isinstance(check, Mapping)
+            ]
+        else:
+            public_gate["checks"] = None
+    public_snapshot: dict[str, Any] | None = None
+    if isinstance(snapshot, Mapping):
+        public_snapshot = {
+            key: snapshot.get(key) for key in PUBLIC_SNAPSHOT_FIELDS
+        }
+    return {
+        "schema_version": PUBLIC_RECORD_SCHEMA_VERSION,
+        "gate": public_gate,
+        "snapshot": public_snapshot,
+        "duration_seconds": state.get("total_seconds"),
+    }
+
+
 def run(
     contract: TaskContract,
     *,
@@ -816,6 +1180,8 @@ def run(
         storage.directory.parent / "agent-memory", root
     )
 
+    evidence_state = _new_evidence_state()
+
     def finish(status: str, machine_code: str) -> RunResult:
         result = RunResult(status, machine_code, repairs, run_id)
         final_verdicts = list(verdicts)
@@ -824,6 +1190,9 @@ def run(
         ):
             final_verdicts.append(status)
         final_failures = list(failures)
+        evidence_state["total_seconds"] = round(
+            max(0.0, time.monotonic() - started), 3
+        )
         if machine_code != "OK":
             final_failures.append(machine_code)
         try:
@@ -846,6 +1215,7 @@ def run(
                     manual_interventions=0,
                     findings=findings,
                     usage=usage,
+                    evidence=private_evidence(evidence_state),
                 )
             )
         except AgentMemoryError:
@@ -861,6 +1231,8 @@ def run(
                 "findings": findings,
                 "verdicts": final_verdicts,
                 "failures": final_failures,
+                "evidence": public_evidence(evidence_state),
+                "record_schema_version": PUBLIC_RECORD_SCHEMA_VERSION,
             },
         )
         return result
@@ -879,6 +1251,7 @@ def run(
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
             executor_session = uuid.uuid4().hex
             executor_calls += 1
+            executor_started = time.monotonic()
             report = adapter.execute(
                 {
                     "contract": asdict(contract),
@@ -889,12 +1262,20 @@ def run(
                 executor_session,
             )
             _validate_report(report, contract, head_sha)
+            evidence_state["executor_seconds"] = round(
+                max(0.0, time.monotonic() - executor_started), 3
+            )
             if _head_sha(root, contract) != head_sha:
                 return finish("FAIL_ESCALATE", "UNAUTHORIZED_HEAD_CHANGE")
             _assert_private_artifacts_safe(root)
             paths = _changed_files(root, contract)
             _assert_scope(paths, contract)
+            gate_started = time.monotonic()
             gate_result = gate_runner(contract)
+            evidence_state["gate_seconds"] = round(
+                max(0.0, time.monotonic() - gate_started), 3
+            )
+            _record_gate_evidence(evidence_state, gate_result)
             gate_passed = (
                 agent_gate.gate_evidence_is_passing(gate_result)
                 if production_gate
@@ -929,9 +1310,12 @@ def run(
                 continue
             if production_gate:
                 _assert_gate_snapshot_unchanged(root, contract, gate_result)
+                evidence_state["tree_unchanged"] = True
+                _record_gate_evidence(evidence_state, gate_result)
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
             controller_calls += 1
+            controller_started = time.monotonic()
             verdict_payload = adapter.review(
                 {
                     "issue": contract.issue,
@@ -946,6 +1330,10 @@ def run(
                 controller_session,
             )
             verdict = _validate_verdict(verdict_payload, contract, head_sha)
+            evidence_state["controller_seconds"] = round(
+                max(0.0, time.monotonic() - controller_started), 3
+            )
+            _record_verdict(evidence_state, verdict_payload)
             verdicts.append(verdict)
             findings += len(verdict_payload["blocking_findings"])
             if verdict in {"PASS", "PASS_WITH_NOTES"}:

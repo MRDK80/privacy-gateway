@@ -159,3 +159,56 @@ with `TRUST_SCHEMA_UNAVAILABLE`.
 The executor path is unchanged: `_validate_report` never inspected `review_basis`,
 and a characterization test now pins that behaviour. Canonical schemas in
 `docs/schemas/` are not modified. See `docs/ADR-194-review-basis-trust-source.md`.
+
+## Персистентность evidence прогона
+
+Решение зафиксировано в ADR-200. Запись прогона содержит доказательную
+часть, но никогда не содержит сырого вывода модели.
+
+### Два слоя
+
+Публичная запись прогона в каталоге состояния содержит только величины,
+вычисленные инструментами:
+
+- идентичность snapshot: `base_sha`, `snapshot_commit`, `tree_hash`,
+  `diff_sha256`, `snapshot_method`, `provenance_complete`, `tree_unchanged`;
+- сводку gate: `profile`, `profile_version`, `complete`, `status`,
+  `machine_code`, `expected_checks`, `executed_checks`;
+- по каждой проверке — `name`, `status` и `exit_code`;
+- фактическую суммарную длительность прогона.
+
+Приватная retrospective содержит полный redacted пакет: те же поля
+snapshot, длительности отдельных проверок, разобранные метрики, а также
+`verdict`, `review_basis`, `escalation_reason` и структурированные
+blocking findings.
+
+Публичный stdout `RunResult` не расширяется: его поля остаются `status`,
+`machine_code`, `repair_iterations` и `run_id`.
+
+### Blocking findings
+
+Полный текст finding не сохраняется ни в одном слое. Сохраняется
+структурированная выжимка: `severity`, `category`, `location` с путём
+относительно корня репозитория, ограниченный `summary`, `check_id`,
+`finding_fingerprint` как SHA-256 нормализованного исходного объекта и
+блок `redaction`.
+
+`summary` отбрасывается целиком, если после фильтрации по алфавиту сводок
+gate в нём остаётся фрагмент, похожий на секрет или ключевой материал,
+либо абсолютный путь. В этом случае `redaction.summary_dropped` равно
+`true`, а факт наличия finding сохраняется. Если объект finding вообще
+невозможно разобрать, категория становится `FINDING_REDACTION_FAILED`.
+
+### Источник идентичности snapshot
+
+Публикуемые значения берутся из `snapshot` в evidence профиля
+`repository-full`, то есть из той же структуры, которую проверяет
+`_assert_gate_snapshot_unchanged`. Второй источник этих значений не
+создаётся, повторного вычисления дерева для записи не выполняется.
+
+### Версии схем
+
+Приватная запись использует `schema_version` `1.1`; записи `1.0` читаются
+без ошибок и не содержат блока `evidence`. Публичная запись имеет
+собственный `schema_version` внутри блока evidence и не переиспользует
+версию схемы evidence профиля gate.
