@@ -258,3 +258,130 @@ def test_promotion_schema_version_is_unchanged() -> None:
         "human_approval": False,
     }
     agent_memory.validate_promotion(candidate)
+def _pass_with_notes_payload() -> dict[str, Any]:
+    return {
+        "verdict": "PASS_WITH_NOTES",
+        "review_basis": {
+            "trust_source_kind": "base_sha",
+            "head_policy_applied": False,
+            "executor_self_assessment_treated_as_evidence_only": True,
+        },
+        "escalation_reason": "",
+        "blocking_findings": [],
+    }
+
+
+def _failed_gate_result() -> dict[str, Any]:
+    return {
+        "profile": "repository-full",
+        "profile_version": "1",
+        "complete": True,
+        "status": "failed",
+        "machine_code": "GATE_PROFILE_MISMATCH",
+        "expected_checks": ["pytest", "ruff", "mypy"],
+        "executed_checks": ["pytest", "ruff", "mypy"],
+        "checks": [
+            {
+                "name": "pytest",
+                "status": "failed",
+                "exit_code": 1,
+                "duration_seconds": 9.7,
+                "metrics": {"passed": 770, "failed": 6},
+            },
+            {
+                "name": "ruff",
+                "status": "passed",
+                "exit_code": 0,
+                "duration_seconds": 0.4,
+                "metrics": {},
+            },
+        ],
+        "snapshot": {
+            "base_sha": "a" * 40,
+            "snapshot_method": "commit-tree",
+            "snapshot_commit": "c" * 40,
+            "tree_hash": "d" * 40,
+            "diff_sha256": "e" * 64,
+            "provenance_complete": True,
+        },
+    }
+
+
+def test_pass_with_notes_verdict_is_persisted() -> None:
+    state = agent_orchestrate._new_evidence_state()
+    state["tree_unchanged"] = True
+    agent_orchestrate._record_gate_evidence(state, _gate_result())
+    agent_orchestrate._record_verdict(state, _pass_with_notes_payload())
+    state["total_seconds"] = 41.5
+    private = agent_orchestrate.private_evidence(state)
+    assert private["verdict"]["verdict"] == "PASS_WITH_NOTES"
+    assert private["verdict"]["blocking_findings"] == []
+    basis = private["verdict"]["review_basis"]
+    assert basis["trust_source_kind"] == "base_sha"
+    assert basis["head_policy_applied"] is False
+    assert basis["executor_self_assessment_treated_as_evidence_only"] is True
+    assert private["gate"]["complete"] is True
+    assert private["snapshot"]["tree_unchanged"] is True
+
+
+def test_pass_with_notes_record_passes_validation() -> None:
+    state = agent_orchestrate._new_evidence_state()
+    state["tree_unchanged"] = True
+    agent_orchestrate._record_gate_evidence(state, _gate_result())
+    agent_orchestrate._record_verdict(state, _pass_with_notes_payload())
+    state["total_seconds"] = 41.5
+    record = _legacy_record()
+    record["schema_version"] = agent_memory.SCHEMA_VERSION
+    record["verdicts"] = ["PASS_WITH_NOTES"]
+    record["failures"] = []
+    record["findings"] = 0
+    record["evidence"] = agent_orchestrate.private_evidence(state)
+    agent_memory.validate_record(record)
+
+
+def test_evidence_is_persisted_for_failed_gate() -> None:
+    state = agent_orchestrate._new_evidence_state()
+    agent_orchestrate._record_gate_evidence(state, _failed_gate_result())
+    state["total_seconds"] = 12.25
+    state["gate_seconds"] = 10.1
+    private = agent_orchestrate.private_evidence(state)
+    assert private["gate"]["status"] == "failed"
+    assert private["gate"]["machine_code"] == "GATE_PROFILE_MISMATCH"
+    assert private["gate"]["expected_checks"] == private["gate"]["executed_checks"]
+    assert [check["name"] for check in private["gate"]["checks"]] == [
+        "pytest",
+        "ruff",
+    ]
+    assert private["gate"]["checks"][0]["exit_code"] == 1
+    assert private["verdict"] is None
+    assert private["snapshot"]["tree_unchanged"] is None
+    assert private["snapshot"]["tree_hash"] == "d" * 40
+    assert private["durations"]["total_seconds"] == 12.25
+
+
+def test_failed_gate_record_passes_validation() -> None:
+    state = agent_orchestrate._new_evidence_state()
+    agent_orchestrate._record_gate_evidence(state, _failed_gate_result())
+    state["total_seconds"] = 12.25
+    record = _legacy_record()
+    record["schema_version"] = agent_memory.SCHEMA_VERSION
+    record["controller_calls"] = 0
+    record["iterations"] = 0
+    record["findings"] = 0
+    record["failures"] = ["GATE_PROFILE_MISMATCH"]
+    record["evidence"] = agent_orchestrate.private_evidence(state)
+    agent_memory.validate_record(record)
+
+
+def test_public_projection_for_failed_gate_has_summary_without_verdict() -> None:
+    state = agent_orchestrate._new_evidence_state()
+    agent_orchestrate._record_gate_evidence(state, _failed_gate_result())
+    state["total_seconds"] = 12.25
+    public = agent_orchestrate.public_evidence(state)
+    assert public["gate"]["status"] == "failed"
+    assert public["gate"]["machine_code"] == "GATE_PROFILE_MISMATCH"
+    assert public["snapshot"]["tree_unchanged"] is None
+    assert set(public) == {"schema_version", "gate", "snapshot", "duration_seconds"}
+    serialized = json.dumps(public)
+    for token in ("verdict", "review_basis", "escalation_reason", "metrics"):
+        assert token not in serialized
