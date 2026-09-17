@@ -797,7 +797,9 @@ SUMMARY_ALLOWED_CHARS = frozenset(agent_gate.SUMMARY_ALLOWED_CHARS)
 SUMMARY_MAX_CHARS = int(agent_gate.SUMMARY_MAX_CHARS)
 SECRET_SHAPE_RE = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
-FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
+LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+FINDING_SEVERITIES = CANONICAL_FINDING_SEVERITIES | LEGACY_FINDING_SEVERITIES
 FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
 SEVERITY_KEYS = ("severity", "level")
 CATEGORY_KEYS = ("category", "code", "kind", "type")
@@ -806,6 +808,7 @@ PATH_KEYS = ("path", "file", "filename")
 LINE_KEYS = ("line_start", "line", "start_line")
 END_LINE_KEYS = ("line_end", "end_line")
 CHECK_KEYS = ("check_id", "check", "check_name")
+LOCATION_KEYS = ("location",)
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -908,7 +911,9 @@ def redact_finding(raw: Any) -> dict[str, Any]:
     severity = _first_present(raw, SEVERITY_KEYS)
     category = _safe_identifier(_first_present(raw, CATEGORY_KEYS))
     summary = _safe_text(_first_present(raw, SUMMARY_KEYS))
-    location = _first_present(raw, PATH_KEYS)
+    location = _first_present(raw, LOCATION_KEYS)
+    if location is None:
+        location = _first_present(raw, PATH_KEYS)
     if isinstance(location, Mapping):
         path = _safe_relative_path(_first_present(location, PATH_KEYS))
         line_start = _safe_line(_first_present(location, LINE_KEYS))

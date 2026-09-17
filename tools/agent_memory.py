@@ -64,7 +64,13 @@ DURATION_KEYS = frozenset(
     {"total_seconds", "executor_seconds", "controller_seconds", "gate_seconds"}
 )
 REDACTION_KEYS = frozenset({"applied", "version", "summary_dropped"})
-FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info", "unknown"})
+CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
+LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+FINDING_SEVERITIES = (
+    CANONICAL_FINDING_SEVERITIES
+    | LEGACY_FINDING_SEVERITIES
+    | frozenset({"unknown"})
+)
 FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
 FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
