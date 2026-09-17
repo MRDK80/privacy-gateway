@@ -1149,8 +1149,34 @@ def _record_gate_evidence(state: dict[str, Any], gate_result: Any) -> None:
     )
 
 
+def _iteration_number(payload: Any, history: list[dict[str, Any]]) -> int:
+    """Взять номер итерации из вердикта либо из позиции в истории."""
+    if isinstance(payload, Mapping):
+        candidate = payload.get("repair_iteration")
+        if (
+            isinstance(candidate, int)
+            and not isinstance(candidate, bool)
+            and candidate >= 0
+        ):
+            return candidate
+    return len(history)
+
+
 def _record_verdict(state: dict[str, Any], payload: Any) -> None:
-    state["verdict"] = redact_verdict(payload)
+    """Накопить историю вердиктов, не затирая предыдущие итерации (#204)."""
+    redacted = redact_verdict(payload)
+    history = state.get("verdict_history")
+    if not isinstance(history, list):
+        history = []
+    history.append(
+        {
+            "iteration": _iteration_number(payload, history),
+            "verdict": redacted["verdict"],
+            "blocking_findings": redacted["blocking_findings"],
+        }
+    )
+    state["verdict_history"] = history
+    state["verdict"] = {**redacted, "iteration_history": history}
 
 
 def _durations(state: Mapping[str, Any]) -> dict[str, Any]:

@@ -15,9 +15,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 LEGACY_SCHEMA_VERSION = "1.0"
-SUPPORTED_SCHEMA_VERSIONS = frozenset({LEGACY_SCHEMA_VERSION, SCHEMA_VERSION})
+PREVIOUS_SCHEMA_VERSION = "1.1"
+SUPPORTED_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION}
+)
 EVIDENCE_KEYS = frozenset({"gate", "verdict", "snapshot", "durations"})
 GATE_EVIDENCE_KEYS = frozenset(
     {
@@ -48,6 +51,8 @@ SNAPSHOT_EVIDENCE_KEYS = frozenset(
 VERDICT_EVIDENCE_KEYS = frozenset(
     {"verdict", "review_basis", "escalation_reason", "blocking_findings"}
 )
+VERDICT_EVIDENCE_KEYS_V2 = VERDICT_EVIDENCE_KEYS | frozenset({"iteration_history"})
+ITERATION_KEYS = frozenset({"iteration", "verdict", "blocking_findings"})
 FINDING_KEYS = frozenset(
     {
         "severity",
@@ -148,6 +153,16 @@ def _non_negative(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
+def _parse_version(value: Any) -> tuple[int, int]:
+    """Разобрать schema_version по числовым компонентам, а не как строку."""
+    if not isinstance(value, str):
+        raise MemoryError("INVALID_RECORD")
+    parts = value.split(".")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise MemoryError("INVALID_RECORD")
+    return int(parts[0]), int(parts[1])
+
+
 def validate_record(value: Mapping[str, Any]) -> None:
     """Validate the complete private record contract without echoing its values."""
     expected = {
@@ -171,14 +186,15 @@ def validate_record(value: Mapping[str, Any]) -> None:
         "findings",
         "usage",
     }
-    version = value.get("schema_version")
-    if version not in SUPPORTED_SCHEMA_VERSIONS:
+    major, minor = _parse_version(value.get("schema_version"))
+    current_major, current_minor = _parse_version(SCHEMA_VERSION)
+    if major != current_major or minor > current_minor:
         raise MemoryError("INVALID_RECORD")
-    if version != LEGACY_SCHEMA_VERSION:
+    if minor > 0:
         expected = expected | {"evidence"}
     if set(value) != expected:
         raise MemoryError("INVALID_RECORD")
-    if version != LEGACY_SCHEMA_VERSION:
+    if minor > 0:
         _validate_evidence(value["evidence"])
     if not all(
         _non_negative(value[key])
@@ -438,10 +454,39 @@ def _validate_snapshot_evidence(value: Any) -> None:
             _fail_record()
 
 
+def _validate_iteration_history(value: Any) -> None:
+    """Проверить историю итераций repair-цикла (#204)."""
+    if not isinstance(value, list) or not value:
+        _fail_record()
+    numbers: list[int] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != ITERATION_KEYS:
+            _fail_record()
+        iteration = item["iteration"]
+        if not _non_negative(iteration):
+            _fail_record()
+        numbers.append(iteration)
+        verdict = item["verdict"]
+        if verdict is not None and verdict not in ALLOWED_VERDICTS:
+            _fail_record()
+        findings = item["blocking_findings"]
+        if findings is None:
+            continue
+        if not isinstance(findings, list):
+            _fail_record()
+        for finding in findings:
+            _validate_finding(finding)
+    if numbers != sorted(numbers):
+        _fail_record()
+
+
 def _validate_verdict_evidence(value: Any) -> None:
     if value is None:
         return
-    if not isinstance(value, dict) or set(value) != VERDICT_EVIDENCE_KEYS:
+    if not isinstance(value, dict) or set(value) not in (
+        VERDICT_EVIDENCE_KEYS,
+        VERDICT_EVIDENCE_KEYS_V2,
+    ):
         _fail_record()
     verdict = value["verdict"]
     if verdict is not None and verdict not in ALLOWED_VERDICTS:
@@ -454,6 +499,8 @@ def _validate_verdict_evidence(value: Any) -> None:
         not isinstance(reason, str) or len(reason) > EVIDENCE_TEXT_MAX_CHARS
     ):
         _fail_record()
+    if "iteration_history" in value:
+        _validate_iteration_history(value["iteration_history"])
     findings = value["blocking_findings"]
     if findings is None:
         return
