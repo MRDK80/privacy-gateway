@@ -59,11 +59,20 @@ FINDING_KEYS = frozenset(
         "redaction",
     }
 )
+FINDING_TEXT_FIELD_NAMES = frozenset({"requirement", "evidence", "required_fix"})
+FINDING_KEYS_V1 = FINDING_KEYS
+FINDING_KEYS_V2 = FINDING_KEYS | FINDING_TEXT_FIELD_NAMES
+DROP_REASONS = frozenset(
+    {"missing", "disallowed_chars", "looks_like_secret", "path_like", "unparseable"}
+)
 LOCATION_KEYS = frozenset({"path", "line_start", "line_end"})
 DURATION_KEYS = frozenset(
     {"total_seconds", "executor_seconds", "controller_seconds", "gate_seconds"}
 )
 REDACTION_KEYS = frozenset({"applied", "version", "summary_dropped"})
+REDACTION_KEYS_V2 = REDACTION_KEYS | frozenset(
+    {"dropped_fields", "drop_reasons"}
+)
 CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
 LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
 FINDING_SEVERITIES = (
@@ -295,8 +304,38 @@ def _validate_location(value: Any) -> None:
             _fail_record()
 
 
+def _validate_finding_texts(value: Mapping[str, Any]) -> None:
+    """Проверить раздельные redacted-поля finding версии 2."""
+    for key in sorted(FINDING_TEXT_FIELD_NAMES):
+        text = value[key]
+        if text is not None and (
+            not isinstance(text, str) or len(text) > EVIDENCE_TEXT_MAX_CHARS
+        ):
+            _fail_record()
+    redaction = value["redaction"]
+    dropped = redaction["dropped_fields"]
+    if not isinstance(dropped, list):
+        _fail_record()
+    if not all(isinstance(item, str) for item in dropped):
+        _fail_record()
+    if dropped != sorted(set(dropped)):
+        _fail_record()
+    if any(item not in FINDING_TEXT_FIELD_NAMES for item in dropped):
+        _fail_record()
+    reasons = redaction["drop_reasons"]
+    if not isinstance(reasons, dict):
+        _fail_record()
+    if set(reasons) != set(dropped):
+        _fail_record()
+    for reason in reasons.values():
+        if reason not in DROP_REASONS:
+            _fail_record()
+
+
 def _validate_finding(value: Any) -> None:
-    if not isinstance(value, dict) or set(value) != FINDING_KEYS:
+    if not isinstance(value, dict):
+        _fail_record()
+    if set(value) not in (FINDING_KEYS_V1, FINDING_KEYS_V2):
         _fail_record()
     if value["severity"] not in FINDING_SEVERITIES:
         _fail_record()
@@ -317,7 +356,10 @@ def _validate_finding(value: Any) -> None:
     if not isinstance(fingerprint, str) or not FINGERPRINT_RE.match(fingerprint):
         _fail_record()
     redaction = value["redaction"]
-    if not isinstance(redaction, dict) or set(redaction) != REDACTION_KEYS:
+    expected_redaction = (
+        REDACTION_KEYS_V2 if set(value) == FINDING_KEYS_V2 else REDACTION_KEYS
+    )
+    if not isinstance(redaction, dict) or set(redaction) != expected_redaction:
         _fail_record()
     if redaction["applied"] is not True:
         _fail_record()
@@ -325,6 +367,8 @@ def _validate_finding(value: Any) -> None:
         _fail_record()
     if not isinstance(redaction["summary_dropped"], bool):
         _fail_record()
+    if set(value) == FINDING_KEYS_V2:
+        _validate_finding_texts(value)
     _validate_location(value["location"])
 
 
