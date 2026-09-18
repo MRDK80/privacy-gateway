@@ -1257,9 +1257,9 @@ def run(
         )
     run_id = str(previous.get("run_id")) if previous else uuid.uuid4().hex
     started = (
-        float(previous.get("started", time.monotonic()))
+        float(previous.get("started", time.time()))
         if previous
-        else time.monotonic()
+        else time.time()
     )
     repairs = int(previous.get("repair_iterations", 0)) if previous else 0
     executor_calls = int(previous.get("executor_calls", 0)) if previous else 0
@@ -1283,7 +1283,7 @@ def run(
             final_verdicts.append(status)
         final_failures = list(failures)
         evidence_state["total_seconds"] = round(
-            max(0.0, time.monotonic() - started), 3
+            max(0.0, time.time() - started), 3
         )
         if machine_code != "OK":
             final_failures.append(machine_code)
@@ -1296,7 +1296,7 @@ def run(
                     task_class=contract.task_class,
                     base_sha=contract.base_sha,
                     head_sha=head_sha_for_memory,
-                    duration_seconds=max(0, int(time.monotonic() - started)),
+                    duration_seconds=max(0, int(time.time() - started)),
                     executor_calls=executor_calls,
                     controller_calls=controller_calls,
                     iterations=controller_calls,
@@ -1339,11 +1339,11 @@ def run(
         production_gate = gate is None
         gate_runner = gate or (lambda value: _production_gate(root, value))
         while True:
-            if time.monotonic() - started > contract.max_minutes * 60:
+            if time.time() - started > contract.max_minutes * 60:
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
             executor_session = uuid.uuid4().hex
             executor_calls += 1
-            executor_started = time.monotonic()
+            executor_started = time.perf_counter()
             report = adapter.execute(
                 {
                     "contract": asdict(contract),
@@ -1355,17 +1355,17 @@ def run(
             )
             _validate_report(report, contract, head_sha)
             evidence_state["executor_seconds"] = round(
-                max(0.0, time.monotonic() - executor_started), 3
+                max(0.0, time.perf_counter() - executor_started), 3
             )
             if _head_sha(root, contract) != head_sha:
                 return finish("FAIL_ESCALATE", "UNAUTHORIZED_HEAD_CHANGE")
             _assert_private_artifacts_safe(root)
             paths = _changed_files(root, contract)
             _assert_scope(paths, contract)
-            gate_started = time.monotonic()
+            gate_started = time.perf_counter()
             gate_result = gate_runner(contract)
             evidence_state["gate_seconds"] = round(
-                max(0.0, time.monotonic() - gate_started), 3
+                max(0.0, time.perf_counter() - gate_started), 3
             )
             _record_gate_evidence(evidence_state, gate_result)
             gate_passed = (
@@ -1407,7 +1407,7 @@ def run(
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
             controller_calls += 1
-            controller_started = time.monotonic()
+            controller_started = time.perf_counter()
             verdict_payload = adapter.review(
                 {
                     "issue": contract.issue,
@@ -1423,7 +1423,7 @@ def run(
             )
             verdict = _validate_verdict(verdict_payload, contract, head_sha)
             evidence_state["controller_seconds"] = round(
-                max(0.0, time.monotonic() - controller_started), 3
+                max(0.0, time.perf_counter() - controller_started), 3
             )
             _record_verdict(evidence_state, verdict_payload)
             verdicts.append(verdict)

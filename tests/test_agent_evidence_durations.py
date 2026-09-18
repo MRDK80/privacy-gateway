@@ -17,6 +17,10 @@ from tests.test_agent_orchestrator import (  # noqa: F401
 
 EXECUTOR_DELAY_SECONDS = 0.20
 CONTROLLER_DELAY_SECONDS = 0.12
+TIMER_TOLERANCE_SECONDS = 0.02
+TOTAL_UPPER_BOUND_SECONDS = 3600.0
+EPOCH_LOWER_BOUND = 1_600_000_000.0
+EPOCH_UPPER_BOUND = 4_000_000_000.0
 MEASUREMENT_TOLERANCE_SECONDS = 0.10
 
 
@@ -78,7 +82,10 @@ def test_persisted_total_duration_matches_observed_wall_clock(
 
     assert total is not None
     assert total <= observed + MEASUREMENT_TOLERANCE_SECONDS
-    assert total >= EXECUTOR_DELAY_SECONDS + CONTROLLER_DELAY_SECONDS
+    assert total >= (
+        EXECUTOR_DELAY_SECONDS + CONTROLLER_DELAY_SECONDS
+    ) - TIMER_TOLERANCE_SECONDS
+    assert total < TOTAL_UPPER_BOUND_SECONDS
 
 
 def test_role_durations_reflect_injected_delays(
@@ -87,8 +94,14 @@ def test_role_durations_reflect_injected_delays(
     observed, record, _public = _observed_run(repository)
     durations = record["evidence"]["durations"]
 
-    assert durations["executor_seconds"] >= EXECUTOR_DELAY_SECONDS
-    assert durations["controller_seconds"] >= CONTROLLER_DELAY_SECONDS
+    assert (
+        durations["executor_seconds"]
+        >= EXECUTOR_DELAY_SECONDS - TIMER_TOLERANCE_SECONDS
+    )
+    assert (
+        durations["controller_seconds"]
+        >= CONTROLLER_DELAY_SECONDS - TIMER_TOLERANCE_SECONDS
+    )
     assert durations["gate_seconds"] is not None
     assert durations["gate_seconds"] >= 0.0
     role_total = (
@@ -139,3 +152,36 @@ def test_public_record_duration_does_not_leak_role_breakdown(
         "snapshot",
         "duration_seconds",
     }
+def _extract_started(*payloads: object) -> float | None:
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        value = payload.get("started")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return float(value)
+    return None
+
+
+def test_started_is_wall_clock_not_performance_counter(
+    repository: Path,  # noqa: F811
+) -> None:
+    _observed, record, public = _observed_run(repository)
+
+    started = _extract_started(record, public)
+    assert started is not None, (
+        "started not found in run record or public record; "
+        "check payload structure before editing this test"
+    )
+    assert EPOCH_LOWER_BOUND < started < EPOCH_UPPER_BOUND, (
+        f"started={started!r} outside wall-clock epoch range: "
+        "time.perf_counter() or time.monotonic() was likely used"
+    )
+
+    durations = record["evidence"]["durations"]
+    total = durations["total_seconds"]
+    assert total is not None
+    assert 0.0 <= total < TOTAL_UPPER_BOUND_SECONDS, (
+        f"total_seconds={total!r} implausible: clock sources for "
+        "started and for the current reading likely differ"
+    )
