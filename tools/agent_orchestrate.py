@@ -773,7 +773,7 @@ def _assert_gate_snapshot_unchanged(
     assert_tree_unchanged(provenance, root=root)
 
 PUBLIC_RECORD_SCHEMA_VERSION = "1.0"
-EVIDENCE_REDACTION_VERSION = "1"
+EVIDENCE_REDACTION_VERSION = "2"
 PUBLIC_GATE_FIELDS = (
     "profile",
     "profile_version",
@@ -797,7 +797,9 @@ SUMMARY_ALLOWED_CHARS = frozenset(agent_gate.SUMMARY_ALLOWED_CHARS)
 SUMMARY_MAX_CHARS = int(agent_gate.SUMMARY_MAX_CHARS)
 SECRET_SHAPE_RE = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
-FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
+LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+FINDING_SEVERITIES = CANONICAL_FINDING_SEVERITIES | LEGACY_FINDING_SEVERITIES
 FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
 SEVERITY_KEYS = ("severity", "level")
 CATEGORY_KEYS = ("category", "code", "kind", "type")
@@ -806,6 +808,17 @@ PATH_KEYS = ("path", "file", "filename")
 LINE_KEYS = ("line_start", "line", "start_line")
 END_LINE_KEYS = ("line_end", "end_line")
 CHECK_KEYS = ("check_id", "check", "check_name")
+LOCATION_KEYS = ("location",)
+EVIDENCE_TEXT_MAX_CHARS = SUMMARY_MAX_CHARS // 2
+FINDING_TEXT_FIELDS: tuple[tuple[str, tuple[str, ...], int], ...] = (
+    ("requirement", ("requirement",), SUMMARY_MAX_CHARS),
+    ("evidence", ("evidence",), EVIDENCE_TEXT_MAX_CHARS),
+    ("required_fix", ("required_fix", "fix"), SUMMARY_MAX_CHARS),
+)
+FINDING_TEXT_FIELD_NAMES = frozenset(name for name, _, _ in FINDING_TEXT_FIELDS)
+DROP_REASONS = frozenset(
+    {"missing", "disallowed_chars", "looks_like_secret", "path_like", "unparseable"}
+)
 
 
 def _looks_like_secret(text: str) -> bool:
@@ -840,6 +853,43 @@ def _safe_text(value: Any) -> str | None:
     if ".." in filtered:
         return None
     return filtered
+
+
+def _redact_text(value: Any, limit: int) -> tuple[str | None, str | None]:
+    """Отредактировать одно текстовое поле finding и назвать причину отказа."""
+    if not isinstance(value, str):
+        return None, "missing"
+    collapsed = " ".join(value.split())
+    if not collapsed:
+        return None, "missing"
+    filtered = "".join(
+        character for character in collapsed if character in SUMMARY_ALLOWED_CHARS
+    )
+    filtered = " ".join(filtered.split())[:limit]
+    if not filtered:
+        return None, "disallowed_chars"
+    if _looks_like_secret(filtered):
+        return None, "looks_like_secret"
+    if filtered.startswith(("/", "~", "\\")) or "\\" in filtered:
+        return None, "path_like"
+    if ".." in filtered:
+        return None, "path_like"
+    return filtered, None
+
+
+def _redact_finding_texts(
+    raw: Any,
+) -> tuple[dict[str, str | None], list[str], dict[str, str]]:
+    """Отредактировать канонические текстовые поля независимо друг от друга."""
+    texts: dict[str, str | None] = {}
+    reasons: dict[str, str] = {}
+    for name, keys, limit in FINDING_TEXT_FIELDS:
+        text, reason = _redact_text(_first_present(raw, keys), limit)
+        texts[name] = text
+        if reason is not None:
+            reasons[name] = reason
+    dropped = sorted(name for name, text in texts.items() if text is None)
+    return texts, dropped, {name: reasons[name] for name in dropped}
 
 
 def _safe_relative_path(value: Any) -> str | None:
@@ -891,12 +941,19 @@ def _failed_finding(raw: Any) -> dict[str, Any]:
         "category": FINDING_REDACTION_FAILED,
         "location": {"path": None, "line_start": None, "line_end": None},
         "summary": None,
+        "requirement": None,
+        "evidence": None,
+        "required_fix": None,
         "check_id": None,
         "finding_fingerprint": _finding_fingerprint(raw),
         "redaction": {
             "applied": True,
             "version": EVIDENCE_REDACTION_VERSION,
             "summary_dropped": True,
+            "dropped_fields": sorted(FINDING_TEXT_FIELD_NAMES),
+            "drop_reasons": {
+                name: "unparseable" for name in sorted(FINDING_TEXT_FIELD_NAMES)
+            },
         },
     }
 
@@ -908,7 +965,9 @@ def redact_finding(raw: Any) -> dict[str, Any]:
     severity = _first_present(raw, SEVERITY_KEYS)
     category = _safe_identifier(_first_present(raw, CATEGORY_KEYS))
     summary = _safe_text(_first_present(raw, SUMMARY_KEYS))
-    location = _first_present(raw, PATH_KEYS)
+    location = _first_present(raw, LOCATION_KEYS)
+    if location is None:
+        location = _first_present(raw, PATH_KEYS)
     if isinstance(location, Mapping):
         path = _safe_relative_path(_first_present(location, PATH_KEYS))
         line_start = _safe_line(_first_present(location, LINE_KEYS))
@@ -917,6 +976,7 @@ def redact_finding(raw: Any) -> dict[str, Any]:
         path = _safe_relative_path(location)
         line_start = _safe_line(_first_present(raw, LINE_KEYS))
         line_end = _safe_line(_first_present(raw, END_LINE_KEYS))
+    texts, dropped, reasons = _redact_finding_texts(raw)
     return {
         "severity": severity if severity in FINDING_SEVERITIES else "unknown",
         "category": category or "unclassified",
@@ -926,12 +986,18 @@ def redact_finding(raw: Any) -> dict[str, Any]:
             "line_end": line_end,
         },
         "summary": summary,
+        "requirement": texts["requirement"],
+        "evidence": texts["evidence"],
+        "required_fix": texts["required_fix"],
         "check_id": _safe_identifier(_first_present(raw, CHECK_KEYS)),
         "finding_fingerprint": _finding_fingerprint(raw),
         "redaction": {
             "applied": True,
             "version": EVIDENCE_REDACTION_VERSION,
-            "summary_dropped": summary is None,
+            "summary_dropped": summary is None
+            and len(dropped) == len(FINDING_TEXT_FIELDS),
+            "dropped_fields": dropped,
+            "drop_reasons": reasons,
         },
     }
 
@@ -1083,8 +1149,34 @@ def _record_gate_evidence(state: dict[str, Any], gate_result: Any) -> None:
     )
 
 
+def _iteration_number(payload: Any, history: list[dict[str, Any]]) -> int:
+    """Взять номер итерации из вердикта либо из позиции в истории."""
+    if isinstance(payload, Mapping):
+        candidate = payload.get("repair_iteration")
+        if (
+            isinstance(candidate, int)
+            and not isinstance(candidate, bool)
+            and candidate >= 0
+        ):
+            return candidate
+    return len(history)
+
+
 def _record_verdict(state: dict[str, Any], payload: Any) -> None:
-    state["verdict"] = redact_verdict(payload)
+    """Накопить историю вердиктов, не затирая предыдущие итерации (#204)."""
+    redacted = redact_verdict(payload)
+    history = state.get("verdict_history")
+    if not isinstance(history, list):
+        history = []
+    history.append(
+        {
+            "iteration": _iteration_number(payload, history),
+            "verdict": redacted["verdict"],
+            "blocking_findings": redacted["blocking_findings"],
+        }
+    )
+    state["verdict_history"] = history
+    state["verdict"] = {**redacted, "iteration_history": history}
 
 
 def _durations(state: Mapping[str, Any]) -> dict[str, Any]:
