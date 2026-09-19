@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = REPO_ROOT / "tools" / "codex_adapter.py"
 BASE_SHA = "a" * 40
@@ -110,12 +112,77 @@ def _controller_request() -> dict[str, object]:
         "base_sha": BASE_SHA,
         "head_sha": HEAD_SHA,
         "acceptance_criteria": ["adapter exists"],
+        "contract": {
+            "issue": 181,
+            "epic": 179,
+            "acceptance_criteria": ["adapter exists"],
+            "base_ref": "roadmap/179-codex-adapters",
+            "base_sha": BASE_SHA,
+            "head_ref": "feat/181-codex-adapters",
+            "allowed_paths": ["x"],
+            "permissions": {
+                "commit": False,
+                "push": False,
+                "create_pr": False,
+                "comment": False,
+                "merge": False,
+            },
+            "max_repair_iterations": 2,
+            "remaining_repair_iterations": 2,
+            "max_minutes": 60,
+            "task_class": "implementation",
+        },
         "diff": "diff --git a/x b/x",
-        "gate_evidence": {"status": "passed"},
+        "gate_evidence": {
+            "status": "passed",
+            "snapshot": {"base_sha": BASE_SHA, "snapshot_commit": HEAD_SHA},
+        },
+        "reviewed_state": {"snapshot_commit": HEAD_SHA},
         "repair_iteration": 0,
         "trusted_policy": {"AGENTS.md": "trusted policy text"},
         "session_id": "session",
     }
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "issue",
+        "epic",
+        "acceptance_criteria",
+        "base_ref",
+        "base_sha",
+        "head_ref",
+        "allowed_paths",
+        "permissions",
+        "max_repair_iterations",
+        "remaining_repair_iterations",
+        "max_minutes",
+        "task_class",
+    ],
+)
+def test_missing_pinned_contract_field_fails_before_model(
+    tmp_path: Path, missing: str
+) -> None:
+    command = _fake_codex(tmp_path, json.dumps(CONTROLLER_PAYLOAD))
+    request = _controller_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    del contract[missing]
+    completed = _run("controller", command, request)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "INVALID_REQUEST"
+    assert not (tmp_path / "argv.json").exists()
+
+
+def test_snapshot_mismatch_fails_before_model(tmp_path: Path) -> None:
+    command = _fake_codex(tmp_path, json.dumps(CONTROLLER_PAYLOAD))
+    request = _controller_request()
+    request["reviewed_state"] = {"snapshot_commit": "c" * 40}
+    completed = _run("controller", command, request)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "INVALID_REQUEST"
+    assert not (tmp_path / "argv.json").exists()
 
 
 def test_executor_report_is_authoritative_and_valid(tmp_path: Path) -> None:
@@ -138,9 +205,7 @@ def test_controller_verdict_pins_review_basis(tmp_path: Path) -> None:
     assert verdict["verdict"] == "PASS"
     assert verdict["review_basis"]["head_policy_applied"] is False
     assert verdict["review_basis"]["trust_source_kind"] == "local_read_only_bundle"
-    assert verdict["review_basis"][
-        "executor_self_assessment_treated_as_evidence_only"
-    ]
+    assert verdict["review_basis"]["executor_self_assessment_treated_as_evidence_only"]
 
 
 def test_model_supplied_review_basis_cannot_win(tmp_path: Path) -> None:

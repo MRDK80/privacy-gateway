@@ -12,6 +12,44 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_DIR = REPO_ROOT / "docs" / "schemas"
 
+
+def _controller_request() -> dict[str, Any]:
+    base_sha = "0" * 40
+    snapshot_commit = "1" * 40
+    return {
+        "issue": 192,
+        "base_sha": base_sha,
+        "head_sha": snapshot_commit,
+        "acceptance_criteria": ["schema valid"],
+        "contract": {
+            "issue": 192,
+            "epic": 179,
+            "acceptance_criteria": ["schema valid"],
+            "base_ref": "roadmap/179-codex-adapters",
+            "base_sha": base_sha,
+            "head_ref": "fix/192-controller-schema",
+            "allowed_paths": ["docs/example.md"],
+            "permissions": {
+                "commit": False,
+                "push": False,
+                "create_pr": False,
+                "comment": False,
+                "merge": False,
+            },
+            "max_repair_iterations": 2,
+            "remaining_repair_iterations": 2,
+            "max_minutes": 60,
+            "task_class": "implementation",
+        },
+        "repair_iteration": 0,
+        "gate_evidence": {
+            "snapshot": {"base_sha": base_sha, "snapshot_commit": snapshot_commit}
+        },
+        "reviewed_state": {"snapshot_commit": snapshot_commit},
+        "trusted_policy": {"AGENTS.md": "trusted policy"},
+    }
+
+
 FAKE_CODEX = (
     "import json",
     "import os",
@@ -77,12 +115,7 @@ def test_controller_response_is_pruned_and_schema_is_strict(tmp_path: Path) -> N
     fake = tmp_path / "fake_codex.py"
     fake.write_text(chr(10).join(FAKE_CODEX) + chr(10), encoding="utf-8")
     schema_copy = tmp_path / "generation-schema.json"
-    request = {
-        "issue": 192,
-        "base_sha": "0" * 40,
-        "head_sha": "1" * 40,
-        "trusted_policy": {"AGENTS.md": "trusted policy"},
-    }
+    request = _controller_request()
     completed = subprocess.run(
         [
             sys.executable,
@@ -130,12 +163,7 @@ def test_pruning_does_not_weaken_canonical_validation(tmp_path: Path) -> None:
     fake.write_text(
         chr(10).join(FAKE_CODEX_PASS_WITH_FINDINGS) + chr(10), encoding="utf-8"
     )
-    request = {
-        "issue": 192,
-        "base_sha": "0" * 40,
-        "head_sha": "1" * 40,
-        "trusted_policy": {"AGENTS.md": "trusted policy"},
-    }
+    request = _controller_request()
     completed = subprocess.run(
         [
             sys.executable,
