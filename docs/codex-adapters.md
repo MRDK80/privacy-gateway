@@ -160,6 +160,19 @@ The executor path is unchanged: `_validate_report` never inspected `review_basis
 and a characterization test now pins that behaviour. Canonical schemas in
 `docs/schemas/` are not modified. See `docs/ADR-194-review-basis-trust-source.md`.
 
+## Controller review payload (#207)
+
+Controller review receives the orchestrator-pinned contract, including epic,
+base/head refs, effective allowed paths, permissions, task class, time limit,
+maximum repairs and remaining repair budget. The separate
+`reviewed_state.snapshot_commit` equals
+`gate_evidence.snapshot.snapshot_commit`; `head_sha` still identifies the
+actual Git HEAD and can equal `base_sha` for an uncommitted change. The
+production adapter rejects a missing or inconsistent contract or snapshot
+before invoking Codex. The executor report is absent from review input.
+Trusted policy still comes from the pinned base SHA, and head policy is not
+applied. See `docs/ADR-207-controller-review-payload.md`.
+
 ## Персистентность evidence прогона
 
 Решение зафиксировано в ADR-200. Запись прогона содержит доказательную

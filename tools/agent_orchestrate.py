@@ -1417,8 +1417,28 @@ def run(
                 {
                     "issue": contract.issue,
                     "acceptance_criteria": list(contract.acceptance_criteria),
+                    "contract": {
+                        "issue": contract.issue,
+                        "epic": contract.epic,
+                        "acceptance_criteria": list(contract.acceptance_criteria),
+                        "base_ref": contract.base_ref,
+                        "base_sha": contract.base_sha,
+                        "head_ref": contract.head_ref,
+                        "allowed_paths": list(contract.allowed_paths),
+                        "permissions": asdict(contract.permissions),
+                        "max_repair_iterations": contract.max_repair_iterations,
+                        "remaining_repair_iterations": contract.max_repair_iterations
+                        - repairs,
+                        "max_minutes": contract.max_minutes,
+                        "task_class": contract.task_class,
+                    },
                     "diff": diff,
                     "gate_evidence": gate_result,
+                    "reviewed_state": {
+                        "snapshot_commit": gate_result.get("snapshot", {}).get(
+                            "snapshot_commit"
+                        )
+                    },
                     "base_sha": contract.base_sha,
                     "head_sha": head_sha,
                     "repair_iteration": repairs,
