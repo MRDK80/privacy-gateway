@@ -157,8 +157,7 @@ def normalize_allowed_path(root: Path, value: str) -> str:
         raise OrchestrationError("ALLOWED_PATH_INVALID")
     segments = value.rstrip("/").split("/")
     if any(
-        segment in {"", ".", ".."} or segment != segment.strip()
-        for segment in segments
+        segment in {"", ".", ".."} or segment != segment.strip() for segment in segments
     ):
         raise OrchestrationError("ALLOWED_PATH_INVALID")
     normalized = PurePosixPath("/".join(segments)).as_posix()
@@ -179,6 +178,8 @@ def normalize_allowed_paths(root: Path, values: Sequence[str]) -> tuple[str, ...
         if candidate not in normalized:
             normalized.append(candidate)
     return tuple(normalized)
+
+
 def _run(root: Path, command: Sequence[str], timeout: float | None = None) -> str:
     try:
         completed = subprocess.run(
@@ -497,9 +498,7 @@ def _build_snapshot_state(
         shutil.rmtree(workspace, ignore_errors=True)
 
 
-def create_trusted_snapshot(
-    contract: TaskContract, *, root: Path
-) -> SnapshotEvidence:
+def create_trusted_snapshot(contract: TaskContract, *, root: Path) -> SnapshotEvidence:
     """Зафиксировать проверяемое состояние рабочего дерева без записи refs."""
     tree_hash, snapshot_commit, diff_sha256 = _build_snapshot_state(
         root, contract.base_sha, contract.allowed_paths
@@ -721,7 +720,6 @@ def _default_gate(root: Path, contract: TaskContract) -> dict[str, Any]:
     return cast(dict[str, Any], result)
 
 
-
 def _production_gate(root: Path, contract: TaskContract) -> dict[str, Any]:
     """Run the mandatory snapshot-aware profile and preserve its machine code."""
     try:
@@ -772,8 +770,9 @@ def _assert_gate_snapshot_unchanged(
     )
     assert_tree_unchanged(provenance, root=root)
 
+
 PUBLIC_RECORD_SCHEMA_VERSION = "1.0"
-EVIDENCE_REDACTION_VERSION = "2"
+EVIDENCE_REDACTION_VERSION = "3"
 PUBLIC_GATE_FIELDS = (
     "profile",
     "profile_version",
@@ -794,6 +793,7 @@ PUBLIC_SNAPSHOT_FIELDS = (
     "tree_unchanged",
 )
 SUMMARY_ALLOWED_CHARS = frozenset(agent_gate.SUMMARY_ALLOWED_CHARS)
+FINDING_ALLOWED_CHARS = SUMMARY_ALLOWED_CHARS | frozenset("/")
 SUMMARY_MAX_CHARS = int(agent_gate.SUMMARY_MAX_CHARS)
 SECRET_SHAPE_RE = re.compile(r"[A-Za-z0-9_\-+/=]{20,}")
 IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
@@ -855,41 +855,52 @@ def _safe_text(value: Any) -> str | None:
     return filtered
 
 
-def _redact_text(value: Any, limit: int) -> tuple[str | None, str | None]:
+UNSAFE_PATH_RE = re.compile(r"(?:^|[\s('\"=])(?:/|~/|[A-Za-z]:[\\/]|\\\\)")
+SNAPSHOT_COMMIT_RE = re.compile(r"\b(?:snapshot )?commit [0-9a-f]{40}\b")
+
+
+def _redact_text(value: Any, limit: int) -> tuple[str | None, str | None, bool]:
     """Отредактировать одно текстовое поле finding и назвать причину отказа."""
     if not isinstance(value, str):
-        return None, "missing"
+        return None, "missing", False
     collapsed = " ".join(value.split())
     if not collapsed:
-        return None, "missing"
+        return None, "missing", False
+    if UNSAFE_PATH_RE.search(collapsed) or "\\" in collapsed or ".." in collapsed:
+        return None, "path_like", False
+    secret_scan = SNAPSHOT_COMMIT_RE.sub("snapshot commit SHA", collapsed)
+    if _looks_like_secret(secret_scan):
+        return None, "looks_like_secret", False
     filtered = "".join(
-        character for character in collapsed if character in SUMMARY_ALLOWED_CHARS
+        character for character in collapsed if character in FINDING_ALLOWED_CHARS
     )
-    filtered = " ".join(filtered.split())[:limit]
+    filtered = " ".join(filtered.split())
     if not filtered:
-        return None, "disallowed_chars"
-    if _looks_like_secret(filtered):
-        return None, "looks_like_secret"
-    if filtered.startswith(("/", "~", "\\")) or "\\" in filtered:
-        return None, "path_like"
-    if ".." in filtered:
-        return None, "path_like"
-    return filtered, None
+        return None, "disallowed_chars", False
+    if len(filtered) > limit:
+        boundary = filtered.rfind(" ", 0, limit + 1)
+        if boundary < 1:
+            return None, "disallowed_chars", False
+        return filtered[:boundary], None, True
+    return filtered, None, False
 
 
 def _redact_finding_texts(
     raw: Any,
-) -> tuple[dict[str, str | None], list[str], dict[str, str]]:
+) -> tuple[dict[str, str | None], list[str], dict[str, str], list[str]]:
     """Отредактировать канонические текстовые поля независимо друг от друга."""
     texts: dict[str, str | None] = {}
     reasons: dict[str, str] = {}
+    truncated: list[str] = []
     for name, keys, limit in FINDING_TEXT_FIELDS:
-        text, reason = _redact_text(_first_present(raw, keys), limit)
+        text, reason, was_truncated = _redact_text(_first_present(raw, keys), limit)
         texts[name] = text
         if reason is not None:
             reasons[name] = reason
+        if was_truncated:
+            truncated.append(name)
     dropped = sorted(name for name, text in texts.items() if text is None)
-    return texts, dropped, {name: reasons[name] for name in dropped}
+    return texts, dropped, {name: reasons[name] for name in dropped}, sorted(truncated)
 
 
 def _safe_relative_path(value: Any) -> str | None:
@@ -954,6 +965,7 @@ def _failed_finding(raw: Any) -> dict[str, Any]:
             "drop_reasons": {
                 name: "unparseable" for name in sorted(FINDING_TEXT_FIELD_NAMES)
             },
+            "truncated_fields": [],
         },
     }
 
@@ -976,7 +988,7 @@ def redact_finding(raw: Any) -> dict[str, Any]:
         path = _safe_relative_path(location)
         line_start = _safe_line(_first_present(raw, LINE_KEYS))
         line_end = _safe_line(_first_present(raw, END_LINE_KEYS))
-    texts, dropped, reasons = _redact_finding_texts(raw)
+    texts, dropped, reasons, truncated = _redact_finding_texts(raw)
     return {
         "severity": severity if severity in FINDING_SEVERITIES else "unknown",
         "category": category or "unclassified",
@@ -998,6 +1010,7 @@ def redact_finding(raw: Any) -> dict[str, Any]:
             and len(dropped) == len(FINDING_TEXT_FIELDS),
             "dropped_fields": dropped,
             "drop_reasons": reasons,
+            "truncated_fields": truncated,
         },
     }
 
@@ -1216,9 +1229,7 @@ def public_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
             public_gate["checks"] = None
     public_snapshot: dict[str, Any] | None = None
     if isinstance(snapshot, Mapping):
-        public_snapshot = {
-            key: snapshot.get(key) for key in PUBLIC_SNAPSHOT_FIELDS
-        }
+        public_snapshot = {key: snapshot.get(key) for key in PUBLIC_SNAPSHOT_FIELDS}
     return {
         "schema_version": PUBLIC_RECORD_SCHEMA_VERSION,
         "gate": public_gate,
@@ -1256,11 +1267,7 @@ def run(
             run_id=str(previous["run_id"]),
         )
     run_id = str(previous.get("run_id")) if previous else uuid.uuid4().hex
-    started = (
-        float(previous.get("started", time.time()))
-        if previous
-        else time.time()
-    )
+    started = float(previous.get("started", time.time())) if previous else time.time()
     repairs = int(previous.get("repair_iterations", 0)) if previous else 0
     executor_calls = int(previous.get("executor_calls", 0)) if previous else 0
     controller_calls = int(previous.get("controller_calls", 0)) if previous else 0
@@ -1282,9 +1289,7 @@ def run(
         ):
             final_verdicts.append(status)
         final_failures = list(failures)
-        evidence_state["total_seconds"] = round(
-            max(0.0, time.time() - started), 3
-        )
+        evidence_state["total_seconds"] = round(max(0.0, time.time() - started), 3)
         if machine_code != "OK":
             final_failures.append(machine_code)
         try:

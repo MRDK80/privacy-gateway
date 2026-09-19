@@ -75,15 +75,12 @@ DURATION_KEYS = frozenset(
     {"total_seconds", "executor_seconds", "controller_seconds", "gate_seconds"}
 )
 REDACTION_KEYS = frozenset({"applied", "version", "summary_dropped"})
-REDACTION_KEYS_V2 = REDACTION_KEYS | frozenset(
-    {"dropped_fields", "drop_reasons"}
-)
+REDACTION_KEYS_V2 = REDACTION_KEYS | frozenset({"dropped_fields", "drop_reasons"})
+REDACTION_KEYS_V3 = REDACTION_KEYS_V2 | frozenset({"truncated_fields"})
 CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
 LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
 FINDING_SEVERITIES = (
-    CANONICAL_FINDING_SEVERITIES
-    | LEGACY_FINDING_SEVERITIES
-    | frozenset({"unknown"})
+    CANONICAL_FINDING_SEVERITIES | LEGACY_FINDING_SEVERITIES | frozenset({"unknown"})
 )
 FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
 FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -346,6 +343,15 @@ def _validate_finding_texts(value: Mapping[str, Any]) -> None:
     for reason in reasons.values():
         if reason not in DROP_REASONS:
             _fail_record()
+    if redaction["version"] == "3":
+        truncated = redaction["truncated_fields"]
+        if not isinstance(truncated, list) or truncated != sorted(set(truncated)):
+            _fail_record()
+        if any(
+            item not in FINDING_TEXT_FIELD_NAMES or item in dropped
+            for item in truncated
+        ):
+            _fail_record()
 
 
 def _validate_finding(value: Any) -> None:
@@ -372,9 +378,13 @@ def _validate_finding(value: Any) -> None:
     if not isinstance(fingerprint, str) or not FINGERPRINT_RE.match(fingerprint):
         _fail_record()
     redaction = value["redaction"]
-    expected_redaction = (
-        REDACTION_KEYS_V2 if set(value) == FINDING_KEYS_V2 else REDACTION_KEYS
-    )
+    expected_redaction = REDACTION_KEYS
+    if set(value) == FINDING_KEYS_V2:
+        expected_redaction = (
+            REDACTION_KEYS_V3
+            if isinstance(redaction, dict) and redaction.get("version") == "3"
+            else REDACTION_KEYS_V2
+        )
     if not isinstance(redaction, dict) or set(redaction) != expected_redaction:
         _fail_record()
     if redaction["applied"] is not True:
