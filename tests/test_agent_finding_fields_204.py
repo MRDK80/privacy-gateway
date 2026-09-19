@@ -31,9 +31,9 @@ def test_summary_dropped_is_false_when_text_survives() -> None:
     assert redacted["redaction"]["drop_reasons"] == {}
 
 
-def test_redaction_version_is_two() -> None:
+def test_redaction_version_is_three() -> None:
     redacted = agent_orchestrate.redact_finding(CANONICAL_FINDING)
-    assert redacted["redaction"]["version"] == "2"
+    assert redacted["redaction"]["version"] == "3"
 
 
 def test_secret_shaped_evidence_does_not_remove_requirement() -> None:
@@ -55,11 +55,11 @@ def test_parent_directory_text_is_dropped_with_reason() -> None:
     assert redacted["redaction"]["drop_reasons"] == {"required_fix": "path_like"}
 
 
-def test_slash_is_stripped_by_alphabet_before_path_check() -> None:
+def test_absolute_path_is_dropped_before_alphabet_filter() -> None:
     finding = dict(CANONICAL_FINDING, required_fix="/etc/hosts must be reverted")
     redacted = agent_orchestrate.redact_finding(finding)
-    assert redacted["required_fix"] == "etchosts must be reverted"
-    assert redacted["redaction"]["dropped_fields"] == []
+    assert redacted["required_fix"] is None
+    assert redacted["redaction"]["dropped_fields"] == ["required_fix"]
     assert redacted["redaction"]["summary_dropped"] is False
 
 
@@ -73,8 +73,7 @@ def test_missing_text_field_is_reported_as_missing() -> None:
 
 def test_evidence_limit_is_stricter_than_requirement_limit() -> None:
     assert (
-        agent_orchestrate.EVIDENCE_TEXT_MAX_CHARS
-        < agent_orchestrate.SUMMARY_MAX_CHARS
+        agent_orchestrate.EVIDENCE_TEXT_MAX_CHARS < agent_orchestrate.SUMMARY_MAX_CHARS
     )
     long_text = "evidence " * 60
     finding = dict(CANONICAL_FINDING, evidence=long_text, requirement=long_text)
@@ -85,7 +84,7 @@ def test_evidence_limit_is_stricter_than_requirement_limit() -> None:
 def test_new_shape_matches_private_store_contract() -> None:
     redacted = agent_orchestrate.redact_finding(CANONICAL_FINDING)
     assert set(redacted) == agent_memory.FINDING_KEYS_V2
-    assert set(redacted["redaction"]) == agent_memory.REDACTION_KEYS_V2
+    assert set(redacted["redaction"]) == agent_memory.REDACTION_KEYS_V3
 
 
 def test_unparseable_finding_still_fails_closed() -> None:
