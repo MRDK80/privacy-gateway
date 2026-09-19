@@ -101,6 +101,7 @@ class TaskContract:
     base_sha: str
     head_ref: str
     allowed_paths: tuple[str, ...]
+    delivery_criterion_indices: tuple[int, ...] = ()
     task_class: str = "unspecified"
     max_minutes: int = 60
     max_repair_iterations: int = 2
@@ -209,12 +210,32 @@ def _safe_ref(root: Path, value: str) -> bool:
     return bool(value) and not value.startswith("-")
 
 
+def _validate_delivery_indices(
+    criteria: Sequence[str], indices: Sequence[int]
+) -> None:
+    if not indices:
+        return
+    if (
+        len(indices) >= len(criteria)
+        or any(
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 1
+            or index > len(criteria)
+            for index in indices
+        )
+        or len(set(indices)) != len(indices)
+    ):
+        raise OrchestrationError("INVALID_CONTRACT")
+
+
 def build_contract(
     *,
     issue: int,
     epic: int,
     issue_text: str,
     acceptance_criteria: Sequence[str],
+    delivery_criterion_indices: Sequence[int] = (),
     base_ref: str,
     head_ref: str,
     root: Path,
@@ -229,6 +250,8 @@ def build_contract(
     del issue_text
     if issue < 1 or epic < 1 or not acceptance_criteria:
         raise OrchestrationError("INVALID_CONTRACT")
+    indices = tuple(delivery_criterion_indices)
+    _validate_delivery_indices(acceptance_criteria, indices)
     if not base_ref.startswith("roadmap/") or not _safe_ref(root, base_ref):
         raise OrchestrationError("INVALID_CONTRACT")
     if not _safe_ref(root, head_ref) or head_ref.startswith("roadmap/"):
@@ -242,6 +265,7 @@ def build_contract(
         issue=issue,
         epic=epic,
         acceptance_criteria=tuple(acceptance_criteria),
+        delivery_criterion_indices=indices,
         base_ref=base_ref,
         base_sha=base_sha,
         head_ref=head_ref,
@@ -296,6 +320,10 @@ def default_storage() -> StateStore:
 
 def _run_key(contract: TaskContract) -> str:
     payload = f"{contract.issue}\0{contract.base_sha}\0{contract.head_ref}"
+    if contract.delivery_criterion_indices:
+        payload += "\0" + json.dumps(
+            asdict(contract), ensure_ascii=False, sort_keys=True
+        )
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
@@ -1257,6 +1285,12 @@ def run(
         return RunResult("FAIL_ESCALATE", "UNSAFE_STORAGE", 0, "not-started")
     if not contract.allowed_paths:
         return RunResult("FAIL_ESCALATE", "ALLOWLIST_REQUIRED", 0, "not-started")
+    try:
+        _validate_delivery_indices(
+            contract.acceptance_criteria, contract.delivery_criterion_indices
+        )
+    except OrchestrationError:
+        return RunResult("FAIL_ESCALATE", "INVALID_CONTRACT", 0, "not-started")
     run_key = _run_key(contract)
     previous = storage.load(run_key)
     if previous and previous.get("terminal") is True:
@@ -1284,7 +1318,10 @@ def run(
     def finish(status: str, machine_code: str) -> RunResult:
         result = RunResult(status, machine_code, repairs, run_id)
         final_verdicts = list(verdicts)
-        if status in {"PASS", "PASS_WITH_NOTES", "FAIL_ESCALATE"} and (
+        if (
+            machine_code != "EXTERNAL_GATE_PENDING"
+            and status in {"PASS", "PASS_WITH_NOTES", "FAIL_ESCALATE"}
+        ) and (
             not final_verdicts or final_verdicts[-1] != status
         ):
             final_verdicts.append(status)
@@ -1413,8 +1450,7 @@ def run(
             controller_session = uuid.uuid4().hex
             controller_calls += 1
             controller_started = time.perf_counter()
-            verdict_payload = adapter.review(
-                {
+            review_request: dict[str, Any] = {
                     "issue": contract.issue,
                     "acceptance_criteria": list(contract.acceptance_criteria),
                     "contract": {
@@ -1442,9 +1478,24 @@ def run(
                     "base_sha": contract.base_sha,
                     "head_sha": head_sha,
                     "repair_iteration": repairs,
-                },
-                trusted_policy,
-                controller_session,
+                }
+            if contract.delivery_criterion_indices:
+                delivery = set(contract.delivery_criterion_indices)
+                review_request["review_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index not in delivery
+                ]
+                review_request["pending_delivery_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index in delivery
+                ]
+                review_request["contract"]["delivery_criterion_indices"] = list(
+                    contract.delivery_criterion_indices
+                )
+            verdict_payload = adapter.review(
+                review_request, trusted_policy, controller_session
             )
             verdict = _validate_verdict(verdict_payload, contract, head_sha)
             evidence_state["controller_seconds"] = round(
@@ -1454,6 +1505,8 @@ def run(
             verdicts.append(verdict)
             findings += len(verdict_payload["blocking_findings"])
             if verdict in {"PASS", "PASS_WITH_NOTES"}:
+                if contract.delivery_criterion_indices:
+                    return finish("FAIL_ESCALATE", "EXTERNAL_GATE_PENDING")
                 return finish(verdict, "OK")
             if verdict == "FAIL_ESCALATE" or repairs >= contract.max_repair_iterations:
                 return finish("FAIL_ESCALATE", "REVIEW_ESCALATED")
@@ -1615,6 +1668,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--criterion", action="append", required=True)
+    parser.add_argument(
+        "--delivery-criterion-index",
+        action="append",
+        type=int,
+        metavar="N",
+        help="1-based index of a pinned criterion checked only by an external gate",
+    )
     parser.add_argument("--executor-command", type=_json_command)
     parser.add_argument("--controller-command", type=_json_command)
     parser.add_argument("--max-minutes", type=int, default=60)
@@ -1646,6 +1706,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             epic=args.epic,
             issue_text="",
             acceptance_criteria=args.criterion,
+            delivery_criterion_indices=args.delivery_criterion_index or (),
             base_ref=args.base,
             head_ref=args.head,
             root=args.root,
