@@ -89,7 +89,13 @@ The executor now requires Bubblewrap on Linux. The adapter validates the
 effective allowlist independently of the model prompt, starts with a read-only
 bind of the host root, then bind-mounts each accepted file read-write. The
 role's private temporary directory is also writable so Codex can write its
-schema and output. No executor role call starts if
+schema and output. For #216, the executor also uses a fresh `CODEX_HOME`
+inside that same owner-private scratch directory: Codex can create its state
+database there, while an existing `auth.json` from the caller's Codex home is
+mounted read-only, not copied. The original home, checkout outside the file
+allowlist, protected paths and shared Git directory remain read-only. The
+scratch is deleted best-effort after the call; it is not durable storage.
+No executor role call starts if
 Bubblewrap is missing or the allowlist is empty, unsafe or unsupported. A
 Bubblewrap namespace failure returns a failing adapter result; it never falls
 back to the previous direct `workspace-write` invocation.

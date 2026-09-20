@@ -44,6 +44,26 @@ rather than created. The
 linked-worktree `.git` file and its shared Git directory remain read-only;
 commands requiring `.git/config` or lock files may fail.
 
+## Corrective decision (#216)
+
+The first live pilot after #185 stopped before the gate: Codex attempted to
+write its state database under its normal home, which the read-only root
+correctly rejected. A fake CLI that writes only the requested output did not
+exercise this startup path. The executor now sets `CODEX_HOME` to a fresh,
+owner-private directory inside the existing ephemeral scratch bind. Only an
+existing regular `auth.json` from the caller's Codex home is mounted into it
+read-only; credentials are not copied. The runtime may write its state database,
+session metadata and caches in that scratch directory during the role call.
+The scratch directory is removed best-effort after the call; it is not a
+durable evidence store. Missing authentication is left to Codex to reject,
+without broadening filesystem access or retrying outside Bubblewrap.
+
+This writable surface is separate from the repository file allowlist. The
+checkout, shared Git directory, protected paths and caller's original Codex
+home remain read-only. The existing output/schema scratch and network/read
+limitations remain unchanged. A failure to establish the private runtime
+mount fails closed; it must not trigger a direct or broadly writable retry.
+
 Codex needs its remote model connection, so the namespace cannot always
 disable networking. Network isolation is a separate precondition for an
 offline fake role, and the production role must be limited to the Codex API by
