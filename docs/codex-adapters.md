@@ -29,7 +29,7 @@ used, because the role contract requires exactly one JSON object on stdout.
 
 | Aspect | Executor | Controller |
 |---|---|---|
-| Sandbox | `workspace-write` | `read-only` |
+| Sandbox | Bubblewrap read-only root with file allowlist, then `workspace-write` | `read-only` |
 | Working root | repository root | temporary policy bundle |
 | Extra flags | none | `--skip-git-repo-check` |
 | Schema | `executor-report.schema.json` | `controller-verdict.schema.json` |
@@ -85,17 +85,33 @@ duplicated effort.
 
 ## Scope enforcement
 
-Codex sandbox modes are an outer, coarser boundary. They do not express
-`scope.allowed_paths` and are not its enforcement: `workspace-write` makes the
-whole working root writable, `--add-dir` only widens the writable set, and
-`allowed_paths` may name individual files. For that reason `--add-dir` is not
-used to express scope and `--worktree` is not used at all; worktree placement
-and cleanup stay with the orchestrator.
+The executor now requires Bubblewrap on Linux. The adapter validates the
+effective allowlist independently of the model prompt, starts with a read-only
+bind of the host root, then bind-mounts each accepted file read-write. The
+role's private temporary directory is also writable so Codex can write its
+schema and output. No executor role call starts if
+Bubblewrap is missing or the allowlist is empty, unsafe or unsupported. A
+Bubblewrap namespace failure returns a failing adapter result; it never falls
+back to the previous direct `workspace-write` invocation.
 
-Exact conformance to the effective allowlist is enforced by the post-hoc check
-introduced in #180: changed files are compared against the normalised allowlist
-after every executor call, including repair iterations, and a mismatch fails
-closed with `SCOPE_VIOLATION` and exit code 20.
+At present the enforced allowlist accepts only existing, non-symlinked regular
+files with one hard link. Directory entries and new files fail closed. This
+keeps as-yet-nonexistent nested policy files such as `AGENTS.md` outside every
+writable mount. `.git`, protected and private paths are read-only, including
+the shared Git directory of a linked worktree. Git operations needing
+`.git/config` writes or lock files may fail. `--add-dir` and Codex `--worktree`
+are not used. The Codex `workspace-write` sandbox remains a second boundary
+inside Bubblewrap, but it does not define the effective allowlist.
+
+Codex needs access to its remote model API, so the production role cannot run
+with Bubblewrap network unsharing. The mount boundary does not restrict reads,
+set CPU or memory limits, or apply seccomp filtering. The private temporary
+directory is writable during the call but removed afterwards. See ADR-185.
+
+The post-execution `_assert_scope` check from #180 remains as defence in depth:
+changed files are compared against the normalised allowlist after every
+executor call, including repair iterations. A mismatch fails closed with
+`SCOPE_VIOLATION` and exit code 20.
 
 ## Machine codes
 
@@ -104,6 +120,7 @@ closed with `SCOPE_VIOLATION` and exit code 20.
 | `INVALID_REQUEST` | stdin is not a role request with usable identity fields |
 | `VERSION_MISMATCH` | Codex CLI older than 0.154.0 or unparseable version |
 | `CODEX_NOT_FOUND` | the Codex binary cannot be launched (`OSError`) |
+| `SANDBOX_UNAVAILABLE` | Bubblewrap executable is absent; executor never starts |
 | `VERSION_PROBE_FAILED` | `codex --version` timed out or exited non-zero |
 | `MODEL_UNAVAILABLE` | non-zero exit from `codex exec` |
 | `ADAPTER_TIMEOUT` | role call exceeded the timeout |

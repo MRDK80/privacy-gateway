@@ -7,6 +7,7 @@ to a temporary directory and passed through ``--codex-command``.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -28,7 +29,10 @@ FAKE_LINES = (
     "target = Path(argv[argv.index('-o') + 1])",
     "target.write_text(PAYLOAD, encoding='utf-8')",
     "marker = Path(__file__).with_name('argv.json')",
-    "marker.write_text(json.dumps(argv), encoding='utf-8')",
+    "try:",
+    "    marker.write_text(json.dumps(argv), encoding='utf-8')",
+    "except OSError:",
+    "    pass",
     "raise SystemExit(EXIT_CODE)",
 )
 
@@ -65,6 +69,7 @@ def _fake_codex(
     *,
     version: str = "codex-cli 0.154.0",
     exit_code: int = 0,
+    prelude: tuple[str, ...] = (),
 ) -> list[str]:
     script = tmp_path / "fake_codex.py"
     header = (
@@ -72,13 +77,18 @@ def _fake_codex(
         "PAYLOAD = " + repr(payload),
         "EXIT_CODE = " + repr(exit_code),
     )
-    body = chr(10).join(header + FAKE_LINES) + chr(10)
+    body = chr(10).join(header + FAKE_LINES[:5] + prelude + FAKE_LINES[5:]) + chr(10)
     script.write_text(body, encoding="utf-8")
     return [sys.executable, str(script)]
 
 
 def _run(
-    role: str, command: list[str], request: dict[str, object]
+    role: str,
+    command: list[str],
+    request: dict[str, object],
+    *,
+    root: Path = REPO_ROOT,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
@@ -88,18 +98,25 @@ def _run(
             role,
             "--codex-command",
             json.dumps(command),
+            "--root",
+            str(root),
         ],
         cwd=REPO_ROOT,
         input=json.dumps(request),
         capture_output=True,
         text=True,
         check=False,
+        env=env,
     )
 
 
 def _executor_request() -> dict[str, object]:
     return {
-        "contract": {"issue": 181, "base_sha": BASE_SHA},
+        "contract": {
+            "issue": 181,
+            "base_sha": BASE_SHA,
+            "allowed_paths": ["tools/codex_adapter.py"],
+        },
         "head_sha": HEAD_SHA,
         "repair_iteration": 0,
         "session_id": "session",
@@ -236,6 +253,7 @@ def test_delivery_partition_tampering_fails_before_model(
     assert not (tmp_path / "argv.json").exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
 def test_executor_report_is_authoritative_and_valid(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
     completed = _run("executor", command, _executor_request())
@@ -310,6 +328,7 @@ def test_schema_violation_fails_closed(tmp_path: Path) -> None:
     assert "SCHEMA_VIOLATION" in completed.stderr
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
 def test_malformed_output_fails_closed(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, "not json at all")
     completed = _run("executor", command, _executor_request())
@@ -317,6 +336,7 @@ def test_malformed_output_fails_closed(tmp_path: Path) -> None:
     assert "MALFORMED_OUTPUT" in completed.stderr
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
 def test_nonzero_exit_fails_closed(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD), exit_code=1)
     completed = _run("executor", command, _executor_request())
@@ -338,3 +358,138 @@ def test_invalid_request_fails_closed(tmp_path: Path) -> None:
     completed = _run("executor", command, {"contract": {}})
     assert completed.returncode == 20
     assert "INVALID_REQUEST" in completed.stderr
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
+def test_executor_os_denies_out_of_scope_operations(tmp_path: Path) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    allowed = root / "allowed.txt"
+    allowed.write_text("allowed", encoding="utf-8")
+    protected = root / "AGENTS.md"
+    protected.write_text("protected", encoding="utf-8")
+    external = tmp_path / "external.txt"
+    external.write_text("external", encoding="utf-8")
+    before = protected.stat()
+    external_before = external.stat()
+    status_before = subprocess.run(
+        ["git", "status", "--porcelain=v1"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    prelude = (
+        "import errno, os",
+        "protected = Path('AGENTS.md')",
+        "allowed = Path('allowed.txt')",
+        "outside = Path('outside.txt')",
+        "external = Path(" + repr(str(external)) + ")",
+        "operations = [",
+        "    lambda: protected.write_text('tampered'),",
+        "    lambda: outside.write_text('created'),",
+        "    lambda: external.write_text('tampered'),",
+        "    lambda: protected.unlink(),",
+        "    lambda: allowed.rename(protected),",
+        "    lambda: os.link(protected, outside),",
+        "    lambda: os.symlink(protected, outside),",
+        "]",
+        "for operation in operations:",
+        "    try:",
+        "        operation()",
+        "    except OSError as error:",
+        "        if error.errno not in {errno.EACCES, errno.EPERM, errno.EROFS}:",
+        "            raise",
+        "    else:",
+        "        raise SystemExit(9)",
+    )
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD), prelude=prelude)
+    request = _executor_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["allowed_paths"] = ["allowed.txt"]
+    completed = _run("executor", command, request, root=root)
+    assert completed.returncode == 0, completed.stderr
+    after = protected.stat()
+    assert protected.read_text(encoding="utf-8") == "protected"
+    assert (after.st_mode, after.st_size, after.st_mtime_ns) == (
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    assert allowed.read_text(encoding="utf-8") == "allowed"
+    assert not (root / "outside.txt").exists()
+    assert external.read_text(encoding="utf-8") == "external"
+    external_after = external.stat()
+    assert (
+        external_after.st_mode,
+        external_after.st_size,
+        external_after.st_mtime_ns,
+    ) == (
+        external_before.st_mode,
+        external_before.st_size,
+        external_before.st_mtime_ns,
+    )
+    assert (
+        subprocess.run(
+            ["git", "status", "--porcelain=v1"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        == status_before
+    )
+
+
+def test_executor_missing_bubblewrap_fails_before_model(tmp_path: Path) -> None:
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
+    environment = dict(os.environ, PATH=str(tmp_path / "empty-path"))
+    completed = _run("executor", command, _executor_request(), env=environment)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "SANDBOX_UNAVAILABLE"
+    assert not (tmp_path / "argv.json").exists()
+
+
+def test_executor_namespace_failure_never_falls_back(tmp_path: Path) -> None:
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    bubblewrap = binary_dir / "bwrap"
+    bubblewrap.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    bubblewrap.chmod(0o755)
+    environment = dict(os.environ, PATH=str(binary_dir))
+    completed = _run("executor", command, _executor_request(), env=environment)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "MODEL_UNAVAILABLE"
+    assert not (tmp_path / "argv.json").exists()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    ["AGENTS.md", ".git/config", "docs", "missing.txt", "link.txt", "hardlink.txt"],
+)
+def test_executor_rejects_unsafe_or_unsupported_scope_before_model(
+    tmp_path: Path, entry: str
+) -> None:
+    if sys.platform != "linux" and entry in {"link.txt", "hardlink.txt"}:
+        pytest.skip("link creation requires platform-specific privileges")
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "AGENTS.md").write_text("policy", encoding="utf-8")
+    (root / ".git").mkdir()
+    (root / ".git" / "config").write_text("config", encoding="utf-8")
+    (root / "docs").mkdir()
+    if sys.platform == "linux":
+        (root / "link.txt").symlink_to("AGENTS.md")
+        os.link(root / "AGENTS.md", root / "hardlink.txt")
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
+    request = _executor_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["allowed_paths"] = [entry]
+    completed = _run("executor", command, request, root=root)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "INVALID_REQUEST"
+    assert not (tmp_path / "argv.json").exists()
