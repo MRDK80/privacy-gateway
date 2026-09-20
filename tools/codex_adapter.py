@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import errno
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -448,6 +449,7 @@ def _executor_paths(root: Path, request: Mapping[str, Any]) -> tuple[Path, ...]:
         raise AdapterError("INVALID_REQUEST")
     protected = (*PROTECTED_PATTERNS, *PRIVATE_PATTERNS, *POLICY_FILES, ".git")
     paths: list[Path] = []
+    missing: list[Path] = []
     for relative in normalized:
         path = root / relative
         if any(
@@ -455,15 +457,34 @@ def _executor_paths(root: Path, request: Mapping[str, Any]) -> tuple[Path, ...]:
             for item in protected
         ):
             raise AdapterError("INVALID_REQUEST")
-        if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
-            raise AdapterError("INVALID_REQUEST")
         if any(
             (root / part).is_symlink()
             for part in Path(relative).parents
             if part != Path(".")
         ):
             raise AdapterError("INVALID_REQUEST")
+        if path.is_symlink():
+            raise AdapterError("INVALID_REQUEST")
+        if path.exists():
+            if not path.is_file() or path.stat().st_nlink != 1:
+                raise AdapterError("INVALID_REQUEST")
+        elif path.parent.is_dir() and not path.parent.is_symlink():
+            if sys.platform != "linux" or shutil.which("bwrap") is None:
+                raise AdapterError("SANDBOX_UNAVAILABLE")
+            missing.append(path)
+        else:
+            raise AdapterError("INVALID_REQUEST")
         paths.append(path)
+    for path in missing:
+        try:
+            descriptor = os.open(
+                path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600,
+            )
+        except OSError as error:
+            raise AdapterError("INVALID_REQUEST") from error
+        os.close(descriptor)
     return tuple(paths)
 
 

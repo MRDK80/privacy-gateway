@@ -30,11 +30,17 @@ The orchestrator's diagnostic whitelist includes the new code, while its
 published stdout JSON remains unchanged.
 
 The adapter validates the allowlist independently of the prompt and rejects
-empty, escaping, protected/private, symlinked, hardlinked, missing, or directory
-entries. Only existing regular files with one link are supported. A directory
+empty, escaping, protected/private, symlinked, hardlinked, or directory
+entries. Existing regular files with one link are supported. A missing
+allowlisted file is safely created as an empty file by the trusted adapter,
+after validating its existing parent directory and every path component,
+using exclusive creation with no symlink following. The newly created file is
+then mounted read-write by the same file-only rule. This adapter-created file
+may remain if a later role call fails; it is inside the effective allowlist and
+remains visible to the post-execution scope check. A directory
 bind could permit creation of a nested `AGENTS.md` that does not yet exist;
-supporting it needs a separate design. Creation of a new allowed file also
-needs a separate safe strategy, because a bind target must already exist. The
+supporting it needs a separate design. A missing parent directory is rejected
+rather than created. The
 linked-worktree `.git` file and its shared Git directory remain read-only;
 commands requiring `.git/config` or lock files may fail.
 
