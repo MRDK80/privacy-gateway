@@ -399,6 +399,23 @@ def test_executor_os_denies_out_of_scope_operations(
     allowed.write_text("allowed", encoding="utf-8")
     protected = root / "AGENTS.md"
     protected.write_text("protected", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "--", "allowed.txt", "AGENTS.md"], cwd=root, check=True
+    )
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=synthetic fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "synthetic baseline",
+        ],
+        cwd=root,
+        check=True,
+    )
     external = tmp_path / "external.txt"
     external.write_text("external", encoding="utf-8")
     before = protected.stat()
@@ -410,6 +427,7 @@ def test_executor_os_denies_out_of_scope_operations(
         text=True,
         check=True,
     ).stdout
+    assert status_before == ""
     prelude = (
         "import errno, os",
         "protected = Path('AGENTS.md')",
