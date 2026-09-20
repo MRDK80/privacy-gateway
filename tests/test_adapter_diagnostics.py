@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,35 @@ ADAPTER = REPO_ROOT / "tools" / "codex_adapter.py"
 BASE_SHA = "a" * 40
 HEAD_SHA = "b" * 40
 FAKE_CREDENTIAL = "fake-credential-value-not-a-secret"
+
+
+@pytest.fixture
+def active_bubblewrap() -> None:
+    if sys.platform != "linux":
+        pytest.skip("Bubblewrap is Linux-only")
+    binary = shutil.which("bwrap")
+    if binary is None:
+        pytest.skip("Bubblewrap is not installed")
+    probe = subprocess.run(
+        [
+            binary,
+            "--unshare-pid",
+            "--ro-bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--",
+            "/bin/true",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Bubblewrap mount namespace is unavailable on this runner")
+
 
 FAKE_LINES = (
     "import sys",
@@ -87,16 +117,18 @@ def test_failing_version_probe_is_distinguishable(tmp_path: Path) -> None:
     assert "VERSION_PROBE_FAILED" in completed.stderr
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_nonzero_exec_keeps_model_unavailable(tmp_path: Path) -> None:
+def test_nonzero_exec_keeps_model_unavailable(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     completed = _run(_fake_codex(tmp_path, exit_code=1, stderr="some failure"))
     assert completed.returncode == 20
     assert "MODEL_UNAVAILABLE" in completed.stderr
     assert "codex_exit=1" in completed.stderr
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_invalid_json_schema_token_is_surfaced(tmp_path: Path) -> None:
+def test_invalid_json_schema_token_is_surfaced(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     noise = (
         "Invalid schema for response_format 'codex_output_schema': invalid_json_schema"
     )

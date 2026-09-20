@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,35 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = REPO_ROOT / "tools" / "codex_adapter.py"
 BASE_SHA = "a" * 40
 HEAD_SHA = "b" * 40
+
+
+@pytest.fixture
+def active_bubblewrap() -> None:
+    if sys.platform != "linux":
+        pytest.skip("Bubblewrap is Linux-only")
+    binary = shutil.which("bwrap")
+    if binary is None:
+        pytest.skip("Bubblewrap is not installed")
+    probe = subprocess.run(
+        [
+            binary,
+            "--unshare-pid",
+            "--ro-bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--",
+            "/bin/true",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Bubblewrap mount namespace is unavailable on this runner")
+
 
 FAKE_LINES = (
     "import json, sys",
@@ -253,8 +283,9 @@ def test_delivery_partition_tampering_fails_before_model(
     assert not (tmp_path / "argv.json").exists()
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_executor_report_is_authoritative_and_valid(tmp_path: Path) -> None:
+def test_executor_report_is_authoritative_and_valid(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
     completed = _run("executor", command, _executor_request())
     assert completed.returncode == 0, completed.stderr
@@ -328,16 +359,14 @@ def test_schema_violation_fails_closed(tmp_path: Path) -> None:
     assert "SCHEMA_VIOLATION" in completed.stderr
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_malformed_output_fails_closed(tmp_path: Path) -> None:
+def test_malformed_output_fails_closed(tmp_path: Path, active_bubblewrap: None) -> None:
     command = _fake_codex(tmp_path, "not json at all")
     completed = _run("executor", command, _executor_request())
     assert completed.returncode == 20
     assert "MALFORMED_OUTPUT" in completed.stderr
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_nonzero_exit_fails_closed(tmp_path: Path) -> None:
+def test_nonzero_exit_fails_closed(tmp_path: Path, active_bubblewrap: None) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD), exit_code=1)
     completed = _run("executor", command, _executor_request())
     assert completed.returncode == 20
@@ -360,8 +389,9 @@ def test_invalid_request_fails_closed(tmp_path: Path) -> None:
     assert "INVALID_REQUEST" in completed.stderr
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
-def test_executor_os_denies_out_of_scope_operations(tmp_path: Path) -> None:
+def test_executor_os_denies_out_of_scope_operations(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     root = tmp_path / "checkout"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
@@ -452,6 +482,7 @@ def test_executor_missing_bubblewrap_fails_before_model(tmp_path: Path) -> None:
     assert not (tmp_path / "argv.json").exists()
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
 def test_executor_namespace_failure_never_falls_back(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
     binary_dir = tmp_path / "bin"

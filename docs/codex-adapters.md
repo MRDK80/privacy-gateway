@@ -107,6 +107,9 @@ Codex needs access to its remote model API, so the production role cannot run
 with Bubblewrap network unsharing. The mount boundary does not restrict reads,
 set CPU or memory limits, or apply seccomp filtering. The private temporary
 directory is writable during the call but removed afterwards. See ADR-185.
+Hosted CI runners may block unprivileged mount namespaces. On such a runner,
+active-namespace integration tests are skipped after a probe, while fail-closed
+tests still run. The local active-namespace result is reported separately.
 
 The post-execution `_assert_scope` check from #180 remains as defence in depth:
 changed files are compared against the normalised allowlist after every

@@ -51,7 +51,11 @@ accepts `EACCES`, `EPERM`, or `EROFS`; and compares content and metadata plus
 `git status` afterwards. A missing Bubblewrap executable or namespace support
 must fail closed instead of silently using the old invocation. The test must
 run on a platform where the chosen Linux mechanism is available; another
-platform needs its own explicit enforcement decision.
+platform needs its own explicit enforcement decision. A CI runner that blocks
+unprivileged mount namespaces skips the positive Bubblewrap integration tests
+after a capability probe; fail-closed tests for missing or failing Bubblewrap
+still run. A green CI check on that runner does not itself prove active OS
+confinement. Local active-namespace test evidence is reported separately.
 
 ## Limits
 
