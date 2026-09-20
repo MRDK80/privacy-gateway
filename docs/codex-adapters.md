@@ -94,8 +94,10 @@ Bubblewrap is missing or the allowlist is empty, unsafe or unsupported. A
 Bubblewrap namespace failure returns a failing adapter result; it never falls
 back to the previous direct `workspace-write` invocation.
 
-At present the enforced allowlist accepts only existing, non-symlinked regular
-files with one hard link. Directory entries and new files fail closed. This
+At present the enforced allowlist accepts non-symlinked regular files with one
+hard link, including a missing file whose existing parent is validated and
+whose empty placeholder is created exclusively by the trusted adapter before
+the role call. Directory entries and missing parent directories fail closed. This
 keeps as-yet-nonexistent nested policy files such as `AGENTS.md` outside every
 writable mount. `.git`, protected and private paths are read-only, including
 the shared Git directory of a linked worktree. Git operations needing

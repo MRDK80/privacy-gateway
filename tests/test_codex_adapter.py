@@ -473,6 +473,38 @@ def test_executor_os_denies_out_of_scope_operations(
     )
 
 
+def test_executor_can_create_new_allowlisted_file_only(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "docs").mkdir()
+    protected = root / "AGENTS.md"
+    protected.write_text("policy", encoding="utf-8")
+    prelude = (
+        "import errno",
+        "Path('docs/language-policy.md').write_text('new file', encoding='utf-8')",
+        "try:",
+        "    Path('AGENTS.md').write_text('tampered', encoding='utf-8')",
+        "except OSError as error:",
+        "    if error.errno not in {errno.EACCES, errno.EPERM, errno.EROFS}:",
+        "        raise",
+        "else:",
+        "    raise SystemExit(9)",
+    )
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD), prelude=prelude)
+    request = _executor_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["allowed_paths"] = ["docs/language-policy.md"]
+    completed = _run("executor", command, request, root=root)
+    assert completed.returncode == 0, completed.stderr
+    assert (root / "docs" / "language-policy.md").read_text(
+        encoding="utf-8"
+    ) == "new file"
+    assert protected.read_text(encoding="utf-8") == "policy"
+
+
 def test_executor_missing_bubblewrap_fails_before_model(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
     environment = dict(os.environ, PATH=str(tmp_path / "empty-path"))
@@ -480,6 +512,22 @@ def test_executor_missing_bubblewrap_fails_before_model(tmp_path: Path) -> None:
     assert completed.returncode == 20
     assert completed.stderr.splitlines()[0] == "SANDBOX_UNAVAILABLE"
     assert not (tmp_path / "argv.json").exists()
+
+
+def test_new_allowed_file_is_not_created_without_bubblewrap(tmp_path: Path) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    (root / "docs").mkdir()
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
+    request = _executor_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["allowed_paths"] = ["docs/language-policy.md"]
+    environment = dict(os.environ, PATH=str(tmp_path / "empty-path"))
+    completed = _run("executor", command, request, root=root, env=environment)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "SANDBOX_UNAVAILABLE"
+    assert not (root / "docs" / "language-policy.md").exists()
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Bubblewrap is Linux-only")
@@ -499,7 +547,14 @@ def test_executor_namespace_failure_never_falls_back(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "entry",
-    ["AGENTS.md", ".git/config", "docs", "missing.txt", "link.txt", "hardlink.txt"],
+    [
+        "AGENTS.md",
+        ".git/config",
+        "docs",
+        "missing-parent/file.txt",
+        "link.txt",
+        "hardlink.txt",
+    ],
 )
 def test_executor_rejects_unsafe_or_unsupported_scope_before_model(
     tmp_path: Path, entry: str
