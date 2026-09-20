@@ -124,6 +124,18 @@ changed files are compared against the normalised allowlist after every
 executor call, including repair iterations. A mismatch fails closed with
 `SCOPE_VIOLATION` and exit code 20.
 
+## Repair feedback (#219)
+
+Each executor call remains a fresh ephemeral session. The first call receives
+no feedback. A later call receives only the preceding failure: deterministic
+gate code and bounded check identities, or at most eight redacted controller
+findings. Raw gate output, controller evidence snippets, diff and executor
+self-assessment are not copied into the feedback. The feedback is untrusted
+task data, cannot alter the pinned contract or sandbox, and is validated before
+Codex starts. A process resumed from a nonterminal repair record cannot
+recover this transient private context from public state and fails closed with
+`INTERNAL_ERROR`. See ADR-219.
+
 ## Machine codes
 
 | Code | Meaning |
