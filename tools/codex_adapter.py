@@ -393,6 +393,14 @@ def _run_codex(
         bubblewrap = shutil.which("bwrap")
         if bubblewrap is None:
             raise AdapterError("SANDBOX_UNAVAILABLE")
+        runtime_home = scratch_path / "codex-home"
+        runtime_home.mkdir(mode=0o700)
+        caller_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+        auth_source = caller_home / "auth.json"
+        if auth_source.is_symlink() or (
+            auth_source.exists() and not auth_source.is_file()
+        ):
+            raise AdapterError("INVALID_REQUEST")
         sandbox_argv = [
             bubblewrap,
             "--die-with-parent",
@@ -408,9 +416,16 @@ def _run_codex(
             str(scratch_path),
             str(scratch_path),
         ]
+        if auth_source.is_file():
+            auth_target = runtime_home / "auth.json"
+            auth_target.touch(mode=0o600)
+            sandbox_argv.extend(("--ro-bind", str(auth_source), str(auth_target)))
         for path in allowed_paths:
             sandbox_argv.extend(("--bind", str(path), str(path)))
         argv = [*sandbox_argv, "--", *argv]
+        environment = dict(os.environ, CODEX_HOME=str(runtime_home))
+    else:
+        environment = None
     try:
         completed = subprocess.run(
             argv,
@@ -420,6 +435,7 @@ def _run_codex(
             text=True,
             check=False,
             timeout=timeout,
+            env=environment,
         )
     except subprocess.TimeoutExpired as error:
         raise AdapterError("ADAPTER_TIMEOUT") from error

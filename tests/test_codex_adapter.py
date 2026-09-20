@@ -120,6 +120,10 @@ def _run(
     root: Path = REPO_ROOT,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    if env is None:
+        synthetic_home = Path(command[-1]).parent / "synthetic-codex-home"
+        synthetic_home.mkdir(exist_ok=True)
+        env = dict(os.environ, CODEX_HOME=str(synthetic_home))
     return subprocess.run(
         [
             sys.executable,
@@ -521,6 +525,55 @@ def test_executor_can_create_new_allowlisted_file_only(
         encoding="utf-8"
     ) == "new file"
     assert protected.read_text(encoding="utf-8") == "policy"
+
+
+def test_executor_codex_state_is_private_and_auth_is_read_only(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    allowed = root / "allowed.txt"
+    allowed.write_text("allowed", encoding="utf-8")
+    protected = root / "AGENTS.md"
+    protected.write_text("policy", encoding="utf-8")
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    auth = codex_home / "auth.json"
+    auth.write_text("synthetic-auth", encoding="utf-8")
+    prelude = (
+        "import errno, os",
+        "runtime_home = Path(os.environ['CODEX_HOME'])",
+        "assert runtime_home != Path(" + repr(str(codex_home)) + ")",
+        "assert (runtime_home / 'auth.json').read_text() == 'synthetic-auth'",
+        "(runtime_home / 'state_5.sqlite').write_text('synthetic-state')",
+        "try:",
+        "    (runtime_home / 'auth.json').write_text('tampered')",
+        "except OSError as error:",
+        "    if error.errno not in {errno.EACCES, errno.EPERM, errno.EROFS}:",
+        "        raise",
+        "else:",
+        "    raise SystemExit(9)",
+        "Path('allowed.txt').write_text('changed', encoding='utf-8')",
+        "try:",
+        "    Path('AGENTS.md').write_text('tampered', encoding='utf-8')",
+        "except OSError as error:",
+        "    if error.errno not in {errno.EACCES, errno.EPERM, errno.EROFS}:",
+        "        raise",
+        "else:",
+        "    raise SystemExit(9)",
+    )
+    command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD), prelude=prelude)
+    environment = dict(os.environ, CODEX_HOME=str(codex_home))
+    request = _executor_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["allowed_paths"] = ["allowed.txt"]
+    completed = _run("executor", command, request, root=root, env=environment)
+    assert completed.returncode == 0, completed.stderr
+    assert allowed.read_text(encoding="utf-8") == "changed"
+    assert protected.read_text(encoding="utf-8") == "policy"
+    assert auth.read_text(encoding="utf-8") == "synthetic-auth"
+    assert not (codex_home / "state_5.sqlite").exists()
 
 
 def test_executor_missing_bubblewrap_fails_before_model(tmp_path: Path) -> None:
