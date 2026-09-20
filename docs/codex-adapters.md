@@ -173,6 +173,27 @@ before invoking Codex. The executor report is absent from review input.
 Trusted policy still comes from the pinned base SHA, and head policy is not
 applied. See `docs/ADR-207-controller-review-payload.md`.
 
+## Patch review versus delivery gates (#211)
+
+An operator may pass the full, verbatim acceptance criteria with repeated
+`--criterion` and explicitly mark 1-based positions checked only after the
+pilot with repeated `--delivery-criterion-index`. For example, if positions
+8 and 9 require a task PR and exact PR CI, mark exactly 8 and 9. The list may
+not be empty after partitioning, and invalid or duplicate positions fail
+closed with `INVALID_CONTRACT`. No delivery classification is inferred from
+issue text or model output.
+
+The executor still receives the full contract. The controller receives that
+same list plus the exact `review_criteria` and
+`pending_delivery_criteria` partition. The production adapter validates
+the partition before Codex runs. A positive ControllerVerdict is a patch
+review result only; the adapter adds a deterministic pending-gates note.
+The orchestrator keeps the public result non-positive:
+`FAIL_ESCALATE / EXTERNAL_GATE_PENDING`, exit code 20. The positive
+controller verdict remains in private retrospective evidence; neither result
+proves `TASK DONE`. PR and CI are verified separately with primary GitHub
+results. See `docs/ADR-211-patch-review-delivery-gates.md`.
+
 ## Персистентность evidence прогона
 
 Решение зафиксировано в ADR-200. Запись прогона содержит доказательную

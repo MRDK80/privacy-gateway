@@ -185,6 +185,57 @@ def test_snapshot_mismatch_fails_before_model(tmp_path: Path) -> None:
     assert not (tmp_path / "argv.json").exists()
 
 
+def test_explicit_delivery_partition_is_accepted(tmp_path: Path) -> None:
+    command = _fake_codex(tmp_path, json.dumps(CONTROLLER_PAYLOAD))
+    request = _controller_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["acceptance_criteria"] = ["patch correct", "task PR checked"]
+    contract["delivery_criterion_indices"] = [2]
+    request["acceptance_criteria"] = ["patch correct", "task PR checked"]
+    request["review_criteria"] = ["patch correct"]
+    request["pending_delivery_criteria"] = ["task PR checked"]
+
+    completed = _run("controller", command, request)
+    assert completed.returncode == 0, completed.stderr
+    verdict = json.loads(completed.stdout)
+    assert verdict["verdict"] == "PASS"
+    assert "not TASK DONE" in verdict["notes"][-1]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["review", "pending", "all_delivery", "duplicate", "missing_partition"],
+)
+def test_delivery_partition_tampering_fails_before_model(
+    tmp_path: Path, tamper: str
+) -> None:
+    command = _fake_codex(tmp_path, json.dumps(CONTROLLER_PAYLOAD))
+    request = _controller_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["acceptance_criteria"] = ["patch correct", "task PR checked"]
+    contract["delivery_criterion_indices"] = [2]
+    request["acceptance_criteria"] = ["patch correct", "task PR checked"]
+    request["review_criteria"] = ["patch correct"]
+    request["pending_delivery_criteria"] = ["task PR checked"]
+    if tamper == "review":
+        request["review_criteria"] = ["task PR checked"]
+    elif tamper == "pending":
+        request["pending_delivery_criteria"] = []
+    elif tamper == "all_delivery":
+        contract["delivery_criterion_indices"] = [1, 2]
+    elif tamper == "duplicate":
+        contract["delivery_criterion_indices"] = [2, 2]
+    else:
+        del request["pending_delivery_criteria"]
+
+    completed = _run("controller", command, request)
+    assert completed.returncode == 20
+    assert completed.stderr.splitlines()[0] == "INVALID_REQUEST"
+    assert not (tmp_path / "argv.json").exists()
+
+
 def test_executor_report_is_authoritative_and_valid(tmp_path: Path) -> None:
     command = _fake_codex(tmp_path, json.dumps(EXECUTOR_PAYLOAD))
     completed = _run("executor", command, _executor_request())
