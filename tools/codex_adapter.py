@@ -476,10 +476,13 @@ def _executor_paths(root: Path, request: Mapping[str, Any]) -> tuple[Path, ...]:
             raise AdapterError("INVALID_REQUEST")
         paths.append(path)
     for path in missing:
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if not isinstance(no_follow, int):
+            raise AdapterError("SANDBOX_UNAVAILABLE")
         try:
             descriptor = os.open(
                 path,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow,
                 0o600,
             )
         except OSError as error:
