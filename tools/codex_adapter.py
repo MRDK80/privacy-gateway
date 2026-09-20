@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import errno
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,13 @@ from typing import Any, Final
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools.agent_orchestrate import (  # noqa: E402
+    POLICY_FILES,
+    PRIVATE_PATTERNS,
+    PROTECTED_PATTERNS,
+    OrchestrationError,
+    normalize_allowed_paths,
+)
 from tools.schema_validate import (  # noqa: E402
     SchemaError,
     derive_generation_schema,
@@ -352,6 +360,8 @@ def _run_codex(
     output_path: Path,
     model: str | None,
     timeout: int,
+    allowed_paths: Sequence[Path] = (),
+    scratch_path: Path | None = None,
 ) -> None:
     argv = [
         *command,
@@ -376,6 +386,30 @@ def _run_codex(
     if model is not None:
         argv += ["-m", model]
     argv.append("-")
+    if role == "executor":
+        if scratch_path is None or not allowed_paths:
+            raise AdapterError("INVALID_REQUEST")
+        bubblewrap = shutil.which("bwrap")
+        if bubblewrap is None:
+            raise AdapterError("SANDBOX_UNAVAILABLE")
+        sandbox_argv = [
+            bubblewrap,
+            "--die-with-parent",
+            "--unshare-pid",
+            "--ro-bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--bind",
+            str(scratch_path),
+            str(scratch_path),
+        ]
+        for path in allowed_paths:
+            sandbox_argv.extend(("--bind", str(path), str(path)))
+        argv = [*sandbox_argv, "--", *argv]
     try:
         completed = subprocess.run(
             argv,
@@ -397,6 +431,40 @@ def _run_codex(
             "MODEL_UNAVAILABLE",
             detail=_redacted_reason(completed.returncode, completed.stderr),
         )
+
+
+def _executor_paths(root: Path, request: Mapping[str, Any]) -> tuple[Path, ...]:
+    contract = request.get("contract")
+    if not isinstance(contract, Mapping):
+        raise AdapterError("INVALID_REQUEST")
+    raw = contract.get("allowed_paths")
+    if not isinstance(raw, list) or not raw or not all(isinstance(p, str) for p in raw):
+        raise AdapterError("INVALID_REQUEST")
+    try:
+        normalized = normalize_allowed_paths(root, raw)
+    except OrchestrationError as error:
+        raise AdapterError("INVALID_REQUEST") from error
+    if normalized != tuple(raw):
+        raise AdapterError("INVALID_REQUEST")
+    protected = (*PROTECTED_PATTERNS, *PRIVATE_PATTERNS, *POLICY_FILES, ".git")
+    paths: list[Path] = []
+    for relative in normalized:
+        path = root / relative
+        if any(
+            relative == item.rstrip("/") or relative.startswith(item.rstrip("/") + "/")
+            for item in protected
+        ):
+            raise AdapterError("INVALID_REQUEST")
+        if not path.is_file() or path.is_symlink() or path.stat().st_nlink != 1:
+            raise AdapterError("INVALID_REQUEST")
+        if any(
+            (root / part).is_symlink()
+            for part in Path(relative).parents
+            if part != Path(".")
+        ):
+            raise AdapterError("INVALID_REQUEST")
+        paths.append(path)
+    return tuple(paths)
 
 
 def _read_payload(output_path: Path, limit: int) -> dict[str, Any]:
@@ -460,6 +528,7 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         _validate_controller_review(request)
 
     root = args.root.resolve()
+    executor_paths = _executor_paths(root, request) if args.role == "executor" else ()
     schema = load_schema(args.schema_dir / ROLE_SCHEMAS[args.role])
     _assert_version(args.codex_command, root)
 
@@ -486,6 +555,8 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             output_path=output_path,
             model=args.model,
             timeout=args.timeout,
+            allowed_paths=executor_paths,
+            scratch_path=scratch_path,
         )
         payload = _read_payload(output_path, args.output_limit)
 

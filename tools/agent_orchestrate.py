@@ -1539,6 +1539,7 @@ ADAPTER_MACHINE_CODES: frozenset[str] = frozenset(
         "VERSION_MISMATCH",
         "VERSION_PROBE_FAILED",
         "CODEX_NOT_FOUND",
+        "SANDBOX_UNAVAILABLE",
         "MODEL_UNAVAILABLE",
         "ADAPTER_TIMEOUT",
         "OUTPUT_LIMIT",

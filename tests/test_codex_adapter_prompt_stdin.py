@@ -110,6 +110,9 @@ def test_missing_binary_still_reports_codex_not_found(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     adapter = _load_adapter()
+    monkeypatch.setattr(adapter.shutil, "which", lambda _: "/fake/bwrap")
+    allowed = tmp_path / "allowed.txt"
+    allowed.write_text("allowed", encoding="utf-8")
     monkeypatch.setattr(
         adapter,
         "subprocess",
@@ -126,6 +129,8 @@ def test_missing_binary_still_reports_codex_not_found(
             output_path=tmp_path / "output.json",
             model=None,
             timeout=5,
+            allowed_paths=(allowed,),
+            scratch_path=tmp_path,
         )
 
     assert "CODEX_NOT_FOUND" in repr(excinfo.value)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -14,6 +15,35 @@ ADAPTER = REPO_ROOT / "tools" / "codex_adapter.py"
 BASE_SHA = "a" * 40
 HEAD_SHA = "b" * 40
 FAKE_CREDENTIAL = "fake-credential-value-not-a-secret"
+
+
+@pytest.fixture
+def active_bubblewrap() -> None:
+    if sys.platform != "linux":
+        pytest.skip("Bubblewrap is Linux-only")
+    binary = shutil.which("bwrap")
+    if binary is None:
+        pytest.skip("Bubblewrap is not installed")
+    probe = subprocess.run(
+        [
+            binary,
+            "--unshare-pid",
+            "--ro-bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "--",
+            "/bin/true",
+        ],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Bubblewrap mount namespace is unavailable on this runner")
+
 
 FAKE_LINES = (
     "import sys",
@@ -46,7 +76,11 @@ def _fake_codex(
 
 def _request() -> dict[str, object]:
     return {
-        "contract": {"issue": 186, "base_sha": BASE_SHA},
+        "contract": {
+            "issue": 186,
+            "base_sha": BASE_SHA,
+            "allowed_paths": ["tools/codex_adapter.py"],
+        },
         "head_sha": HEAD_SHA,
         "repair_iteration": 0,
         "session_id": "session",
@@ -83,17 +117,20 @@ def test_failing_version_probe_is_distinguishable(tmp_path: Path) -> None:
     assert "VERSION_PROBE_FAILED" in completed.stderr
 
 
-def test_nonzero_exec_keeps_model_unavailable(tmp_path: Path) -> None:
+def test_nonzero_exec_keeps_model_unavailable(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     completed = _run(_fake_codex(tmp_path, exit_code=1, stderr="some failure"))
     assert completed.returncode == 20
     assert "MODEL_UNAVAILABLE" in completed.stderr
     assert "codex_exit=1" in completed.stderr
 
 
-def test_invalid_json_schema_token_is_surfaced(tmp_path: Path) -> None:
+def test_invalid_json_schema_token_is_surfaced(
+    tmp_path: Path, active_bubblewrap: None
+) -> None:
     noise = (
-        "Invalid schema for response_format 'codex_output_schema': "
-        "invalid_json_schema"
+        "Invalid schema for response_format 'codex_output_schema': invalid_json_schema"
     )
     completed = _run(_fake_codex(tmp_path, exit_code=1, stderr=noise))
     assert completed.returncode == 20
@@ -149,3 +186,13 @@ def test_orchestrator_reports_adapter_machine_code(
     assert "machine_code" in captured.err
     assert "SCHEMA_DERIVE_UNSUPPORTED" in captured.err
     assert "tokens=invalid_json_schema" in captured.err
+
+
+def test_orchestrator_reports_missing_os_sandbox(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sys.path.insert(0, str(REPO_ROOT))
+    from tools.agent_orchestrate import _report_adapter_diagnostic
+
+    _report_adapter_diagnostic(20, "SANDBOX_UNAVAILABLE\n")
+    assert "machine_code=SANDBOX_UNAVAILABLE" in capsys.readouterr().err
