@@ -442,6 +442,7 @@ def test_executor_prompt_separates_pinned_goal_from_untrusted_runtime() -> None:
     prompt = codex_adapter._prompt("executor", request)
 
     assert "implement the acceptance_criteria" in prompt
+    assert "<task-data>" not in prompt
     assert prompt.count("<pinned-task-contract>") == 1
     assert prompt.count("<runtime-evidence>") == 1
     contract_text = prompt.split("<pinned-task-contract>\n", 1)[1].split(
@@ -452,6 +453,7 @@ def test_executor_prompt_separates_pinned_goal_from_untrusted_runtime() -> None:
     )[0]
     assert json.loads(contract_text) == contract
     assert "repair_feedback" not in contract_text
+    assert "acceptance_criteria" not in runtime_text
     assert json.loads(runtime_text)["repair_feedback"] == request["repair_feedback"]
     assert all(value is False for value in contract["permissions"].values())
     assert contract["allowed_paths"] == ["tools/codex_adapter.py"]
