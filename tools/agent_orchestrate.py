@@ -1436,6 +1436,18 @@ def run(
                 "head_sha": head_sha,
                 "repair_iteration": repairs,
             }
+            if contract.delivery_criterion_indices:
+                delivery = set(contract.delivery_criterion_indices)
+                executor_request["review_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index not in delivery
+                ]
+                executor_request["pending_delivery_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index in delivery
+                ]
             if repair_feedback is not None:
                 executor_request["repair_feedback"] = repair_feedback
             report = adapter.execute(executor_request, executor_session)
