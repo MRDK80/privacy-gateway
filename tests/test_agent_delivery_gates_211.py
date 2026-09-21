@@ -116,9 +116,11 @@ def test_issue_text_cannot_reclassify_review_criterion(repository: Path) -> None
 
 class _Adapter:
     def __init__(self) -> None:
+        self.executor_request: dict[str, Any] | None = None
         self.review_request: dict[str, Any] | None = None
 
     def execute(self, request: dict[str, Any], session_id: str) -> dict[str, Any]:
+        self.executor_request = request
         contract = request["contract_object"]
         return {
             "schema_version": "1.0",
@@ -181,6 +183,19 @@ def test_patch_pass_stays_pending_until_external_gates(repository: Path) -> None
 
     assert result.status == "FAIL_ESCALATE"
     assert result.machine_code == "EXTERNAL_GATE_PENDING"
+    assert adapter.executor_request is not None
+    assert adapter.executor_request["review_criteria"] == ["patch correct"]
+    assert adapter.executor_request["pending_delivery_criteria"] == [
+        "task PR created",
+        "exact PR CI green",
+    ]
+    assert adapter.executor_request["contract"]["acceptance_criteria"] == (
+        contract.acceptance_criteria
+    )
+    assert adapter.executor_request["contract"]["delivery_criterion_indices"] == (
+        2,
+        3,
+    )
     assert adapter.review_request is not None
     assert adapter.review_request["acceptance_criteria"] == list(
         contract.acceptance_criteria
