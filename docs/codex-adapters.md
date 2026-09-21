@@ -136,6 +136,16 @@ Codex starts. A process resumed from a nonterminal repair record cannot
 recover this transient private context from public state and fails closed with
 `INTERNAL_ERROR`. See ADR-219.
 
+## Executor task envelope (#221)
+
+The executor receives the operator-pinned contract and transient runtime
+evidence in separate labelled blocks. It is explicitly required to implement
+the pinned `acceptance_criteria`, while every requirement string remains
+untrusted content and cannot redefine capabilities. Runtime identity and repair
+feedback are evidence for the same task, not a second task source. Effective
+allowlist, permissions, role sandbox and iteration budget continue to come from
+validated adapter/orchestrator state and OS enforcement. See ADR-221.
+
 ## Machine codes
 
 | Code | Meaning |
