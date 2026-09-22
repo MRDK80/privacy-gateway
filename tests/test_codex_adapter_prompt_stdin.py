@@ -134,3 +134,48 @@ def test_missing_binary_still_reports_codex_not_found(
         )
 
     assert "CODEX_NOT_FOUND" in repr(excinfo.value)
+
+
+def test_executor_disables_inner_sandbox_only_inside_bubblewrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = _load_adapter()
+    captured: list[list[str]] = []
+
+    def _run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(adapter.shutil, "which", lambda _: "/fake/bwrap")
+    monkeypatch.setattr(
+        adapter,
+        "subprocess",
+        types.SimpleNamespace(run=_run, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    allowed = tmp_path / "allowed.txt"
+    allowed.write_text("allowed", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+
+    adapter._run_codex(
+        command=["codex"],
+        role="executor",
+        workdir=tmp_path,
+        prompt="x",
+        schema_path=tmp_path / "schema.json",
+        output_path=tmp_path / "output.json",
+        model=None,
+        timeout=5,
+        allowed_paths=(allowed,),
+        scratch_path=scratch,
+    )
+
+    assert len(captured) == 1
+    argv = captured[0]
+    boundary = argv.index("--")
+    assert argv[0] == "/fake/bwrap"
+    assert "--ro-bind" in argv[:boundary]
+    assert str(allowed) in argv[:boundary]
+    inner = argv[boundary + 1 :]
+    assert "--dangerously-bypass-approvals-and-sandbox" in inner
+    assert "--sandbox" not in inner
