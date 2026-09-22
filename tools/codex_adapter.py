@@ -63,11 +63,6 @@ ROLE_SCHEMAS: Final[Mapping[str, str]] = {
     "executor": "executor-report.schema.json",
     "controller": "controller-verdict.schema.json",
 }
-ROLE_SANDBOX: Final[Mapping[str, str]] = {
-    "executor": "workspace-write",
-    "controller": "read-only",
-}
-
 EXECUTOR_INSTRUCTIONS: Final[str] = (
     "You are the executor role of the Privacy Gateway agent workflow. "
     "You must implement the acceptance_criteria in the pinned-task-contract "
@@ -416,10 +411,18 @@ def _run_codex(
         "--ignore-user-config",
         "--ignore-rules",
         "--strict-config",
+    ]
+    if role == "controller":
+        argv += ["--sandbox", "read-only"]
+    elif role == "executor":
+        # The mandatory outer Bubblewrap namespace is the executor sandbox.
+        # Do not nest Codex's Linux sandbox, which needs mount-registry state.
+        argv.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        raise AdapterError("INVALID_REQUEST")
+    argv += [
         "--color",
         "never",
-        "--sandbox",
-        ROLE_SANDBOX[role],
         "-C",
         str(workdir),
         "-o",
