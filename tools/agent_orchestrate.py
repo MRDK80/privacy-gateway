@@ -1121,6 +1121,44 @@ def redact_gate_evidence(gate_result: Any) -> dict[str, Any]:
     }
 
 
+def _gate_repair_feedback(gate_result: Any) -> dict[str, Any]:
+    """Forward only deterministic, bounded gate facts to the next executor."""
+    redacted = redact_gate_evidence(gate_result)
+    checks = redacted.get("checks")
+    return {
+        "source": "gate",
+        "machine_code": _safe_identifier(redacted.get("machine_code"))
+        or "GATE_FAILED",
+        "checks": [
+            {
+                "name": check["name"],
+                "status": _safe_identifier(check.get("status")),
+                "exit_code": check.get("exit_code"),
+            }
+            for check in (checks or [])[:4]
+        ],
+    }
+
+
+def _controller_repair_feedback(verdict: Mapping[str, Any]) -> dict[str, Any]:
+    """Forward redacted findings, never raw model text or diff evidence."""
+    raw_findings = verdict.get("blocking_findings")
+    findings = raw_findings if isinstance(raw_findings, list) else []
+    projected = []
+    for raw in findings[:8]:
+        safe = redact_finding(raw)
+        projected.append(
+            {
+                "severity": safe["severity"],
+                "category": safe["category"],
+                "location": safe["location"],
+                "requirement": safe["requirement"],
+                "required_fix": safe["required_fix"],
+            }
+        )
+    return {"source": "controller", "findings": projected}
+
+
 def redact_snapshot_identity(
     gate_result: Any, *, tree_unchanged: bool | None
 ) -> dict[str, Any]:
@@ -1277,6 +1315,7 @@ def run(
     usage: Usage = Usage(),
 ) -> RunResult:
     """Run or safely resume the bounded executor/gate/controller loop."""
+    repair_feedback: dict[str, Any] | None = None
     try:
         storage.directory.resolve().relative_to(root.resolve())
     except ValueError:
@@ -1371,6 +1410,11 @@ def run(
         )
         return result
 
+    if previous and repairs > 0:
+        # Public state deliberately excludes model-derived feedback. A resumed
+        # repair cannot safely reconstruct it from that state (#219).
+        return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
+
     try:
         head_sha = _head_sha(root, contract)
         head_sha_for_memory = head_sha
@@ -1386,15 +1430,27 @@ def run(
             executor_session = uuid.uuid4().hex
             executor_calls += 1
             executor_started = time.perf_counter()
-            report = adapter.execute(
-                {
-                    "contract": asdict(contract),
-                    "contract_object": contract,
-                    "head_sha": head_sha,
-                    "repair_iteration": repairs,
-                },
-                executor_session,
-            )
+            executor_request: dict[str, Any] = {
+                "contract": asdict(contract),
+                "contract_object": contract,
+                "head_sha": head_sha,
+                "repair_iteration": repairs,
+            }
+            if contract.delivery_criterion_indices:
+                delivery = set(contract.delivery_criterion_indices)
+                executor_request["review_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index not in delivery
+                ]
+                executor_request["pending_delivery_criteria"] = [
+                    item
+                    for index, item in enumerate(contract.acceptance_criteria, 1)
+                    if index in delivery
+                ]
+            if repair_feedback is not None:
+                executor_request["repair_feedback"] = repair_feedback
+            report = adapter.execute(executor_request, executor_session)
             _validate_report(report, contract, head_sha)
             evidence_state["executor_seconds"] = round(
                 max(0.0, time.perf_counter() - executor_started), 3
@@ -1424,6 +1480,7 @@ def run(
                 failures.append(gate_code)
                 if repairs >= contract.max_repair_iterations:
                     return finish("FAIL_ESCALATE", gate_code)
+                repair_feedback = _gate_repair_feedback(gate_result)
                 repairs += 1
                 storage.save(
                     run_key,
@@ -1510,6 +1567,7 @@ def run(
                 return finish(verdict, "OK")
             if verdict == "FAIL_ESCALATE" or repairs >= contract.max_repair_iterations:
                 return finish("FAIL_ESCALATE", "REVIEW_ESCALATED")
+            repair_feedback = _controller_repair_feedback(verdict_payload)
             repairs += 1
             storage.save(
                 run_key,
