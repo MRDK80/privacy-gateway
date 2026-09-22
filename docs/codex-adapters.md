@@ -29,7 +29,7 @@ used, because the role contract requires exactly one JSON object on stdout.
 
 | Aspect | Executor | Controller |
 |---|---|---|
-| Sandbox | Bubblewrap read-only root with file allowlist, then `workspace-write` | `read-only` |
+| Sandbox | Bubblewrap read-only root with file allowlist; inner Codex sandbox bypassed only inside that boundary | `read-only` |
 | Working root | repository root | temporary policy bundle |
 | Extra flags | none | `--skip-git-repo-check` |
 | Schema | `executor-report.schema.json` | `controller-verdict.schema.json` |
@@ -108,8 +108,13 @@ keeps as-yet-nonexistent nested policy files such as `AGENTS.md` outside every
 writable mount. `.git`, protected and private paths are read-only, including
 the shared Git directory of a linked worktree. Git operations needing
 `.git/config` writes or lock files may fail. `--add-dir` and Codex `--worktree`
-are not used. The Codex `workspace-write` sandbox remains a second boundary
-inside Bubblewrap, but it does not define the effective allowlist.
+are not used. Inside the mandatory Bubblewrap boundary, the executor invokes
+Codex with `--dangerously-bypass-approvals-and-sandbox` instead of starting a
+second Linux sandbox. The flag appears only after the outer `bwrap --` command
+boundary; without Bubblewrap the executor fails closed. This avoids the inner
+sandbox mount-registry writes that conflict with the read-only root while
+leaving the outer OS allowlist boundary unchanged. The controller continues to
+use its separate `--sandbox read-only` session. See ADR-225.
 
 Codex needs access to its remote model API, so the production role cannot run
 with Bubblewrap network unsharing. The mount boundary does not restrict reads,
