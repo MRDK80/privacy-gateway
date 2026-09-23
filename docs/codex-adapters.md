@@ -16,6 +16,26 @@ python tools/agent_orchestrate.py 181 \
   --controller-command '["python","tools/codex_adapter.py","--role","controller"]'
 ```
 
+Each acceptance criterion needs its own `--criterion` flag. The flag is
+repeatable; the contract keeps every criterion verbatim and in order. A dry
+run must be started on the branch named by `--head`; otherwise it stops with
+`WRONG_BRANCH` before printing the contract.
+
+```bash
+python tools/agent_orchestrate.py 188 \
+  --epic 179 \
+  --base roadmap/179-codex-adapters \
+  --head fix/188-repeatable-criterion \
+  --criterion "first synthetic criterion" \
+  --criterion "second synthetic criterion" \
+  --criterion "third synthetic criterion" \
+  --dry-run
+```
+
+Several values after one flag, such as `--criterion "first" "second"`, are
+not a list: argparse rejects the extra value as an unrecognized argument and
+exits with code 2 (#188).
+
 ## Role invocation
 
 Both roles use a fresh ephemeral session per call. Common flags are
