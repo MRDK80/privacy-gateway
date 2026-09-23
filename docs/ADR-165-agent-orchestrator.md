@@ -115,3 +115,19 @@ Allowlist не может разрешить `PROTECTED_PATTERNS`, `PRIVATE_PATT
 Изменение несовместимо намеренно: вызовы `build_contract()` и запуски CLI,
 которые полагались на неявный `.`, теперь останавливаются с ненулевым exit
 code вместо молчаливого получения полного доступа к репозиторию.
+
+## Уточнение #189 (2026-09-23): семантика `scope.enforced`
+
+Описание контракта CLI из обновления #180 сохраняется без изменений. Поле
+`scope.enforced` в stdout `--dry-run` — утверждение уровня orchestrator:
+`true` означает, что контракт закрепляет непустой нормализованный allowlist,
+реальный запуск без него невозможен, а `_assert_scope` проверяет diff в
+dry-run и после каждого вызова executor. Значение не утверждает, что executor
+будет запущен под OS-level write confinement, что `--executor-command` является
+Codex adapter, что на платформе доступен Bubblewrap или что форма allowlist
+поддерживается adapter. Например, `--allowed-path docs` даёт в dry-run
+`scope.enforced: true`, а Codex adapter отклоняет каталог с `INVALID_REQUEST`.
+
+Имя поля и структура stdout JSON не меняются. Решение, матрица гарантий и
+отвергнутые альтернативы — в ADR-189; OS-level граница executor — ADR-185 и
+ADR-225.

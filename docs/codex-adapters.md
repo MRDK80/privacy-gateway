@@ -149,6 +149,17 @@ changed files are compared against the normalised allowlist after every
 executor call, including repair iterations. A mismatch fails closed with
 `SCOPE_VIOLATION` and exit code 20.
 
+### Dry-run `scope.enforced` versus the adapter boundary (#189)
+
+The orchestrator dry-run field `scope.enforced` reports only that a non-empty
+allowlist is pinned in the contract and checked by the orchestrator. It does
+not report whether this adapter's Bubblewrap boundary will be active: dry-run
+does not start the executor, does not look for Bubblewrap and does not apply
+the file-only rule above. For example, `--allowed-path docs` yields
+`scope.enforced: true` in dry-run, while this adapter rejects the directory
+entry with `INVALID_REQUEST` before the role call. The field name and stdout
+JSON are unchanged. See ADR-189.
+
 ## Repair feedback (#219)
 
 Each executor call remains a fresh ephemeral session. The first call receives
