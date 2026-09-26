@@ -15,11 +15,83 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.2"
+LEGACY_SCHEMA_VERSION = "1.0"
+PREVIOUS_SCHEMA_VERSION = "1.1"
+SUPPORTED_SCHEMA_VERSIONS = frozenset(
+    {LEGACY_SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION}
+)
+EVIDENCE_KEYS = frozenset({"gate", "verdict", "snapshot", "durations"})
+GATE_EVIDENCE_KEYS = frozenset(
+    {
+        "profile",
+        "profile_version",
+        "complete",
+        "status",
+        "machine_code",
+        "expected_checks",
+        "executed_checks",
+        "checks",
+    }
+)
+CHECK_EVIDENCE_KEYS = frozenset(
+    {"name", "status", "exit_code", "duration_seconds", "metrics"}
+)
+SNAPSHOT_EVIDENCE_KEYS = frozenset(
+    {
+        "base_sha",
+        "snapshot_commit",
+        "tree_hash",
+        "diff_sha256",
+        "snapshot_method",
+        "provenance_complete",
+        "tree_unchanged",
+    }
+)
+VERDICT_EVIDENCE_KEYS = frozenset(
+    {"verdict", "review_basis", "escalation_reason", "blocking_findings"}
+)
+VERDICT_EVIDENCE_KEYS_V2 = VERDICT_EVIDENCE_KEYS | frozenset({"iteration_history"})
+ITERATION_KEYS = frozenset({"iteration", "verdict", "blocking_findings"})
+FINDING_KEYS = frozenset(
+    {
+        "severity",
+        "category",
+        "location",
+        "summary",
+        "check_id",
+        "finding_fingerprint",
+        "redaction",
+    }
+)
+FINDING_TEXT_FIELD_NAMES = frozenset({"requirement", "evidence", "required_fix"})
+FINDING_KEYS_V1 = FINDING_KEYS
+FINDING_KEYS_V2 = FINDING_KEYS | FINDING_TEXT_FIELD_NAMES
+DROP_REASONS = frozenset(
+    {"missing", "disallowed_chars", "looks_like_secret", "path_like", "unparseable"}
+)
+LOCATION_KEYS = frozenset({"path", "line_start", "line_end"})
+DURATION_KEYS = frozenset(
+    {"total_seconds", "executor_seconds", "controller_seconds", "gate_seconds"}
+)
+REDACTION_KEYS = frozenset({"applied", "version", "summary_dropped"})
+REDACTION_KEYS_V2 = REDACTION_KEYS | frozenset({"dropped_fields", "drop_reasons"})
+REDACTION_KEYS_V3 = REDACTION_KEYS_V2 | frozenset({"truncated_fields"})
+CANONICAL_FINDING_SEVERITIES = frozenset({"critical", "high", "medium", "low"})
+LEGACY_FINDING_SEVERITIES = frozenset({"blocking", "major", "minor", "info"})
+FINDING_SEVERITIES = (
+    CANONICAL_FINDING_SEVERITIES | LEGACY_FINDING_SEVERITIES | frozenset({"unknown"})
+)
+FINDING_REDACTION_FAILED = "FINDING_REDACTION_FAILED"
+FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
+EVIDENCE_TEXT_MAX_CHARS = 400
+WINDOWS_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 TASK_CLASS_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ALLOWED_VERDICTS = {"PASS", "PASS_WITH_NOTES", "FAIL_RETRY", "FAIL_ESCALATE"}
 ALLOWED_USAGE_SOURCES = {"unavailable", "provider", "host"}
+PROMOTION_SCHEMA_VERSION = "1.0"
 PROMOTION_TARGETS = {"test", "validator", "policy", "role", "skill", "configuration"}
 
 
@@ -58,6 +130,7 @@ class Retrospective:
     manual_interventions: int
     findings: int
     usage: Usage
+    evidence: dict[str, Any] | None = None
 
 
 def default_directory() -> Path:
@@ -75,6 +148,16 @@ def _is_inside(path: Path, root: Path) -> bool:
 
 def _non_negative(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _parse_version(value: Any) -> tuple[int, int]:
+    """Разобрать schema_version по числовым компонентам, а не как строку."""
+    if not isinstance(value, str):
+        raise MemoryError("INVALID_RECORD")
+    parts = value.split(".")
+    if len(parts) != 2 or not all(part.isdigit() for part in parts):
+        raise MemoryError("INVALID_RECORD")
+    return int(parts[0]), int(parts[1])
 
 
 def validate_record(value: Mapping[str, Any]) -> None:
@@ -100,8 +183,16 @@ def validate_record(value: Mapping[str, Any]) -> None:
         "findings",
         "usage",
     }
-    if set(value) != expected or value.get("schema_version") != SCHEMA_VERSION:
+    major, minor = _parse_version(value.get("schema_version"))
+    current_major, current_minor = _parse_version(SCHEMA_VERSION)
+    if major != current_major or minor > current_minor:
         raise MemoryError("INVALID_RECORD")
+    if minor > 0:
+        expected = expected | {"evidence"}
+    if set(value) != expected:
+        raise MemoryError("INVALID_RECORD")
+    if minor > 0:
+        _validate_evidence(value["evidence"])
     if not all(
         _non_negative(value[key])
         for key in (
@@ -176,6 +267,282 @@ def validate_record(value: Mapping[str, Any]) -> None:
             raise MemoryError("INVALID_RECORD")
     elif not _non_negative(units):
         raise MemoryError("INVALID_RECORD")
+
+
+def _fail_record() -> None:
+    raise MemoryError("INVALID_RECORD")
+
+
+def _assert_safe_text(value: str) -> None:
+    """Отклонить абсолютные и платформенные пути в сохранённой evidence."""
+    if len(value) > EVIDENCE_TEXT_MAX_CHARS:
+        _fail_record()
+    if value.startswith(("/", "~", "\\")):
+        _fail_record()
+    if WINDOWS_DRIVE_RE.match(value) or "\\" in value:
+        _fail_record()
+    if ".." in value:
+        _fail_record()
+
+
+def _assert_safe_tree(value: Any) -> None:
+    """Рекурсивно проверить, что evidence не содержит небезопасных строк."""
+    if isinstance(value, str):
+        _assert_safe_text(value)
+        return
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                _fail_record()
+            _assert_safe_tree(item)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _assert_safe_tree(item)
+        return
+    if value is None or isinstance(value, bool | int | float):
+        return
+    _fail_record()
+
+
+def _validate_location(value: Any) -> None:
+    if not isinstance(value, dict) or set(value) != LOCATION_KEYS:
+        _fail_record()
+    path = value["path"]
+    if path is not None and (not isinstance(path, str) or not path):
+        _fail_record()
+    for key in ("line_start", "line_end"):
+        line = value[key]
+        if line is not None and not _non_negative(line):
+            _fail_record()
+
+
+def _validate_finding_texts(value: Mapping[str, Any]) -> None:
+    """Проверить раздельные redacted-поля finding версии 2."""
+    for key in sorted(FINDING_TEXT_FIELD_NAMES):
+        text = value[key]
+        if text is not None and (
+            not isinstance(text, str) or len(text) > EVIDENCE_TEXT_MAX_CHARS
+        ):
+            _fail_record()
+    redaction = value["redaction"]
+    dropped = redaction["dropped_fields"]
+    if not isinstance(dropped, list):
+        _fail_record()
+    if not all(isinstance(item, str) for item in dropped):
+        _fail_record()
+    if dropped != sorted(set(dropped)):
+        _fail_record()
+    if any(item not in FINDING_TEXT_FIELD_NAMES for item in dropped):
+        _fail_record()
+    reasons = redaction["drop_reasons"]
+    if not isinstance(reasons, dict):
+        _fail_record()
+    if set(reasons) != set(dropped):
+        _fail_record()
+    for reason in reasons.values():
+        if reason not in DROP_REASONS:
+            _fail_record()
+    if redaction["version"] == "3":
+        truncated = redaction["truncated_fields"]
+        if not isinstance(truncated, list) or truncated != sorted(set(truncated)):
+            _fail_record()
+        if any(
+            item not in FINDING_TEXT_FIELD_NAMES or item in dropped
+            for item in truncated
+        ):
+            _fail_record()
+
+
+def _validate_finding(value: Any) -> None:
+    if not isinstance(value, dict):
+        _fail_record()
+    if set(value) not in (FINDING_KEYS_V1, FINDING_KEYS_V2):
+        _fail_record()
+    if value["severity"] not in FINDING_SEVERITIES:
+        _fail_record()
+    category = value["category"]
+    if not isinstance(category, str) or not IDENTIFIER_RE.match(category):
+        _fail_record()
+    summary = value["summary"]
+    if summary is not None and (
+        not isinstance(summary, str) or len(summary) > EVIDENCE_TEXT_MAX_CHARS
+    ):
+        _fail_record()
+    check_id = value["check_id"]
+    if check_id is not None and (
+        not isinstance(check_id, str) or not IDENTIFIER_RE.match(check_id)
+    ):
+        _fail_record()
+    fingerprint = value["finding_fingerprint"]
+    if not isinstance(fingerprint, str) or not FINGERPRINT_RE.match(fingerprint):
+        _fail_record()
+    redaction = value["redaction"]
+    expected_redaction = REDACTION_KEYS
+    if set(value) == FINDING_KEYS_V2:
+        expected_redaction = (
+            REDACTION_KEYS_V3
+            if isinstance(redaction, dict) and redaction.get("version") == "3"
+            else REDACTION_KEYS_V2
+        )
+    if not isinstance(redaction, dict) or set(redaction) != expected_redaction:
+        _fail_record()
+    if redaction["applied"] is not True:
+        _fail_record()
+    if not isinstance(redaction["version"], str) or not redaction["version"]:
+        _fail_record()
+    if not isinstance(redaction["summary_dropped"], bool):
+        _fail_record()
+    if set(value) == FINDING_KEYS_V2:
+        _validate_finding_texts(value)
+    _validate_location(value["location"])
+
+
+def _validate_check(value: Any) -> None:
+    if not isinstance(value, dict) or set(value) != CHECK_EVIDENCE_KEYS:
+        _fail_record()
+    name = value["name"]
+    if not isinstance(name, str) or not name:
+        _fail_record()
+    status = value["status"]
+    if status is not None and not isinstance(status, str):
+        _fail_record()
+    exit_code = value["exit_code"]
+    if exit_code is not None and not isinstance(exit_code, int):
+        _fail_record()
+    duration = value["duration_seconds"]
+    if duration is not None and not isinstance(duration, int | float):
+        _fail_record()
+    metrics = value["metrics"]
+    if metrics is not None and not isinstance(metrics, dict):
+        _fail_record()
+
+
+def _validate_gate_evidence(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != GATE_EVIDENCE_KEYS:
+        _fail_record()
+    if value["complete"] is not None and not isinstance(value["complete"], bool):
+        _fail_record()
+    for key in ("profile", "profile_version", "status", "machine_code"):
+        item = value[key]
+        if item is not None and not isinstance(item, str):
+            _fail_record()
+    for key in ("expected_checks", "executed_checks"):
+        names = value[key]
+        if names is None:
+            continue
+        if not isinstance(names, list) or not all(
+            isinstance(item, str) and item for item in names
+        ):
+            _fail_record()
+    checks = value["checks"]
+    if checks is None:
+        return
+    if not isinstance(checks, list):
+        _fail_record()
+    for check in checks:
+        _validate_check(check)
+
+
+def _validate_snapshot_evidence(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != SNAPSHOT_EVIDENCE_KEYS:
+        _fail_record()
+    for key in ("base_sha", "snapshot_commit", "tree_hash", "diff_sha256"):
+        item = value[key]
+        if item is not None and (not isinstance(item, str) or not item):
+            _fail_record()
+    method = value["snapshot_method"]
+    if method is not None and not isinstance(method, str):
+        _fail_record()
+    for key in ("provenance_complete", "tree_unchanged"):
+        item = value[key]
+        if item is not None and not isinstance(item, bool):
+            _fail_record()
+
+
+def _validate_iteration_history(value: Any) -> None:
+    """Проверить историю итераций repair-цикла (#204)."""
+    if not isinstance(value, list) or not value:
+        _fail_record()
+    numbers: list[int] = []
+    for item in value:
+        if not isinstance(item, dict) or set(item) != ITERATION_KEYS:
+            _fail_record()
+        iteration = item["iteration"]
+        if not _non_negative(iteration):
+            _fail_record()
+        numbers.append(iteration)
+        verdict = item["verdict"]
+        if verdict is not None and verdict not in ALLOWED_VERDICTS:
+            _fail_record()
+        findings = item["blocking_findings"]
+        if findings is None:
+            continue
+        if not isinstance(findings, list):
+            _fail_record()
+        for finding in findings:
+            _validate_finding(finding)
+    if numbers != sorted(numbers):
+        _fail_record()
+
+
+def _validate_verdict_evidence(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) not in (
+        VERDICT_EVIDENCE_KEYS,
+        VERDICT_EVIDENCE_KEYS_V2,
+    ):
+        _fail_record()
+    verdict = value["verdict"]
+    if verdict is not None and verdict not in ALLOWED_VERDICTS:
+        _fail_record()
+    basis = value["review_basis"]
+    if basis is not None and not isinstance(basis, dict):
+        _fail_record()
+    reason = value["escalation_reason"]
+    if reason is not None and (
+        not isinstance(reason, str) or len(reason) > EVIDENCE_TEXT_MAX_CHARS
+    ):
+        _fail_record()
+    if "iteration_history" in value:
+        _validate_iteration_history(value["iteration_history"])
+    findings = value["blocking_findings"]
+    if findings is None:
+        return
+    if not isinstance(findings, list):
+        _fail_record()
+    for finding in findings:
+        _validate_finding(finding)
+
+
+def _validate_durations(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != DURATION_KEYS:
+        _fail_record()
+    for item in value.values():
+        if item is None:
+            continue
+        if not isinstance(item, int | float) or isinstance(item, bool) or item < 0:
+            _fail_record()
+
+
+def _validate_evidence(value: Any) -> None:
+    """Проверить redacted evidence приватной записи без раскрытия значений."""
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != EVIDENCE_KEYS:
+        _fail_record()
+    _assert_safe_tree(value)
+    _validate_gate_evidence(value["gate"])
+    _validate_snapshot_evidence(value["snapshot"])
+    _validate_verdict_evidence(value["verdict"])
+    _validate_durations(value["durations"])
 
 
 class RetrospectiveStore:
@@ -292,7 +659,10 @@ def validate_promotion(value: Mapping[str, Any]) -> None:
         "separate_change",
         "human_approval",
     }
-    if set(value) != expected or value.get("schema_version") != SCHEMA_VERSION:
+    if (
+        set(value) != expected
+        or value.get("schema_version") != PROMOTION_SCHEMA_VERSION
+    ):
         raise MemoryError("PUBLICATION_DENIED")
     target = value.get("target")
     if target not in PROMOTION_TARGETS or not isinstance(

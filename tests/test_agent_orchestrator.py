@@ -159,8 +159,10 @@ def test_happy_path_uses_independent_sessions_and_minimal_review_input(
     assert set(adapter.controller_requests[0]) == {
         "issue",
         "acceptance_criteria",
+        "contract",
         "diff",
         "gate_evidence",
+        "reviewed_state",
         "base_sha",
         "head_sha",
         "repair_iteration",

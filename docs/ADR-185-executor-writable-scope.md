@@ -1,0 +1,91 @@
+# ADR-185: OS writable boundary for the Codex executor
+
+## Status
+
+Accepted for task #185 under epic #179, subject to task PR and post-merge CI.
+
+## Context
+
+The executor currently runs with Codex `workspace-write` over the repository
+root. Its `allowed_paths` are checked after execution against the Git diff.
+That check cannot reject a write before it happens, nor detect a write followed
+by deletion or every side effect outside Git. Codex `--add-dir` only expands its
+writable set. A smaller `cwd` does not prevent writes to absolute paths.
+
+## Decision
+
+Run the executor inside a separate Bubblewrap mount namespace. Bind the host
+filesystem read-only, then bind only validated effective allowlist files
+read-write. Keep the Codex output and generated schema in a private temporary
+mount that is destroyed after the call. The executor must fail before its role
+call starts if Bubblewrap or the needed namespace operations are unavailable. There
+is no fallback to the old `workspace-write` invocation and no elevation
+prompt. The controller remains read-only. Keep `_assert_scope` as a second
+layer after the executor call.
+
+A missing Bubblewrap executable emits `SANDBOX_UNAVAILABLE` and adapter exit
+code 20. A Bubblewrap launch or namespace failure remains a non-zero role
+call, reported as `MODEL_UNAVAILABLE`; the adapter never retries directly.
+The orchestrator's diagnostic whitelist includes the new code, while its
+published stdout JSON remains unchanged.
+
+The adapter validates the allowlist independently of the prompt and rejects
+empty, escaping, protected/private, symlinked, hardlinked, or directory
+entries. Existing regular files with one link are supported. A missing
+allowlisted file is safely created as an empty file by the trusted adapter,
+after validating its existing parent directory and every path component,
+using exclusive creation with no symlink following. The newly created file is
+then mounted read-write by the same file-only rule. This adapter-created file
+may remain if a later role call fails; it is inside the effective allowlist and
+remains visible to the post-execution scope check. A directory
+bind could permit creation of a nested `AGENTS.md` that does not yet exist;
+supporting it needs a separate design. A missing parent directory is rejected
+rather than created. The
+linked-worktree `.git` file and its shared Git directory remain read-only;
+commands requiring `.git/config` or lock files may fail.
+
+## Corrective decision (#216)
+
+The first live pilot after #185 stopped before the gate: Codex attempted to
+write its state database under its normal home, which the read-only root
+correctly rejected. A fake CLI that writes only the requested output did not
+exercise this startup path. The executor now sets `CODEX_HOME` to a fresh,
+owner-private directory inside the existing ephemeral scratch bind. Only an
+existing regular `auth.json` from the caller's Codex home is mounted into it
+read-only; credentials are not copied. The runtime may write its state database,
+session metadata and caches in that scratch directory during the role call.
+The scratch directory is removed best-effort after the call; it is not a
+durable evidence store. Missing authentication is left to Codex to reject,
+without broadening filesystem access or retrying outside Bubblewrap.
+
+This writable surface is separate from the repository file allowlist. The
+checkout, shared Git directory, protected paths and caller's original Codex
+home remain read-only. The existing output/schema scratch and network/read
+limitations remain unchanged. A failure to establish the private runtime
+mount fails closed; it must not trigger a direct or broadly writable retry.
+
+Codex needs its remote model connection, so the namespace cannot always
+disable networking. Network isolation is a separate precondition for an
+offline fake role, and the production role must be limited to the Codex API by
+an independently enforced network policy if that guarantee is required.
+
+## Verification
+
+The negative test must execute a real Bubblewrap process. It attempts create,
+modify, delete, rename, hardlink, and symlink operations across the boundary;
+accepts `EACCES`, `EPERM`, or `EROFS`; and compares content and metadata plus
+`git status` afterwards. A missing Bubblewrap executable or namespace support
+must fail closed instead of silently using the old invocation. The test must
+run on a platform where the chosen Linux mechanism is available; another
+platform needs its own explicit enforcement decision. A CI runner that blocks
+unprivileged mount namespaces skips the positive Bubblewrap integration tests
+after a capability probe; fail-closed tests for missing or failing Bubblewrap
+still run. A green CI check on that runner does not itself prove active OS
+confinement. Local active-namespace test evidence is reported separately.
+
+## Limits
+
+Bubblewrap mount isolation does not impose CPU or memory limits and does not
+install a seccomp filter. A read-only mount does not stop reads, and a writable
+temporary mount is still writable during the call. `_assert_scope` is retained
+to catch changes that the namespace policy or its implementation misses.

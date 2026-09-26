@@ -67,8 +67,8 @@ Controller возвращает один из вердиктов:
 
 | Verdict | Значение |
 |---|---|
-| `PASS` | Все требования доказанно выполнены, blocking findings отсутствуют. |
-| `PASS_WITH_NOTES` | Требования выполнены; остаются только неблокирующие notes. |
+| `PASS` | Все критерии текущей фазы review доказанно выполнены, blocking findings отсутствуют. |
+| `PASS_WITH_NOTES` | Критерии текущей фазы review выполнены; остаются только неблокирующие notes. |
 | `FAIL_RETRY` | Есть исправимый blocking finding в пределах исходного scope и budget. |
 | `FAIL_ESCALATE` | Нужен человек: policy/trust/approval change, неоднозначность, выход за scope или исчерпание budget. |
 
@@ -77,6 +77,15 @@ Controller возвращает один из вердиктов:
 `FAIL_RETRY` допустим, только если остаётся repair iteration; после максимум
 двух циклов `review → fix` следует `FAIL_ESCALATE`. Controller не принимает
 решения о merge и не устраняет находку сам.
+
+При явном разделении критериев по ADR-211 положительный verdict относится
+только к review проверенного patch. Полный дословный список acceptance
+criteria остаётся в contract; внешние delivery gates (PR и exact CI)
+отмечаются как pending и проверяются человеком отдельно. Такой verdict
+**не** означает `TASK DONE`: оркестратор возвращает
+`FAIL_ESCALATE / EXTERNAL_GATE_PENDING` с exit code 20 до выполнения
+внешних gates. Без явного разделения прежняя семантика всего списка
+критериев сохраняется.
 
 ## Visibility
 
