@@ -1,7 +1,8 @@
 # ADR-197: полный versioned gate_evidence
 
-**Статус:** предложено. Задача #197, epic #179. Зависит от ADR-192, ADR-194
-и ADR-196.
+**Статус:** принято; положения о `repository-diff-only` уточнены поправками
+2026-09-15 и 2026-09-26. Задача #197, epic #179. Зависит от ADR-192,
+ADR-194 и ADR-196.
 
 ## Контекст
 
@@ -246,3 +247,51 @@ Skip и xfail не подтверждают обязательное свойс�
 какого-либо версионированного профиля и не используется в основном пути.
 Публичный stdout `RunResult`, exit codes 0 и 20 и канонические схемы
 `executor-report` и `controller-verdict` не изменяются.
+
+## Поправка 2026-09-26: фактический статус repository-diff-only
+
+Задача #229. Утверждение поправки 2026-09-15 о том, что профиль
+`repository-diff-only` «не реализуется, отсутствует в перечислении
+допустимых значений `profile` и не имеет ни одной точки вызова», не
+соответствует коду и заменяется следующим. Остальные положения поправки
+2026-09-15 сохраняют силу.
+
+**Фактическое состояние.** `tools/agent_gate.py` объявляет
+`DIFF_ONLY_PROFILE = "repository-diff-only"` и включает его в `PROFILES`
+с единственной проверкой `diff` (`git diff --check`). `run_profile()` и
+`build_evidence()` принимают этот профиль. Единственная точка вызова —
+тест `test_diff_only_profile_is_not_the_full_profile` в
+`tests/test_agent_gate_profile.py`. Профиль не реализует фазу
+`pre-commit` инструмента `agent_verify`, упомянутую в исходной редакции
+раздела 4.
+
+**Значение `status` и `complete`.** В evidence этого профиля
+`status: passed` и `complete: true` означают лишь выполнение его
+собственного `expected_checks` (`["diff"]`) и не утверждают полноту
+quality gate проекта.
+
+**Допуск к контроллеру не меняется.** Его определяет только
+`gate_evidence_is_passing()`: `is_repository_full()` (значения `profile`,
+`profile_version` и `expected_checks` профиля `repository-full`), точное
+совпадение упорядоченных списков `executed_checks` и идентификаторов
+`checks` с `expected_checks`, статус `passed` каждой проверки,
+`complete: true`, `status: passed` и `machine_code: OK`. Требование
+совпадения множеств из поправки 2026-09-15 реализовано строже — как
+равенство упорядоченных списков. Evidence `repository-diff-only` всегда
+отклоняется; это проверяет тест
+`test_passing_predicate_rejects_weakened_evidence` в
+`tests/test_agent_orchestrator_gate_sequencing.py`.
+
+**Production-путь.** CLI `main()` вызывает `run()` без параметра `gate`,
+поэтому `production_gate` истинно, и на каждой repair-итерации
+`_production_gate()` вызывает `agent_gate.run_repository_full()`,
+который исполняет `run_profile()` с профилем по умолчанию
+`repository-full`. По `git grep` в `tools/` и `tests/` внедрение
+собственного `gate` в `run()` встречается только в тестах.
+`repository-diff-only` не является альтернативным production gate.
+
+**Статус helper.** Профиль остаётся внутренним тестируемым helper без
+production-вызова. Его использование в orchestration, изменение или
+удаление возможны только отдельным ADR и отдельной задачей. Эта поправка
+не меняет код, тесты, JSON-схемы, machine codes, process exit codes и
+публичный stdout `RunResult`.
