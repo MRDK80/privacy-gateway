@@ -202,6 +202,19 @@ ancestry, совпадение remote-tracking refs, clean tree и отсутс�
 
 ## Versioned handover и запуск workflow
 
+В delegated режиме task plan сначала сужается локальным epic-мандатом:
+
+```python
+from tools.agent_epic_handover import prepare_handover
+```
+
+Planner требует точный task grant, проверяет `plan ⊆ mandate`, provenance
+criteria, existing/new path boundary и symlink escape, затем переиспользует
+branch preflight ADR-235. Результат содержит handover существующего workflow и
+закреплённый `mandate_provenance`; новый executor или GitHub write не
+появляются. Контракт и stop conditions описаны в
+[ADR-251](ADR-251-epic-runner-handover.md).
+
 После checkout одобренной task-ветки coordinator принимает закрытый JSON
 handover и отдельное подтверждение digest:
 
