@@ -51,6 +51,7 @@ REQUIRED_TOP_LEVEL = {
     "task_class",
     "approval",
 }
+OPTIONAL_TOP_LEVEL = {"mandate_provenance"}
 DENIED_ACTIONS = ("commit", "push", "create_pr", "comment", "merge")
 
 
@@ -178,7 +179,12 @@ def validate_handover(
     github: GitHubClient,
 ) -> ValidatedHandover:
     """Validate authority, scope and current Git identity without side effects."""
-    handover = _exact_mapping(value, REQUIRED_TOP_LEVEL)
+    if not isinstance(value, Mapping) or not (
+        set(value) == REQUIRED_TOP_LEVEL
+        or set(value) == REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
+    ):
+        raise HandoverError("HANDOVER_INVALID")
+    handover = cast(Mapping[str, Any], value)
     digest = handover_digest(handover)
     approval = _exact_mapping(handover["approval"], {"plan_digest"})
     if (
@@ -265,6 +271,18 @@ def validate_handover(
         raise HandoverError("GATE_INVALID")
     if policy != {"source": "base_sha", "base_sha": base_sha}:
         raise HandoverError("POLICY_PROVENANCE_MISMATCH")
+    if "mandate_provenance" in handover:
+        provenance = _exact_mapping(
+            handover["mandate_provenance"],
+            {"schema_version", "digest", "policy_sha"},
+        )
+        if (
+            provenance.get("schema_version") != "1.0"
+            or not isinstance(provenance.get("digest"), str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", provenance["digest"]) is None
+            or provenance.get("policy_sha") != base_sha
+        ):
+            raise HandoverError("POLICY_PROVENANCE_MISMATCH")
     indices = handover["delivery_criterion_indices"]
     if not isinstance(indices, list) or not all(
         isinstance(item, int) and not isinstance(item, bool) for item in indices
