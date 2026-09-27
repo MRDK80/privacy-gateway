@@ -137,3 +137,22 @@ ancestry, совпадение remote-tracking refs, clean tree и отсутс�
 Инструмент не делает fetch, checkout, commit, push или GitHub write. Повторный
 запуск безопасен только для идентичного local ref; детали и границы описаны в
 [ADR-235](ADR-235-agent-coordinator-branch-preflight.md).
+
+## Versioned handover и запуск workflow
+
+После checkout одобренной task-ветки coordinator принимает закрытый JSON
+handover и отдельное подтверждение digest:
+
+```bash
+python tools/agent_coordinator_handover.py handover.json \
+  --approve-plan-digest sha256:DIGEST \
+  --executor-command '["python", "tools/codex_adapter.py", "executor"]' \
+  --controller-command '["python", "tools/codex_adapter.py", "controller"]'
+```
+
+Digest связывает approval со всеми identity, criteria, scope, allowlist,
+budgets и gate. Перед вызовом существующего executor/controller workflow
+инструмент повторно проверяет repository, clean tree, current branch,
+base/head SHA, ancestry, deny-by-default permissions, полный gate и pinned
+policy source. Он не выполняет Git/GitHub delivery. Поля и stop conditions
+зафиксированы в [ADR-236](ADR-236-agent-coordinator-handover.md).
