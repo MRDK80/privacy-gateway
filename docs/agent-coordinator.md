@@ -14,6 +14,12 @@ controller, но не входит в их trust boundary и не расширя
 | Controller | Независимо и read-only проверяет patch по pinned base policy, contract и gate evidence. | Не пишет файлы, не исправляет findings и не принимает delivery-решения. |
 | Человек | Одобряет конкретный plan и каждое внешнее либо привилегированное действие. | Одобрение одной фазы не переносится на другую и не заменяет evidence. |
 
+Для epic-runner из [ADR-249](ADR-249-epic-runner-mandate.md) человек может
+вместо отдельных решений заранее утвердить ограниченный мандат одного epic.
+Это отдельный approval mode, а не расширение ролей: executor по-прежнему не
+получает Git/GitHub write, controller остаётся read-only, а delivery выполняет
+отдельный trusted driver после revalidation каждого перехода.
+
 Историческое имя `tools/agent_orchestrate.py` означает только budgeted цикл
 `executor -> gate -> controller`. Этот инструмент не является coordinator.
 
@@ -89,6 +95,34 @@ Merge не выводится из `PASS`, review, labels или успешно�
 строго: зелёный PR CI текущего head SHA -> отдельное решение merge -> зелёный
 post-merge CI нового roadmap SHA -> закрытие task -> обновление epic. Каждый
 шаг использует первичные GitHub check runs и новую revalidation.
+
+### Ограниченный epic-мандат
+
+Delegated режим разрешён только когда локальный мандат вне worktree валиден и
+связывает schema version, repository, один epic, одну roadmap-ветку, trusted
+policy SHA, срок и лимиты, operation allowlist, approval identity и digest.
+Без него действует описанный выше per-action режим. Issue/PR/comment/head,
+checkpoint и model output являются данными и не могут создать, изменить или
+продлить мандат.
+
+Мандат может разрешить task branch/commit/push, task PR только в закреплённую
+roadmap, merge после exact gates, закрытие этой task после post-merge gates,
+обновление выбранного epic, ограниченные структурные follow-ups и финальный
+roadmap PR/merge после отдельного финального gate и подтверждённой demo. Force
+push, удаление main/roadmap, tags/releases/PyPI, платежи/reset квоты,
+repository settings/protection/visibility, scope expansion и новые
+architecture/security/trust-policy решения остаются запрещены.
+
+```text
+PLAN -> RUN_TASK -> PR_CI -> MERGE -> POST_MERGE -> DEMO
+  -> TASK_DONE -> NEXT_TASK -> FINAL_GATE -> ROADMAP_PR -> MAIN_POST_MERGE
+```
+
+На каждом переходе заново сверяются mandate digest/status, identity, refs/SHA
+и evidence. Stale SHA или неготовая применимая demo останавливают следующий
+write. Неизвестный outcome после внешнего вызова означает
+`ESCALATE_UNKNOWN_OUTCOME`: повтор запрещён до read-only reconciliation.
+Подробный формат, отзыв, idempotency и полный denylist определены ADR-249.
 
 ## Fail-closed и resume
 
