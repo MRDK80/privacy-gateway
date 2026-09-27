@@ -55,6 +55,15 @@ Read-only delivery assessment связывает PR identity, diff allowlist, п
 не переносится на новый SHA. Контракт и fail-closed состояния описаны в
 [ADR-237](ADR-237-agent-coordinator-delivery.md).
 
+Разрешённый epic-мандатом write выполняет отдельный trusted driver. Он перед
+каждым side effect повторно сверяет identity и SHA, принимает PR/post-merge
+assessment только с пятью точными `SUCCESS` checks и пишет intent/receipt в
+приватный ledger вне repository. Неизвестный outcome запрещает повтор до
+reconciliation; permission failure не переключается на широкий token.
+Закрытие task и обновление epic допускаются только после post-merge assessment,
+причём update epic следует за записанным receipt закрытия task. См.
+[ADR-252](ADR-252-epic-task-delivery.md).
+
 Перед передачей существующему executor workflow coordinator валидирует все
 обязательные поля, повторно проверяет branch identity и SHA и строит не более
 широкий task contract. Свободный текст не становится authority.
