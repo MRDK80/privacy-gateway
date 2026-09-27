@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
+import importlib
 import json
 import os
 import re
@@ -12,7 +12,7 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, BinaryIO, cast
 
 SCHEMA_VERSION = "1.0"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -201,18 +201,40 @@ class RunnerLock:
 
     def __init__(self, directory: Path) -> None:
         self.directory = directory.resolve()
-        self._stream: TextIO | None = None
+        self._stream: BinaryIO | None = None
+
+    @staticmethod
+    def _lock(stream: BinaryIO) -> None:
+        if os.name == "nt":
+            msvcrt = importlib.import_module("msvcrt")
+            stream.seek(0, os.SEEK_END)
+            if stream.tell() == 0:
+                stream.write(b"0")
+                stream.flush()
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        fcntl = importlib.import_module("fcntl")
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    @staticmethod
+    def _unlock(stream: BinaryIO) -> None:
+        if os.name == "nt":
+            msvcrt = importlib.import_module("msvcrt")
+            stream.seek(0)
+            msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+        fcntl = importlib.import_module("fcntl")
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def __enter__(self) -> RunnerLock:
         try:
             self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.directory, 0o700)
-            stream = (self.directory / "epic-loop.lock").open(
-                "a", encoding="utf-8"
-            )
+            stream = (self.directory / "epic-loop.lock").open("a+b")
             os.chmod(stream.name, 0o600)
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as error:
+            self._lock(stream)
+        except (BlockingIOError, PermissionError) as error:
             stream.close()
             raise LoopError("RUNNER_LOCKED") from error
         except OSError as error:
@@ -222,7 +244,7 @@ class RunnerLock:
 
     def __exit__(self, *_args: object) -> None:
         if self._stream is not None:
-            fcntl.flock(self._stream.fileno(), fcntl.LOCK_UN)
+            self._unlock(self._stream)
             self._stream.close()
             self._stream = None
 
