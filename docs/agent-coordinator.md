@@ -189,3 +189,12 @@ python tools/agent_coordinator_delivery.py \
 
 Для post-merge assessment используется `--phase post-merge --merge-sha SHA`.
 `TASK DONE` выдаётся только для подтверждённого merge SHA с успешным новым CI.
+
+## Воспроизводимый end-to-end pilot
+
+Финальный synthetic E2E, live read-only discovery, негативная traceability
+matrix и точная последовательность operator actions описаны в
+[инструкции pilot](agent-coordinator-pilot.md) и
+[ADR-239](ADR-239-agent-coordinator-pilot.md). Synthetic evidence не заменяет
+production Codex-вызов, PR CI или post-merge CI; внешний adapter запускается
+только после отдельного согласования расхода и точного file allowlist.
