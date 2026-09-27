@@ -118,3 +118,22 @@ python tools/agent_coordinator_discovery.py \
 state, machine code, issue URL, default/roadmap refs и их текущие remote SHA.
 Источники истины, stop conditions и ограничения transport adapter зафиксированы
 в [ADR-234](ADR-234-agent-coordinator-discovery.md).
+
+## Подготовка локальной ветки
+
+После одобрения точных identity из preview отдельный внутренний инструмент
+повторяет branch preflight и создаёт ref без checkout:
+
+```bash
+python tools/agent_coordinator_branch.py \
+  --repository OWNER/REPO --epic NUMBER --task NUMBER \
+  --default-ref main --default-sha SHA \
+  --base-ref roadmap/NUMBER-SLUG --base-sha SHA \
+  --head-ref TYPE/NUMBER-SLUG --approve-plan
+```
+
+Перед Git write он повторно проверяет GitHub issue relationship, remote refs,
+ancestry, совпадение remote-tracking refs, clean tree и отсутствие конфликта.
+Инструмент не делает fetch, checkout, commit, push или GitHub write. Повторный
+запуск безопасен только для идентичного local ref; детали и границы описаны в
+[ADR-235](ADR-235-agent-coordinator-branch-preflight.md).
