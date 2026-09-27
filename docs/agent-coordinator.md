@@ -102,3 +102,19 @@ issue identities, base/head refs и SHA, allowlist, budgets, policy provenance �
 Coordinator не объявляет `TASK READY FOR REVIEW`, `TASK DONE`,
 `ROADMAP READY FOR RELEASE` или `ROADMAP DONE` без evidence, требуемого
 `CONTRIBUTING.md`. `AGENTS.md` и role policy автоматически не изменяются.
+
+## Read-only discovery preview
+
+Первая реализация состояния `PLAN` доступна как внутренний CLI-инструмент:
+
+```bash
+python tools/agent_coordinator_discovery.py \
+  --repository OWNER/REPO [--epic NUMBER] [--task NUMBER]
+```
+
+Без `--epic` или `--task` инструмент выбирает identity только при единственном
+кандидате. Иначе он возвращает `NEEDS_DECISION`; явные значения только
+закрепляют preview и не являются approval следующей фазы. Результат содержит
+state, machine code, issue URL, default/roadmap refs и их текущие remote SHA.
+Источники истины, stop conditions и ограничения transport adapter зафиксированы
+в [ADR-234](ADR-234-agent-coordinator-discovery.md).
