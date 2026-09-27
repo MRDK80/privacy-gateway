@@ -109,6 +109,18 @@ Coordinator не объявляет `TASK READY FOR REVIEW`, `TASK DONE`,
 `ROADMAP READY FOR RELEASE` или `ROADMAP DONE` без evidence, требуемого
 `CONTRIBUTING.md`. `AGENTS.md` и role policy автоматически не изменяются.
 
+Минимальный checkpoint coordinator хранится только вне worktree и связывает
+epic/task, refs/SHA, handover digest, policy provenance, plan approval,
+allowlist, budgets и ledger выполненных локальных действий. При resume все эти
+поля и live Git facts проверяются повторно. Уже завершённое действие даёт
+`NO_OP`; изменение identity, dirty tree, неизвестное действие, ошибка trust
+policy или исчерпанный repair budget дают явную эскалацию до любого нового
+side effect. Для контекста допускаются только ограниченные redacted записи
+существующей private retrospective с точным epic/task; raw prompts, issue/PR
+text, comments, logs и model output не сохраняются и не становятся authority.
+Формат и ограничения зафиксированы в
+[ADR-238](ADR-238-agent-coordinator-resume.md).
+
 ## Read-only discovery preview
 
 Первая реализация состояния `PLAN` доступна как внутренний CLI-инструмент:
