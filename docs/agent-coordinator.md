@@ -256,6 +256,24 @@ python tools/agent_coordinator_delivery.py \
 Для post-merge assessment используется `--phase post-merge --merge-sha SHA`.
 `TASK DONE` выдаётся только для подтверждённого merge SHA с успешным новым CI.
 
+## Идемпотентный epic loop
+
+`tools/agent_epic_loop.py` связывает task-фазы в фиксированном порядке и
+хранит закрытый checkpoint в private state вне repository. Один неблокирующий
+lock исключает параллельный runner для того же state directory. После crash
+write-фаза сначала проходит read-only reconciliation: доказанный `APPLIED`
+не повторяется, `NOT_APPLIED` допускает один новый вызов, а неизвестный исход
+останавливает supervisor. Текущий operator status можно получить командой:
+
+```bash
+python tools/agent_epic_loop.py status \
+  --state-dir /PRIVATE/STATE --repository-root /PATH/TO/REPOSITORY
+```
+
+Runtime adapters передаются внутреннему Python API; команда `resume` без них
+возвращает `ADAPTER_REQUIRED` и не выполняет side effect. Контракт фаз и
+границы описаны в [ADR-253](ADR-253-idempotent-epic-loop.md).
+
 ## Воспроизводимый end-to-end pilot
 
 Финальный synthetic E2E, live read-only discovery, негативная traceability
