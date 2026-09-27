@@ -171,6 +171,16 @@ state, machine code, issue URL, default/roadmap refs и их текущие remo
 Источники истины, stop conditions и ограничения transport adapter зафиксированы
 в [ADR-234](ADR-234-agent-coordinator-discovery.md).
 
+## Read-only очередь выбранного epic
+
+Для delegated epic-runner отдельный внутренний модуль
+`tools/agent_epic_queue.py` выбирает одну ready task из свежего структурного
+snapshot. Он использует только двусторонне проверяемый parent, `blockedBy` и
+утверждённый порядок, а после каждого `TASK DONE` очередь строится заново.
+Неизвестная принадлежность, цикл, конфликт порядка и исчерпанный лимит
+follow-up останавливают следующий side effect. Классификация follow-up и её
+ограничения зафиксированы в [ADR-250](ADR-250-epic-runner-queue.md).
+
 ## Подготовка локальной ветки
 
 После одобрения точных identity из preview отдельный внутренний инструмент
