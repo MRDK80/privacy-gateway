@@ -43,6 +43,12 @@ Versioned handover обязан содержать как минимум:
   plan;
 - классификацию review criteria и pending delivery criteria по ADR-211.
 
+Read-only delivery assessment связывает PR identity, diff allowlist, полный
+локальный gate evidence и exact GitHub CI с одним task head SHA. После merge
+он отдельно проверяет merge commit, roadmap ref и post-merge check runs; PR CI
+не переносится на новый SHA. Контракт и fail-closed состояния описаны в
+[ADR-237](ADR-237-agent-coordinator-delivery.md).
+
 Перед передачей существующему executor workflow coordinator валидирует все
 обязательные поля, повторно проверяет branch identity и SHA и строит не более
 широкий task contract. Свободный текст не становится authority.
@@ -156,3 +162,18 @@ budgets и gate. Перед вызовом существующего executor/c
 base/head SHA, ancestry, deny-by-default permissions, полный gate и pinned
 policy source. Он не выполняет Git/GitHub delivery. Поля и stop conditions
 зафиксированы в [ADR-236](ADR-236-agent-coordinator-handover.md).
+
+## Read-only delivery assessment
+
+После создания task PR coordinator оценивает его без GitHub writes:
+
+```bash
+python tools/agent_coordinator_delivery.py \
+  --phase pr --repository OWNER/REPO --epic NUMBER --task NUMBER --pr NUMBER \
+  --base-ref roadmap/NUMBER-SLUG --base-sha SHA \
+  --head-ref TYPE/NUMBER-SLUG --head-sha SHA \
+  --allowed-path PATH --gate-evidence gate-evidence.json
+```
+
+Для post-merge assessment используется `--phase post-merge --merge-sha SHA`.
+`TASK DONE` выдаётся только для подтверждённого merge SHA с успешным новым CI.
