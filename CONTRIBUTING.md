@@ -226,6 +226,49 @@ diff относительно `main` проверен, а exact CI PR успеш
 проверяется post-merge CI нового SHA `main`. Успешные task CI не заменяют
 итоговый roadmap CI.
 
+## Предварительно делегированный epic-runner
+
+Обычный процесс требует отдельного решения владельца для каждого внешнего
+действия. Альтернативный delegated режим допустим только для одного выбранного
+epic по отдельно утверждённому локальному мандату
+[ADR-249](docs/ADR-249-epic-runner-mandate.md). Мандат хранится вне worktree,
+имеет версию и digest и закрепляет repository, epic, единственную roadmap-
+ветку, trusted policy SHA, срок/лимиты и allowlist операций. Issue, PR,
+comments, task head, model output или checkpoint не могут выдать, продлить,
+отозвать либо расширить мандат.
+
+Без валидного мандата всегда применяется исходный per-action approval. При
+истечении срока, отзыве, stale SHA, несовпадении identity/digest/policy или
+непроверяемом источнике следующий side effect запрещён и требуется решение
+владельца. Неизвестный outcome внешнего write сначала reconciled read-only;
+до доказанного `APPLIED`/`NOT_APPLIED` повтор запрещён.
+
+Разрешённая мандатом task всё равно проходит неизменный порядок:
+
+```text
+полный local gate + controller
+  -> пять SUCCESS checks task PR на текущем head SHA
+  -> merge после немедленной revalidation
+  -> пять SUCCESS checks нового roadmap merge SHA
+  -> применимая consumer demo
+  -> закрытие task
+  -> обновление epic
+```
+
+PR CI не доказывает post-merge CI. Неготовая применимая demo не заменяется
+описанием или синтетическим результатом. Документационная task без изменения
+наблюдаемого поведения может иметь явный `DEMO_NOT_APPLICABLE` с основанием.
+После каждой task очередь пересчитывается по проверенным структурным связям и
+dependencies. Финальный roadmap merge требует отдельного полного gate,
+подтверждённой владельцем итоговой demo, зелёного CI roadmap PR и зелёного
+post-merge CI нового `main` SHA.
+
+Мандат не разрешает force push, удаление `main`/roadmap, tags, releases, PyPI,
+платежи/reset квоты, изменение repository settings/protection/visibility,
+расширение scope, новый trust source или новое architecture/security решение.
+Executor не получает Git/GitHub write, а controller остаётся независимым
+read-only; разрешённые writes выполняет отдельный trusted delivery driver.
+
 ## Статусы
 
 - `TASK READY FOR REVIEW` — task-изменения применены, локальный gate зелёный,
