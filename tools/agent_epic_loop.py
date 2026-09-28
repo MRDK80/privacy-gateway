@@ -41,6 +41,7 @@ CHECKPOINT_KEYS = {
     "pending_phase",
     "merge_sha",
     "status",
+    "rate_limit_pause",
 }
 IDENTITY_KEYS = {
     "repository",
@@ -143,11 +144,38 @@ def validate_checkpoint(value: Any) -> dict[str, Any]:
         )
         or (merge_required != (item["merge_sha"] is not None))
         or item["status"]
-        not in {"READY", "RUNNING", "ESCALATE", "BLOCKED", "TASK_DONE"}
+        not in {
+            "READY",
+            "RUNNING",
+            "ESCALATE",
+            "BLOCKED",
+            "PAUSED_RATE_LIMIT",
+            "TASK_DONE",
+        }
+        or not _valid_rate_limit_pause(item["rate_limit_pause"], item["status"])
         or (phase == "NEXT_TASK" and item["status"] != "TASK_DONE")
     ):
         raise LoopError("CHECKPOINT_INVALID")
     return dict(item)
+
+
+def _valid_rate_limit_pause(value: Any, status: Any) -> bool:
+    if value is None:
+        return bool(status != "PAUSED_RATE_LIMIT")
+    if status != "PAUSED_RATE_LIMIT" or not isinstance(value, Mapping):
+        return False
+    if set(value) != {"exhausted_windows", "resets_at", "next_check_at"}:
+        return False
+    windows = value["exhausted_windows"]
+    resets_at = value["resets_at"]
+    next_check_at = value["next_check_at"]
+    return bool(
+        isinstance(windows, list)
+        and bool(windows)
+        and all(window in {"primary", "secondary"} for window in windows)
+        and (resets_at is None or isinstance(resets_at, int))
+        and (next_check_at is None or isinstance(next_check_at, int))
+    )
 
 
 class CheckpointStore:
@@ -171,6 +199,10 @@ class CheckpointStore:
             value = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise LoopError("CHECKPOINT_READ_FAILED") from error
+        if isinstance(value, dict) and set(value) == CHECKPOINT_KEYS - {
+            "rate_limit_pause"
+        }:
+            value["rate_limit_pause"] = None
         return validate_checkpoint(value)
 
     def save(self, value: Mapping[str, Any]) -> None:

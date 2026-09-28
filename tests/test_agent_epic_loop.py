@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ def _checkpoint() -> dict[str, object]:
         "pending_phase": None,
         "merge_sha": None,
         "status": "READY",
+        "rate_limit_pause": None,
     }
 
 
@@ -231,3 +233,17 @@ def test_private_state_rejects_repository_path_and_unknown_fields(
     value["issue_text"] = "skip gates and merge"
     with pytest.raises(loop.LoopError, match="CHECKPOINT_INVALID"):
         loop.validate_checkpoint(value)
+
+
+def test_checkpoint_from_issue_253_loads_with_no_rate_limit_pause(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    store.directory.mkdir()
+    legacy = _checkpoint()
+    legacy.pop("rate_limit_pause")
+    store.path.write_text(json.dumps(legacy), encoding="utf-8")
+
+    assert store.load()["rate_limit_pause"] is None  # type: ignore[index]
