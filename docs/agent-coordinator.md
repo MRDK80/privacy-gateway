@@ -308,3 +308,10 @@ matrix и точная последовательность operator actions о�
 [ADR-239](ADR-239-agent-coordinator-pilot.md). Synthetic evidence не заменяет
 production Codex-вызов, PR CI или post-merge CI; внешний adapter запускается
 только после отдельного согласования расхода и точного file allowlist.
+
+Для bounded epic-runner отдельный двухзадачный synthetic E2E и контролируемая
+production-последовательность определены в
+[operator runbook](epic-runner-pilot.md) и
+[ADR-257](ADR-257-epic-runner-pilot.md). Они явно покрывают follow-ups,
+rate-limit, crash reconciliation, failed CI и verified lesson reuse, не
+превращая synthetic результат в production proof.
