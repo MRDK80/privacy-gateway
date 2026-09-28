@@ -133,6 +133,12 @@ write. Неизвестный outcome после внешнего вызова �
 `ESCALATE_UNKNOWN_OUTCOME`: повтор запрещён до read-only reconciliation.
 Подробный формат, отзыв, idempotency и полный denylist определены ADR-249.
 
+Финальный gate реализован как отдельная SHA-bound assessment в
+`tools/agent_epic_final.py`: он не переносит task evidence на итоговый roadmap
+PR и не переносит PR CI на post-merge CI нового `main`. Условия возврата в
+`FINAL_GATE` и статусы `ROADMAP READY FOR RELEASE` / `ROADMAP DONE` закреплены
+в [ADR-256](ADR-256-final-epic-gate.md).
+
 ## Fail-closed и resume
 
 Workflow останавливается до следующего side effect при неоднозначном активном
