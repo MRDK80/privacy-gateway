@@ -274,6 +274,26 @@ Runtime adapters передаются внутреннему Python API; ком�
 возвращает `ADAPTER_REQUIRED` и не выполняет side effect. Контракт фаз и
 границы описаны в [ADR-253](ADR-253-idempotent-epic-loop.md).
 
+## Подготовка consumer demo
+
+Для task с новым наблюдаемым поведением закрытый JSON plan передаётся
+внутреннему генератору:
+
+```bash
+python tools/agent_consumer_demo.py assess demo-plan.json
+python tools/agent_consumer_demo.py generate demo-plan.json
+```
+
+Вторая команда печатает одну heredoc-команду. Уже она на машине владельца
+запрашивает repository, реальный input и параметры, создаёт два изолированных
+checkout/venv и выполняет `СТАРЫЙ СПОСОБ`, затем `НОВЫЙ СПОСОБ` на одном
+input. Plan и bounded assessment не содержат введённых значений или output.
+Roadmap SHA assessment обязан совпадать с подтверждённым post-merge SHA, иначе
+фаза `DEMO` остаётся `DEMO_PENDING`. Изменение без наблюдаемого поведения
+требует явного `DEMO_NOT_APPLICABLE` с основанием. Подготовленная команда не
+заменяет фактический итоговый запуск и подтверждение владельца. Контракт и
+ограничения описаны в [ADR-255](ADR-255-consumer-demo.md).
+
 ## Воспроизводимый end-to-end pilot
 
 Финальный synthetic E2E, live read-only discovery, негативная traceability
