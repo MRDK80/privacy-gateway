@@ -199,25 +199,36 @@ import venv
 CONFIG = json.loads({encoded!r})
 
 
-def ask(label, secret=False):
-    value = (getpass.getpass(label + ": ") if secret else input(label + ": ")).strip()
+def ask(terminal, label, secret=False):
+    if secret:
+        value = getpass.getpass(label + ": ", stream=terminal).strip()
+    else:
+        print(label + ": ", end="", flush=True, file=terminal)
+        value = terminal.readline().strip()
     if not value:
         raise SystemExit("Обязательное значение не введено")
     return value
 
 
-repository = pathlib.Path(
-    ask("Путь к локальному Git repository")
-).expanduser().resolve()
-input_path = pathlib.Path(
-    ask("Путь к реальному локальному входу")
-).expanduser().resolve()
+terminal_name = "CONIN$" if sys.platform == "win32" else "/dev/tty"
+try:
+    with open(terminal_name, "r+", encoding="utf-8", buffering=1) as terminal:
+        repository = pathlib.Path(
+            ask(terminal, "Путь к локальному Git repository")
+        ).expanduser().resolve()
+        input_path = pathlib.Path(
+            ask(terminal, "Путь к реальному локальному входу")
+        ).expanduser().resolve()
+        parameters = {{
+            item["name"]: ask(
+                terminal, item["prompt"], item["secret"]
+            )
+            for item in CONFIG["PARAMETERS"]
+        }}
+except OSError as error:
+    raise SystemExit("Управляющий терминал недоступен") from error
 if not (repository / ".git").exists() or not input_path.is_file():
     raise SystemExit("Repository или локальный вход не найден")
-parameters = {{
-    item["name"]: ask(item["prompt"], item["secret"])
-    for item in CONFIG["PARAMETERS"]
-}}
 
 
 def git(*args, capture=False):
