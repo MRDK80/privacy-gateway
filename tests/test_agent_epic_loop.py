@@ -56,6 +56,13 @@ def test_restart_after_every_phase_does_not_repeat_effect(tmp_path: Path) -> Non
     for phase in loop.PHASES[1:]:
         def record_phase(phase: str = phase) -> dict[str, object]:
             calls.append(phase)
+            if phase == "DEMO":
+                return {
+                    "status": "CONSUMER_DEMO_READY",
+                    "baseline_sha": "d" * 40,
+                    "roadmap_sha": "c" * 40,
+                    "reason": None,
+                }
             return {"phase": phase}
 
         current = store.load() or expected
@@ -89,6 +96,51 @@ def test_restart_after_every_phase_does_not_repeat_effect(tmp_path: Path) -> Non
         }
 
     assert calls == list(loop.PHASES[1:])
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        {"status": "DEMO_PENDING"},
+        {
+            "status": "CONSUMER_DEMO_READY",
+            "baseline_sha": "d" * 40,
+            "roadmap_sha": "e" * 40,
+            "reason": None,
+        },
+        {
+            "status": "DEMO_NOT_APPLICABLE",
+            "baseline_sha": "d" * 40,
+            "roadmap_sha": "c" * 40,
+            "reason": "",
+        },
+    ],
+)
+def test_demo_phase_stays_blocked_without_valid_current_assessment(
+    tmp_path: Path, receipt: dict[str, object]
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    value = _checkpoint() | {
+        "phase": "POST_MERGE",
+        "completed_phases": ["RUN_TASK", "PR_CI", "MERGE", "POST_MERGE"],
+        "merge_sha": "c" * 40,
+        "status": "RUNNING",
+    }
+    store = loop.CheckpointStore(tmp_path / "private", root)
+
+    result = loop.advance(
+        value,
+        live=_live(value),
+        store=store,
+        target_phase="DEMO",
+        effect=lambda: receipt,
+        reconcile=lambda _phase: ("NOT_APPLIED", None),
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.machine_code == "DEMO_PENDING"
+    assert store.load()["phase"] == "POST_MERGE"  # type: ignore[index]
 
 
 def test_unknown_write_outcome_requires_reconciliation(tmp_path: Path) -> None:

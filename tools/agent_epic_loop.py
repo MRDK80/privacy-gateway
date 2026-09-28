@@ -321,6 +321,37 @@ def _complete(
     return updated
 
 
+def _valid_demo_receipt(value: Mapping[str, object], merge_sha: object) -> bool:
+    if set(value) != {"status", "baseline_sha", "roadmap_sha", "reason"}:
+        return False
+    status = value["status"]
+    reason = value["reason"]
+    return bool(
+        status in {"CONSUMER_DEMO_READY", "DEMO_NOT_APPLICABLE"}
+        and isinstance(value["baseline_sha"], str)
+        and SHA_RE.fullmatch(value["baseline_sha"]) is not None
+        and value["roadmap_sha"] == merge_sha
+        and (
+            (status == "CONSUMER_DEMO_READY" and reason is None)
+            or (
+                status == "DEMO_NOT_APPLICABLE"
+                and isinstance(reason, str)
+                and bool(reason.strip())
+            )
+        )
+    )
+
+
+def _block_demo(
+    saved: Mapping[str, Any], store: CheckpointStore
+) -> AdvanceResult:
+    blocked = dict(saved)
+    blocked["pending_phase"] = None
+    blocked["status"] = "BLOCKED"
+    store.save(blocked)
+    return _result("BLOCKED", "DEMO_PENDING", blocked, store)
+
+
 def advance(
     expected: Mapping[str, Any],
     *,
@@ -358,6 +389,10 @@ def advance(
             if saved["pending_phase"] is not None:
                 state, receipt = reconcile(target_phase)
                 if state == "APPLIED" and receipt:
+                    if target_phase == "DEMO" and not _valid_demo_receipt(
+                        receipt, saved["merge_sha"]
+                    ):
+                        return _block_demo(saved, store)
                     completed = _complete(saved, target_phase, merge_sha)
                     store.save(completed)
                     return _result("NO_OP", "ALREADY_APPLIED", completed, store)
@@ -386,6 +421,10 @@ def advance(
                 return _result(
                     "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store
                 )
+            if target_phase == "DEMO" and not _valid_demo_receipt(
+                receipt, saved["merge_sha"]
+            ):
+                return _block_demo(pending, store)
             completed = _complete(pending, target_phase, merge_sha)
             store.save(completed)
             return _result("CONTINUE", "OK", completed, store)
