@@ -56,7 +56,8 @@ def test_consumer_visible_plan_generates_single_heredoc_command() -> None:
     assert script.startswith("python - << 'PYEOF'\n")
     assert script.endswith("\nPYEOF")
     assert script.index("СТАРЫЙ СПОСОБ") < script.index("НОВЫЙ СПОСОБ")
-    assert "input(" in script
+    assert 'terminal.readline()' in script
+    assert '"/dev/tty"' in script
     assert '"secret": false' in script
     assert "a" * 40 in script
     assert "b" * 40 in script
@@ -176,18 +177,36 @@ def test_generated_command_runs_in_isolated_checkouts_on_same_synthetic_input(
     command_body = script.removeprefix("python - << 'PYEOF'\n").removesuffix(
         "\nPYEOF"
     )
-
+    answers = f"{repository}\n{input_path}\n"
+    wrapper = (
+        "import builtins\n"
+        "real_open = builtins.open\n"
+        f"answers = iter({answers!r}.splitlines(keepends=True))\n"
+        "class DemoTerminal:\n"
+        "    def write(self, value): return len(value)\n"
+        "    def flush(self): pass\n"
+        "    def readline(self): return next(answers, '')\n"
+        "    def __enter__(self): return self\n"
+        "    def __exit__(self, *args): return False\n"
+        "terminal = DemoTerminal()\n"
+        "def demo_open(path, *args, **kwargs):\n"
+        "    if str(path) in {'/dev/tty', 'CONIN$'}:\n"
+        "        return terminal\n"
+        "    return real_open(path, *args, **kwargs)\n"
+        "builtins.open = demo_open\n"
+        + command_body
+    )
     completed = subprocess.run(
-        [sys.executable, "-c", command_body],
-        input=f"{repository}\n{input_path}\n",
+        [sys.executable, "-c", wrapper],
         check=True,
         capture_output=True,
         text=True,
     )
+    stdout = completed.stdout
 
-    assert "СТАРЫЙ СПОСОБ\nold:synthetic-value" in completed.stdout
-    assert "НОВЫЙ СПОСОБ\nnew:synthetic-value" in completed.stdout
-    assert completed.stdout.count("synthetic-value") == 2
+    assert "СТАРЫЙ СПОСОБ\nold:synthetic-value" in stdout
+    assert "НОВЫЙ СПОСОБ\nnew:synthetic-value" in stdout
+    assert stdout.count("synthetic-value") == 2
     assert list(tmp_path.glob("pgw-demo-*")) == []
 
 
