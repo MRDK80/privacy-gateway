@@ -480,6 +480,38 @@ def test_runtime_config_must_be_owner_only_inside_state_directory(
         loop.CommandRuntimeAdapter.load(link, root, state)
 
 
+def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    command = [sys.executable, "-c", "print('{}')"]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+    lexical_state = state / "child" / ".."
+
+    adapter = loop.CommandRuntimeAdapter.load(
+        lexical_state / "runtime-adapter.json", root, lexical_state
+    )
+
+    assert adapter.root == root.resolve()
+
+
 @pytest.mark.parametrize(
     ("script", "code"),
     [

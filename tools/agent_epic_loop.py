@@ -165,11 +165,12 @@ class CommandRuntimeAdapter:
     def load(
         cls, path: Path, repository_root: Path, state_directory: Path
     ) -> CommandRuntimeAdapter:
-        requested = path.absolute()
+        config_is_symlink = path.is_symlink()
+        requested = path.resolve()
         root = repository_root.resolve()
         state = state_directory.resolve()
         expected_path = state / "runtime-adapter.json"
-        if requested != expected_path or requested.is_symlink():
+        if requested != expected_path or config_is_symlink:
             raise LoopError("UNSAFE_RUNTIME_CONFIG")
         try:
             state_info = state.stat()
