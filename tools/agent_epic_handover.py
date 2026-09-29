@@ -16,12 +16,18 @@ from tools import agent_coordinator_branch as branch
 from tools import agent_coordinator_handover as coordinator_handover
 
 SCHEMA_VERSION = "1.0"
+MANDATE_SCHEMA_VERSION = "2.0"
 MANDATE_FIELDS = {
     "schema_version",
     "repository",
     "epic",
     "roadmap_ref",
     "policy_sha",
+    "issued_at",
+    "expires_at",
+    "owner_identity",
+    "limits",
+    "revoked",
     "operations",
     "task_grants",
     "approval",
@@ -64,6 +70,93 @@ class PlanningError(Exception):
         self.machine_code = machine_code
 
 
+@dataclass(frozen=True)
+class MandateContext:
+    now: int
+    owner_identity: str
+    started_at: int
+    task_iterations: int
+    follow_up_issues: int
+
+
+def mandate_lifecycle_code(
+    mandate: Mapping[str, Any], context: MandateContext
+) -> str | None:
+    """Return the fail-closed lifecycle reason for one imminent side effect."""
+    if mandate.get("schema_version") != MANDATE_SCHEMA_VERSION:
+        return "MANDATE_SCHEMA_UNSUPPORTED"
+    limits = mandate.get("limits")
+    approval = mandate.get("approval")
+    if not isinstance(limits, Mapping) or set(limits) != {
+        "max_duration_seconds",
+        "max_task_iterations",
+        "max_follow_up_issues",
+    }:
+        return "MANDATE_INVALID"
+    if not isinstance(approval, Mapping) or set(approval) != {
+        "mandate_digest",
+        "approved_by",
+        "approved_at",
+    }:
+        return "MANDATE_INVALID"
+    integer_values = (
+        mandate.get("issued_at"),
+        mandate.get("expires_at"),
+        approval.get("approved_at"),
+        limits.get("max_duration_seconds"),
+        limits.get("max_task_iterations"),
+        limits.get("max_follow_up_issues"),
+        context.now,
+        context.started_at,
+        context.task_iterations,
+        context.follow_up_issues,
+    )
+    if any(
+        not isinstance(value, int) or isinstance(value, bool)
+        for value in integer_values
+    ):
+        return "MANDATE_INVALID"
+    issued_at = cast(int, mandate["issued_at"])
+    expires_at = cast(int, mandate["expires_at"])
+    approved_at = cast(int, approval["approved_at"])
+    duration = cast(int, limits["max_duration_seconds"])
+    task_limit = cast(int, limits["max_task_iterations"])
+    follow_up_limit = cast(int, limits["max_follow_up_issues"])
+    if (
+        issued_at < 0
+        or expires_at <= issued_at
+        or approved_at < issued_at
+        or approved_at > expires_at
+        or duration <= 0
+        or task_limit <= 0
+        or follow_up_limit < 0
+        or context.started_at < issued_at
+        or context.task_iterations < 0
+        or context.follow_up_issues < 0
+        or not isinstance(mandate.get("owner_identity"), str)
+        or not mandate["owner_identity"]
+        or mandate.get("revoked") not in {True, False}
+    ):
+        return "MANDATE_INVALID"
+    if mandate["owner_identity"] != context.owner_identity:
+        return "MANDATE_OWNER_MISMATCH"
+    if approval["approved_by"] != context.owner_identity:
+        return "MANDATE_APPROVAL_IDENTITY_MISMATCH"
+    if mandate["revoked"] is True:
+        return "MANDATE_REVOKED"
+    if context.now < issued_at or context.now < approved_at:
+        return "MANDATE_NOT_YET_VALID"
+    if context.now >= expires_at:
+        return "MANDATE_EXPIRED"
+    if context.now - context.started_at >= duration:
+        return "MANDATE_DURATION_LIMIT"
+    if context.task_iterations >= task_limit:
+        return "MANDATE_TASK_LIMIT"
+    if context.follow_up_issues > follow_up_limit:
+        return "MANDATE_FOLLOW_UP_LIMIT"
+    return None
+
+
 def _canonical_digest(value: Mapping[str, Any], excluded: str) -> str:
     payload = {key: item for key, item in value.items() if key != excluded}
     encoded = json.dumps(
@@ -74,7 +167,16 @@ def _canonical_digest(value: Mapping[str, Any], excluded: str) -> str:
 
 def mandate_digest(value: Mapping[str, Any]) -> str:
     """Bind approval to every authority-bearing mandate field."""
-    return _canonical_digest(value, "approval")
+    payload = dict(value)
+    approval = payload.get("approval")
+    if isinstance(approval, Mapping):
+        payload["approval"] = {
+            key: item for key, item in approval.items() if key != "mandate_digest"
+        }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _exact_mapping(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -131,11 +233,22 @@ def _validate_inputs(
     root: Path,
     approved_mandate_digest: str,
     issue_body: str,
+    mandate_context: MandateContext,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
+    if (
+        not isinstance(mandate_value, Mapping)
+        or mandate_value.get("schema_version") != MANDATE_SCHEMA_VERSION
+    ):
+        raise PlanningError("MANDATE_SCHEMA_UNSUPPORTED")
     mandate = _exact_mapping(mandate_value, MANDATE_FIELDS)
     plan = _exact_mapping(plan_value, PLAN_FIELDS)
     digest = mandate_digest(mandate)
-    approval = _exact_mapping(mandate["approval"], {"mandate_digest"})
+    lifecycle = mandate_lifecycle_code(mandate, mandate_context)
+    if lifecycle is not None:
+        raise PlanningError(lifecycle)
+    approval = _exact_mapping(
+        mandate["approval"], {"mandate_digest", "approved_by", "approved_at"}
+    )
     if (
         re.fullmatch(r"sha256:[0-9a-f]{64}", approved_mandate_digest) is None
         or approval["mandate_digest"] != digest
@@ -145,7 +258,7 @@ def _validate_inputs(
 
     repository, epic, task = plan["repository"], plan["epic"], plan["task"]
     if (
-        mandate["schema_version"] != SCHEMA_VERSION
+        mandate["schema_version"] != MANDATE_SCHEMA_VERSION
         or plan["schema_version"] != SCHEMA_VERSION
         or repository != mandate["repository"]
         or epic != mandate["epic"]
@@ -200,6 +313,7 @@ def prepare_handover(
     approved_mandate_digest: str,
     github: branch.GitHubClient,
     issue_body: str,
+    mandate_context: MandateContext,
 ) -> Result:
     """Validate plan authority, create its branch ref, and return handover v1.0."""
     try:
@@ -209,6 +323,7 @@ def prepare_handover(
             root=root,
             approved_mandate_digest=approved_mandate_digest,
             issue_body=issue_body,
+            mandate_context=mandate_context,
         )
         options = branch.Options(
             repository=cast(str, plan["repository"]),

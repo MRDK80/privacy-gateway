@@ -84,11 +84,20 @@ class FakeGitHub:
 
 def _mandate(sha: str) -> dict[str, Any]:
     value: dict[str, Any] = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "repository": "OWNER/repo",
         "epic": 248,
         "roadmap_ref": "roadmap/248-runner",
         "policy_sha": sha,
+        "issued_at": 100,
+        "expires_at": 1000,
+        "owner_identity": "OWNER",
+        "limits": {
+            "max_duration_seconds": 600,
+            "max_task_iterations": 10,
+            "max_follow_up_issues": 3,
+        },
+        "revoked": False,
         "operations": ["create_local_task_branch", "build_task_handover"],
         "task_grants": {
             "251": {
@@ -101,10 +110,26 @@ def _mandate(sha: str) -> dict[str, Any]:
                 ],
             }
         },
-        "approval": {"mandate_digest": "pending"},
+        "approval": {
+            "mandate_digest": "pending",
+            "approved_by": "OWNER",
+            "approved_at": 100,
+        },
     }
     value["approval"]["mandate_digest"] = planner.mandate_digest(value)
     return value
+
+
+def _context(**changes: Any) -> Any:
+    values = {
+        "now": 200,
+        "owner_identity": "OWNER",
+        "started_at": 150,
+        "task_iterations": 0,
+        "follow_up_issues": 0,
+    }
+    values.update(changes)
+    return planner.MandateContext(**values)
 
 
 def _plan(sha: str) -> dict[str, Any]:
@@ -149,6 +174,7 @@ def _prepare(root: Path, sha: str, **changes: Any) -> Any:
         approved_mandate_digest=mandate["approval"]["mandate_digest"],
         github=FakeGitHub(sha),
         issue_body=BODY,
+        mandate_context=_context(),
     )
 
 
@@ -165,7 +191,7 @@ def test_exact_subset_creates_branch_and_versioned_handover(tmp_path: Path) -> N
         "tests/test_new.py",
     ]
     assert result.handover["mandate_provenance"] == {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "digest": _mandate(sha)["approval"]["mandate_digest"],
         "policy_sha": sha,
     }
@@ -202,6 +228,7 @@ def test_dirty_tree_and_stale_ref_stop_before_branch_write(tmp_path: Path) -> No
         approved_mandate_digest=mandate["approval"]["mandate_digest"],
         github=client,
         issue_body=BODY,
+        mandate_context=_context(),
     )
     assert stale.machine_code == "REMOTE_STATE_MISMATCH"
 
@@ -224,6 +251,7 @@ def test_new_path_parent_and_symlink_escape_require_decision(tmp_path: Path) -> 
         approved_mandate_digest=mandate["approval"]["mandate_digest"],
         github=FakeGitHub(sha),
         issue_body=BODY,
+        mandate_context=_context(),
     )
     assert escaped.machine_code == "PATH_ESCAPE"
 
@@ -243,6 +271,7 @@ def test_changed_mandate_or_plan_has_new_digest_and_old_approval_fails(
         approved_mandate_digest=approved,
         github=FakeGitHub(sha),
         issue_body=BODY,
+        mandate_context=_context(),
     )
 
     assert result.machine_code == "MANDATE_APPROVAL_MISMATCH"
