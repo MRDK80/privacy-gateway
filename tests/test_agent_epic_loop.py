@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shlex
 import sys
 import time
@@ -471,8 +472,9 @@ def test_runtime_config_must_be_owner_only_inside_state_directory(
     config.write_text("{}", encoding="utf-8")
     config.chmod(0o644)
 
-    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
-        loop.CommandRuntimeAdapter.load(config, root, state)
+    if os.name != "nt":
+        with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+            loop.CommandRuntimeAdapter.load(config, root, state)
     config.chmod(0o600)
     link = state / "runtime-link.json"
     link.symlink_to(config)

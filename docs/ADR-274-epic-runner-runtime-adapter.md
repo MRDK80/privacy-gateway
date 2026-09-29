@@ -44,7 +44,8 @@ machines, а runtime adapter только связывает их.
 ## Границы
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
-коммитится. Произвольный shell, `shell=True`, fallback на более широкий token,
+коммитится. На POSIX проверяются owner и mode config/state; на Windows private
+state защищается platform ACL. Произвольный shell, `shell=True`, fallback на более широкий token,
 обход branch protection, force push и повтор неизвестного write запрещены.
 Публичные Library API, `pgw`, существующие product JSON contracts и форматы
 токенов не меняются.
