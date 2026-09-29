@@ -434,6 +434,41 @@ def test_resume_preserves_rate_limit_pause_without_invoking_adapter(
     assert store.load() == value
 
 
+def test_resume_reconciles_pending_intent_before_live_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    value["pending_phase"] = "RUN_TASK"
+    value["status"] = "ESCALATE"
+    store.save(value)
+    calls: list[str] = []
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            calls.append("live")
+            raise loop.LoopError("RUNTIME_ADAPTER_FAILED")
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise AssertionError("unknown outcome must not repeat")
+
+        def reconcile(
+            self, phase: str
+        ) -> tuple[str, dict[str, object] | None]:
+            calls.append("reconcile")
+            return "UNKNOWN", None
+
+        def merge_sha(self) -> str | None:
+            return None
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.machine_code == "ESCALATE_UNKNOWN_OUTCOME"
+    assert calls == ["reconcile"]
+
+
 def test_status_keeps_success_exit_code_and_default_resume_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

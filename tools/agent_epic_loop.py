@@ -740,6 +740,16 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
         target = _next_phase(cast(str, saved["phase"]))
         if target is None:
             return _result("TASK_DONE", "OK", saved, store)
+        reconciled: tuple[str, Mapping[str, object] | None] | None = None
+        if saved["pending_phase"] is not None:
+            try:
+                reconciled = adapter.reconcile(target)
+            except LoopError as error:
+                return _result("ESCALATE", error.machine_code, saved, store)
+            if reconciled[0] == "UNKNOWN":
+                return _result(
+                    "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store
+                )
         try:
             live = adapter.live()
         except LoopError as error:
@@ -752,6 +762,8 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
         def run_reconcile(
             phase: str,
         ) -> tuple[str, Mapping[str, object] | None]:
+            if reconciled is not None:
+                return reconciled
             return adapter.reconcile(phase)
 
         result = advance(
