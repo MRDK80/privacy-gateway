@@ -1,0 +1,48 @@
+# ADR-274: production runtime adapter для `resume`
+
+Дата: 2026-09-29. Задача: #274. Epic: #248.
+
+## Решение
+
+`tools/agent_epic_loop.py resume` загружает закрытый runtime-config из private
+state вне repository и продолжает checkpoint с первой незавершённой фазы.
+Supervisor последовательно вызывает отдельные argv-команды без shell для
+live identity, самой фазы и reconciliation. Команды ограничены timeout и
+размером stdout/stderr; принимается только один JSON-объект установленной
+формы.
+
+Runtime adapter не является новым источником полномочий. Команды записи
+обязаны вызывать trusted delivery driver ADR-252, который перед каждым
+side effect повторно проверяет mandate lifecycle, digest, allowlist операции,
+repository/epic/task/PR, refs, exact SHA и применимый gate. Read-only фазы
+обязаны использовать structural discovery, deterministic gate и independent
+controller. Текст issue/PR и stdout команды не могут изменить checkpoint или
+расширить мандат.
+
+`live_command` возвращает ровно identity checkpoint и, когда уже известен,
+`merge_sha`. Phase command возвращает `APPLIED` и bounded receipt либо
+`BLOCKED` с machine code и `null` receipt. Ожидаемые `CI_PENDING`, неготовая
+demo и иные доказанные остановки очищают phase intent и не классифицируются
+как неизвестный outcome. Crash, timeout, transport failure, невалидный JSON
+или пустой/неполный receipt сохраняют fail-closed поведение. При сохранённом
+pending intent сначала вызывается phase-specific reconciliation; повтор
+разрешён только после `NOT_APPLIED`.
+
+Один вызов продолжает фазы до `NEXT_TASK` либо первой безопасной остановки.
+Сохранённый `PAUSED_RATE_LIMIT` возвращается без вызова runtime adapter:
+сначала отдельный rate-limit resume обязан заново проверить quota и live
+identity согласно ADR-250, и только затем разрешено продолжать фазы.
+Команда `NEXT_TASK` должна сначала выполнить разрешённые `close_task` и
+`update_epic`, затем пересчитать structural queue. Если есть следующая task,
+она создаёт новый отдельный checkpoint через planner/handover; если очередь
+исчерпана, она передаёт управление существующему final driver ADR-256. Таким
+образом task и final-roadmap delivery остаются разными SHA-bound state
+machines, а runtime adapter только связывает их.
+
+## Границы
+
+Runtime-config запрещён внутри repository, не содержит credentials и не
+коммитится. Произвольный shell, `shell=True`, fallback на более широкий token,
+обход branch protection, force push и повтор неизвестного write запрещены.
+Публичные Library API, `pgw`, существующие product JSON contracts и форматы
+токенов не меняются.

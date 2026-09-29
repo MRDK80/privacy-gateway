@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -299,3 +301,231 @@ def test_checkpoint_from_issue_253_loads_with_no_rate_limit_pause(
     store.path.write_text(json.dumps(legacy), encoding="utf-8")
 
     assert store.load()["rate_limit_pause"] is None  # type: ignore[index]
+
+
+def test_resume_runs_configured_adapter_from_first_unfinished_phase(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    store.save(value)
+    helper = tmp_path / "adapter.py"
+    helper.write_text(
+        """import json, sys
+phase = sys.argv[1]
+identity = json.loads(sys.argv[2])
+if phase == 'live':
+    identity['merge_sha'] = 'c' * 40
+    print(json.dumps(identity))
+elif phase == 'reconcile':
+    print(json.dumps({'state': 'NOT_APPLIED', 'receipt': None}))
+elif phase == 'DEMO':
+    print(json.dumps({'status': 'APPLIED', 'machine_code': 'OK',
+                      'receipt': {'status': 'DEMO_NOT_APPLICABLE',
+                                  'baseline_sha': 'd' * 40,
+                                  'roadmap_sha': 'c' * 40,
+                                  'reason': 'internal-only change'}}))
+else:
+    print(json.dumps({'status': 'APPLIED', 'machine_code': 'OK',
+                      'receipt': {'phase': phase}}))
+""",
+        encoding="utf-8",
+    )
+    identity = json.dumps(_live(value), sort_keys=True)
+    commands = {
+        phase: [sys.executable, str(helper), phase, identity]
+        for phase in loop.PHASES[1:]
+    }
+    config = {
+        "schema_version": "1.0",
+        "live_command": [sys.executable, str(helper), "live", identity],
+        "phase_commands": commands,
+        "reconcile_commands": {
+            phase: [sys.executable, str(helper), "reconcile", identity]
+            for phase in loop.PHASES[1:]
+        },
+        "timeout_seconds": 10,
+        "output_limit": 4096,
+    }
+    config_path = store.directory / "runtime-adapter.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    config_path.chmod(0o600)
+
+    adapter = loop.CommandRuntimeAdapter.load(config_path, root, store.directory)
+    result = loop.resume(store=store, adapter=adapter)
+
+    assert result.status == "TASK_DONE"
+    assert result.phase == "NEXT_TASK"
+    assert store.load()["completed_phases"] == list(loop.PHASES[1:])  # type: ignore[index]
+
+
+def test_resume_stops_cleanly_on_retryable_gate_without_unknown_outcome(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    store.save(value)
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            return _live(value)
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise loop.PhaseBlocked("CI_PENDING")
+
+        def reconcile(
+            self, phase: str
+        ) -> tuple[str, dict[str, object] | None]:
+            return "NOT_APPLIED", None
+
+        def merge_sha(self) -> str | None:
+            return None
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.status == "BLOCKED"
+    assert result.machine_code == "CI_PENDING"
+    saved = store.load()
+    assert saved is not None
+    assert saved["pending_phase"] is None
+    assert saved["phase"] == "PLAN"
+
+
+def test_resume_preserves_rate_limit_pause_without_invoking_adapter(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    value["status"] = "PAUSED_RATE_LIMIT"
+    value["rate_limit_pause"] = {
+        "exhausted_windows": ["primary"],
+        "resets_at": 1_800_000_000,
+        "next_check_at": 1_799_999_000,
+    }
+    store.save(value)
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def reconcile(self, phase: str) -> tuple[str, dict[str, object] | None]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def merge_sha(self) -> str | None:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.status == "PAUSED_RATE_LIMIT"
+    assert result.machine_code == "RATE_LIMIT_PAUSED"
+    assert store.load() == value
+
+
+def test_status_keeps_success_exit_code_and_default_resume_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agent_epic_loop.py",
+            "status",
+            "--state-dir",
+            str(state),
+            "--repository-root",
+            str(root),
+        ],
+    )
+
+    assert loop.main() == 0
+    value = json.loads(capsys.readouterr().out)
+    assert value["status"] == "READY"
+    assert value["resume_command"].endswith(
+        f"--state-dir {state.resolve()} --repository-root {root.resolve()}"
+    )
+
+
+def test_runtime_config_must_be_owner_only_inside_state_directory(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    config.write_text("{}", encoding="utf-8")
+    config.chmod(0o644)
+
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+    config.chmod(0o600)
+    link = state / "runtime-link.json"
+    link.symlink_to(config)
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter.load(link, root, state)
+
+
+@pytest.mark.parametrize(
+    ("script", "code"),
+    [
+        ("import sys; sys.stdout.write('x' * 8192)", "RUNTIME_ADAPTER_FAILED"),
+        ("import os; os.write(1, b'\\xff')", "RUNTIME_ADAPTER_INVALID"),
+    ],
+)
+def test_runtime_adapter_fails_closed_on_unsafe_output(
+    tmp_path: Path, script: str, code: str
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    command = (sys.executable, "-c", script)
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=1024,
+    )
+
+    with pytest.raises(loop.LoopError, match=code):
+        adapter.live()
+
+
+def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    script = (
+        "import subprocess; "
+        f"subprocess.Popen([{sys.executable!r}, '-c', "
+        "'import time; time.sleep(5)'], start_new_session=True)"
+    )
+    command = (sys.executable, "-c", script)
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+
+    started = time.monotonic()
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+        adapter.live()
+
+    assert time.monotonic() - started < 2

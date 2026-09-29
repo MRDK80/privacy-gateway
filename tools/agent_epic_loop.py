@@ -8,11 +8,16 @@ import importlib
 import json
 import os
 import re
+import shlex
+import signal
+import stat
+import subprocess
 import tempfile
-from collections.abc import Callable, Mapping
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from typing import Any, BinaryIO, Protocol, cast
 
 SCHEMA_VERSION = "1.0"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
@@ -64,6 +69,14 @@ class LoopError(Exception):
         self.machine_code = machine_code
 
 
+class PhaseBlocked(Exception):
+    """A verified phase is not ready and no ambiguous side effect occurred."""
+
+    def __init__(self, machine_code: str) -> None:
+        super().__init__(machine_code)
+        self.machine_code = machine_code
+
+
 @dataclass(frozen=True)
 class AdvanceResult:
     status: str
@@ -84,6 +97,243 @@ class Status:
 
 Effect = Callable[[], Mapping[str, object]]
 Reconcile = Callable[[str], tuple[str, Mapping[str, object] | None]]
+
+
+class RuntimeAdapter(Protocol):
+    """Narrow production boundary used by the checkpoint supervisor."""
+
+    def live(self) -> Mapping[str, Any]: ...
+
+    def effect(self, phase: str) -> Mapping[str, object]: ...
+
+    def reconcile(
+        self, phase: str
+    ) -> tuple[str, Mapping[str, object] | None]: ...
+
+    def merge_sha(self) -> str | None: ...
+
+
+RUNTIME_CONFIG_KEYS = {
+    "schema_version",
+    "live_command",
+    "phase_commands",
+    "reconcile_commands",
+    "timeout_seconds",
+    "output_limit",
+}
+
+
+class CommandRuntimeAdapter:
+    """Run closed argv adapters and accept only bounded JSON receipts."""
+
+    def __init__(
+        self,
+        *,
+        root: Path,
+        live_command: tuple[str, ...],
+        phase_commands: Mapping[str, tuple[str, ...]],
+        reconcile_commands: Mapping[str, tuple[str, ...]],
+        timeout_seconds: int,
+        output_limit: int,
+    ) -> None:
+        self.root = root.resolve()
+        self.live_command = live_command
+        self.phase_commands = dict(phase_commands)
+        self.reconcile_commands = dict(reconcile_commands)
+        self.timeout_seconds = timeout_seconds
+        self.output_limit = output_limit
+        self._merge_sha: str | None = None
+
+    @staticmethod
+    def _command(value: Any) -> tuple[str, ...]:
+        if (
+            not isinstance(value, list)
+            or not value
+            or not all(
+                isinstance(item, str)
+                and bool(item)
+                and "\x00" not in item
+                and "\n" not in item
+                for item in value
+            )
+        ):
+            raise LoopError("RUNTIME_CONFIG_INVALID")
+        return tuple(value)
+
+    @classmethod
+    def load(
+        cls, path: Path, repository_root: Path, state_directory: Path
+    ) -> CommandRuntimeAdapter:
+        requested = path.absolute()
+        root = repository_root.resolve()
+        state = state_directory.resolve()
+        expected_path = state / "runtime-adapter.json"
+        if requested != expected_path or requested.is_symlink():
+            raise LoopError("UNSAFE_RUNTIME_CONFIG")
+        try:
+            state_info = state.stat()
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(requested, flags)
+            with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+                info = os.fstat(stream.fileno())
+                owner = getattr(os, "getuid", lambda: info.st_uid)()
+                if (
+                    not stat.S_ISDIR(state_info.st_mode)
+                    or not stat.S_ISREG(info.st_mode)
+                    or info.st_uid != owner
+                    or state_info.st_uid != owner
+                    or stat.S_IMODE(info.st_mode) & 0o077
+                    or stat.S_IMODE(state_info.st_mode) & 0o077
+                ):
+                    raise LoopError("UNSAFE_RUNTIME_CONFIG")
+                value = json.load(stream)
+        except (OSError, ValueError) as error:
+            raise LoopError("RUNTIME_CONFIG_READ_FAILED") from error
+        item = _exact(value, RUNTIME_CONFIG_KEYS, "RUNTIME_CONFIG_INVALID")
+        phase_values = item["phase_commands"]
+        reconcile_values = item["reconcile_commands"]
+        expected_phases = set(PHASES[1:])
+        if (
+            item["schema_version"] != "1.0"
+            or not isinstance(phase_values, Mapping)
+            or set(phase_values) != expected_phases
+            or not isinstance(reconcile_values, Mapping)
+            or set(reconcile_values) != expected_phases
+            or not isinstance(item["timeout_seconds"], int)
+            or isinstance(item["timeout_seconds"], bool)
+            or not 1 <= item["timeout_seconds"] <= 86400
+            or not isinstance(item["output_limit"], int)
+            or isinstance(item["output_limit"], bool)
+            or not 1024 <= item["output_limit"] <= 1_000_000
+        ):
+            raise LoopError("RUNTIME_CONFIG_INVALID")
+        return cls(
+            root=root,
+            live_command=cls._command(item["live_command"]),
+            phase_commands={
+                phase: cls._command(phase_values[phase]) for phase in expected_phases
+            },
+            reconcile_commands={
+                phase: cls._command(reconcile_values[phase])
+                for phase in expected_phases
+            },
+            timeout_seconds=item["timeout_seconds"],
+            output_limit=item["output_limit"],
+        )
+
+    def _run(self, command: Sequence[str]) -> Mapping[str, Any]:
+        def terminate_tree(process: subprocess.Popen[bytes]) -> None:
+            try:
+                if os.name == "nt":
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=5,
+                        check=False,
+                    )
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, subprocess.TimeoutExpired):
+                process.kill()
+
+        try:
+            with (
+                tempfile.TemporaryFile() as stdout_file,
+                tempfile.TemporaryFile() as stderr_file,
+            ):
+                process = subprocess.Popen(
+                    list(command),
+                    cwd=self.root,
+                    stdout=stdout_file,
+                    stderr=stderr_file,
+                    start_new_session=os.name != "nt",
+                )
+                deadline = time.monotonic() + self.timeout_seconds
+                overflow = False
+                while process.poll() is None:
+                    if (
+                        os.fstat(stdout_file.fileno()).st_size > self.output_limit
+                        or os.fstat(stderr_file.fileno()).st_size > self.output_limit
+                    ):
+                        overflow = True
+                        terminate_tree(process)
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        terminate_tree(process)
+                        raise subprocess.TimeoutExpired(command, self.timeout_seconds)
+                    try:
+                        process.wait(timeout=min(0.05, remaining))
+                    except subprocess.TimeoutExpired:
+                        pass
+                return_code = process.wait()
+                if (
+                    overflow
+                    or os.fstat(stdout_file.fileno()).st_size > self.output_limit
+                    or os.fstat(stderr_file.fileno()).st_size > self.output_limit
+                ):
+                    raise LoopError("RUNTIME_ADAPTER_FAILED")
+                stdout_file.seek(0)
+                stdout = stdout_file.read(self.output_limit + 1)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise LoopError("RUNTIME_ADAPTER_FAILED") from error
+        if return_code != 0:
+            raise LoopError("RUNTIME_ADAPTER_FAILED")
+        try:
+            output = stdout.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise LoopError("RUNTIME_ADAPTER_INVALID") from error
+        try:
+            value = json.loads(output)
+        except ValueError as error:
+            raise LoopError("RUNTIME_ADAPTER_INVALID") from error
+        if not isinstance(value, Mapping):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        return cast(Mapping[str, Any], value)
+
+    def live(self) -> Mapping[str, Any]:
+        value = self._run(self.live_command)
+        allowed = LIVE_KEYS | {"merge_sha"}
+        if not set(value).issubset(allowed) or not LIVE_KEYS.issubset(value):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        merge_sha = value.get("merge_sha")
+        if merge_sha is not None and (
+            not isinstance(merge_sha, str) or SHA_RE.fullmatch(merge_sha) is None
+        ):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        self._merge_sha = merge_sha
+        return {key: value[key] for key in LIVE_KEYS}
+
+    def effect(self, phase: str) -> Mapping[str, object]:
+        value = self._run(self.phase_commands[phase])
+        if set(value) != {"status", "machine_code", "receipt"}:
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        code = value["machine_code"]
+        if not isinstance(code, str) or not code:
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        if value["status"] == "BLOCKED" and value["receipt"] is None:
+            raise PhaseBlocked(code)
+        receipt = value["receipt"]
+        if value["status"] != "APPLIED" or not isinstance(receipt, Mapping):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        return cast(Mapping[str, object], receipt)
+
+    def reconcile(
+        self, phase: str
+    ) -> tuple[str, Mapping[str, object] | None]:
+        value = self._run(self.reconcile_commands[phase])
+        if set(value) != {"state", "receipt"}:
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        state, receipt = value["state"], value["receipt"]
+        if state not in {"APPLIED", "NOT_APPLIED", "UNKNOWN"} or not (
+            receipt is None or isinstance(receipt, Mapping)
+        ):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        return cast(str, state), cast(Mapping[str, object] | None, receipt)
+
+    def merge_sha(self) -> str | None:
+        return self._merge_sha
 
 
 def default_directory() -> Path:
@@ -184,6 +434,7 @@ class CheckpointStore:
     def __init__(self, directory: Path, repository_root: Path) -> None:
         self.directory = directory.resolve()
         root = repository_root.resolve()
+        self.repository_root = root
         try:
             self.directory.relative_to(root)
         except ValueError:
@@ -282,7 +533,11 @@ class RunnerLock:
 
 
 def _resume_command(store: CheckpointStore) -> str:
-    return f"python tools/agent_epic_loop.py resume --state-dir {store.directory}"
+    return (
+        "python tools/agent_epic_loop.py resume"
+        f" --state-dir {shlex.quote(str(store.directory))}"
+        f" --repository-root {shlex.quote(str(store.repository_root))}"
+    )
 
 
 def inspect(store: CheckpointStore) -> Status:
@@ -407,6 +662,12 @@ def advance(
             store.save(pending)
             try:
                 receipt = effect()
+            except PhaseBlocked as error:
+                blocked = dict(pending)
+                blocked["pending_phase"] = None
+                blocked["status"] = "BLOCKED"
+                store.save(blocked)
+                return _result("BLOCKED", error.machine_code, blocked, store)
             except Exception:
                 failed = dict(pending)
                 failed["status"] = "ESCALATE"
@@ -433,6 +694,58 @@ def advance(
         return _result("ESCALATE", error.machine_code, fallback, store)
 
 
+def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
+    """Continue from the first unfinished phase until completion or a safe stop."""
+    saved = store.load()
+    if saved is None:
+        raise LoopError("CHECKPOINT_NOT_FOUND")
+    if saved["phase"] == PHASES[-1]:
+        return _result("TASK_DONE", "ALREADY_COMPLETED", saved, store)
+    if saved["status"] == "PAUSED_RATE_LIMIT":
+        return _result("PAUSED_RATE_LIMIT", "RATE_LIMIT_PAUSED", saved, store)
+    result: AdvanceResult | None = None
+    for _ in PHASES[1:]:
+        saved = store.load()
+        if saved is None:
+            raise LoopError("CHECKPOINT_NOT_FOUND")
+        target = _next_phase(cast(str, saved["phase"]))
+        if target is None:
+            return _result("TASK_DONE", "OK", saved, store)
+        try:
+            live = adapter.live()
+        except LoopError as error:
+            return _result("ESCALATE", error.machine_code, saved, store)
+        merge_sha = adapter.merge_sha() if target == "POST_MERGE" else None
+
+        def run_effect() -> Mapping[str, object]:
+            return adapter.effect(target)
+
+        def run_reconcile(
+            phase: str,
+        ) -> tuple[str, Mapping[str, object] | None]:
+            return adapter.reconcile(phase)
+
+        result = advance(
+            saved,
+            live=live,
+            store=store,
+            target_phase=target,
+            effect=run_effect,
+            reconcile=run_reconcile,
+            merge_sha=merge_sha,
+        )
+        if result.status not in {"CONTINUE", "NO_OP"}:
+            return result
+        if result.phase == PHASES[-1]:
+            completed = store.load()
+            if completed is None:
+                raise LoopError("CHECKPOINT_NOT_FOUND")
+            return _result("TASK_DONE", result.machine_code, completed, store)
+    if result is None:
+        raise LoopError("CHECKPOINT_INVALID")
+    return result
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -440,6 +753,8 @@ def _parser() -> argparse.ArgumentParser:
         child = subparsers.add_parser(command)
         child.add_argument("--state-dir", type=Path, required=True)
         child.add_argument("--repository-root", type=Path, default=Path.cwd())
+        if command == "resume":
+            child.add_argument("--runtime-config", type=Path)
     return parser
 
 
@@ -450,9 +765,17 @@ def main() -> int:
         status = inspect(store)
         value = asdict(status)
         if args.command == "resume":
-            value["status"] = "ADAPTER_REQUIRED"
+            runtime_config = args.runtime_config or (
+                args.state_dir / "runtime-adapter.json"
+            )
+            adapter = CommandRuntimeAdapter.load(
+                runtime_config, args.repository_root, args.state_dir
+            )
+            value = asdict(resume(store=store, adapter=adapter))
         print(json.dumps(value, sort_keys=True))
-        return 0 if args.command == "status" else 2
+        if args.command == "status":
+            return 0
+        return 0 if value["status"] in {"TASK_DONE", "CONTINUE", "NO_OP"} else 2
     except LoopError as error:
         print(json.dumps({"status": "ESCALATE", "machine_code": error.machine_code}))
         return 2

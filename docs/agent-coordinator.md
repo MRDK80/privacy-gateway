@@ -276,9 +276,12 @@ python tools/agent_epic_loop.py status \
   --state-dir /PRIVATE/STATE --repository-root /PATH/TO/REPOSITORY
 ```
 
-Runtime adapters передаются внутреннему Python API; команда `resume` без них
-возвращает `ADAPTER_REQUIRED` и не выполняет side effect. Контракт фаз и
-границы описаны в [ADR-253](ADR-253-idempotent-epic-loop.md).
+Команда `resume` принимает закрытый runtime-config из private state и
+последовательно вызывает SHA-bound adapters начиная с первой незавершённой
+фазы. Без config команда не запускается; ожидаемая неготовность gate даёт
+`BLOCKED`, а неоднозначный write требует reconciliation. Контракт supervisor
+описан в [ADR-253](ADR-253-idempotent-epic-loop.md), production boundary — в
+[ADR-274](ADR-274-epic-runner-runtime-adapter.md).
 
 ## Подготовка consumer demo
 
