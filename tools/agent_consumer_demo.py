@@ -190,6 +190,7 @@ def _runtime_source(item: Mapping[str, Any]) -> str:
     encoded = json.dumps(constants, ensure_ascii=False, sort_keys=True)
     return f'''import getpass
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -201,32 +202,50 @@ CONFIG = json.loads({encoded!r})
 
 def ask(terminal, label, secret=False):
     if secret:
-        value = getpass.getpass(label + ": ", stream=terminal).strip()
+        original_stdin = sys.stdin
+        try:
+            sys.stdin = terminal
+            value = getpass.getpass(label + ": ", stream=sys.stderr).strip()
+        finally:
+            sys.stdin = original_stdin
     else:
-        print(label + ": ", end="", flush=True, file=terminal)
+        print(label + ": ", end="", flush=True, file=sys.stderr)
         value = terminal.readline().strip()
     if not value:
         raise SystemExit("Обязательное значение не введено")
     return value
 
 
-terminal_name = "CONIN$" if sys.platform == "win32" else "/dev/tty"
-try:
-    with open(terminal_name, "r+", encoding="utf-8", buffering=1) as terminal:
-        repository = pathlib.Path(
-            ask(terminal, "Путь к локальному Git repository")
-        ).expanduser().resolve()
-        input_path = pathlib.Path(
-            ask(terminal, "Путь к реальному локальному входу")
-        ).expanduser().resolve()
-        parameters = {{
-            item["name"]: ask(
-                terminal, item["prompt"], item["secret"]
-            )
-            for item in CONFIG["PARAMETERS"]
-        }}
-except OSError as error:
-    raise SystemExit("Управляющий терминал недоступен") from error
+def open_terminal():
+    names = ["CONIN$"] if sys.platform == "win32" else ["/dev/tty"]
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            name = os.ttyname(stream.fileno())
+        except (AttributeError, OSError):
+            continue
+        if name not in names:
+            names.append(name)
+    for name in names:
+        try:
+            return open(name, "r", encoding="utf-8", buffering=1)
+        except OSError:
+            continue
+    raise SystemExit("Управляющий терминал недоступен")
+
+
+with open_terminal() as terminal:
+    repository = pathlib.Path(
+        ask(terminal, "Путь к локальному Git repository")
+    ).expanduser().resolve()
+    input_path = pathlib.Path(
+        ask(terminal, "Путь к реальному локальному входу")
+    ).expanduser().resolve()
+    parameters = {{
+        item["name"]: ask(
+            terminal, item["prompt"], item["secret"]
+        )
+        for item in CONFIG["PARAMETERS"]
+    }}
 if not (repository / ".git").exists() or not input_path.is_file():
     raise SystemExit("Repository или локальный вход не найден")
 

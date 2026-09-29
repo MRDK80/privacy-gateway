@@ -58,6 +58,9 @@ def test_consumer_visible_plan_generates_single_heredoc_command() -> None:
     assert script.index("СТАРЫЙ СПОСОБ") < script.index("НОВЫЙ СПОСОБ")
     assert 'terminal.readline()' in script
     assert '"/dev/tty"' in script
+    assert 'return open(name, "r",' in script
+    assert 'open(name, "r+"' not in script
+    assert "os.ttyname(" in script
     assert '"secret": false' in script
     assert "a" * 40 in script
     assert "b" * 40 in script
