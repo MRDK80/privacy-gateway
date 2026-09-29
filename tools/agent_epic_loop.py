@@ -159,6 +159,8 @@ class CommandRuntimeAdapter:
             )
         ):
             raise LoopError("RUNTIME_CONFIG_INVALID")
+        if not Path(value[0]).is_absolute():
+            raise LoopError("RUNTIME_CONFIG_INVALID")
         return tuple(value)
 
     @classmethod

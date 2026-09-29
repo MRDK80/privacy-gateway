@@ -553,6 +553,34 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
     assert adapter.root == root.resolve()
 
 
+def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    command = ["python", "adapter.py"]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_CONFIG_INVALID"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+
+
 @pytest.mark.parametrize(
     ("script", "code"),
     [

@@ -6,7 +6,8 @@
 
 `tools/agent_epic_loop.py resume` загружает закрытый runtime-config из private
 state вне repository и продолжает checkpoint с первой незавершённой фазы.
-Supervisor последовательно вызывает отдельные argv-команды без shell для
+Supervisor последовательно вызывает отдельные argv-команды с абсолютным
+executable path и без shell для
 live identity, самой фазы и reconciliation. Команды ограничены timeout и
 размером stdout/stderr; принимается только один JSON-объект установленной
 формы.
