@@ -169,6 +169,11 @@ class CommandRuntimeAdapter:
     ) -> CommandRuntimeAdapter:
         if os.name == "nt":
             raise LoopError("RUNTIME_ADAPTER_UNSUPPORTED")
+        if not any(
+            candidate.is_file() and os.access(candidate, os.X_OK)
+            for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap"))
+        ):
+            raise LoopError("BUBBLEWRAP_REQUIRED")
         config_is_symlink = path.is_symlink()
         requested = path.resolve()
         root = repository_root.resolve()
@@ -312,6 +317,26 @@ class CommandRuntimeAdapter:
         value = self._run(self.live_command)
         allowed = LIVE_KEYS | {"merge_sha"}
         if not set(value).issubset(allowed) or not LIVE_KEYS.issubset(value):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        if (
+            not isinstance(value["repository"], str)
+            or not value["repository"]
+            or not all(
+                isinstance(value[key], int)
+                and not isinstance(value[key], bool)
+                and value[key] > 0
+                for key in ("epic", "task", "pr")
+            )
+            or not all(
+                isinstance(value[key], str) and bool(value[key])
+                for key in ("base_ref", "head_ref")
+            )
+            or not all(
+                isinstance(value[key], str)
+                and SHA_RE.fullmatch(value[key]) is not None
+                for key in ("base_sha", "head_sha")
+            )
+        ):
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         merge_sha = value.get("merge_sha")
         if merge_sha is not None and (

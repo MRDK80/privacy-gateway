@@ -633,6 +633,31 @@ def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
         adapter.effect("RUN_TASK")
 
 
+def test_runtime_adapter_rejects_type_confused_live_identity(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    live = _live(_checkpoint())
+    live["task"] = True
+    command = (
+        sys.executable,
+        "-c",
+        f"print({json.dumps(json.dumps(live))})",
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=4096,
+    )
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+        adapter.live()
+
+
 def test_advance_rejects_receipt_for_wrong_phase(tmp_path: Path) -> None:
     root = tmp_path / "repository"
     root.mkdir()

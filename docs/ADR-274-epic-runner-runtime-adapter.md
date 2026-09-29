@@ -46,7 +46,10 @@ machines, а runtime adapter только связывает их.
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
 коммитится. Production adapter запускается только на POSIX: проверяются owner
-и mode config/state, а output-файлы ограничиваются `RLIMIT_FSIZE`. На Windows
+и mode config/state, наличие системного Bubblewrap, а output-файлы
+ограничиваются `RLIMIT_FSIZE`. Фаза `RUN_TASK` делегирует executor существующему
+sandbox adapter ADR-225 с minimal-file Bubblewrap boundary; delivery-фазы
+остаются в узком driver ADR-252. На Windows
 он fail-closed возвращает `RUNTIME_ADAPTER_UNSUPPORTED`, поскольку этот runtime
 не реализует проверку ACL. Произвольный shell, `shell=True`, fallback на более широкий token,
 обход branch protection, force push и повтор неизвестного write запрещены.
