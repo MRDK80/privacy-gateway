@@ -20,11 +20,13 @@ controller. Текст issue/PR и stdout команды не могут изм�
 расширить мандат.
 
 `live_command` возвращает ровно identity checkpoint и, когда уже известен,
-`merge_sha`. Phase command возвращает `APPLIED` и bounded receipt либо
+`merge_sha`. Phase command возвращает `APPLIED` и закрытый receipt ровно своей
+фазы (для `DEMO` действует отдельная SHA-bound schema) либо
 `BLOCKED` с machine code и `null` receipt. Ожидаемые `CI_PENDING`, неготовая
 demo и иные доказанные остановки очищают phase intent и не классифицируются
 как неизвестный outcome. Crash, timeout, transport failure, невалидный JSON
-или пустой/неполный receipt сохраняют fail-closed поведение. При сохранённом
+или пустой/неполный receipt сохраняют fail-closed поведение. Machine code
+ограничен коротким uppercase ASCII identifier без свободной диагностики. При сохранённом
 pending intent сначала вызывается phase-specific reconciliation; повтор
 разрешён только после `NOT_APPLIED`.
 

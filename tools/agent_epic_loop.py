@@ -21,6 +21,7 @@ from typing import Any, BinaryIO, Protocol, cast
 
 SCHEMA_VERSION = "1.0"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+MACHINE_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 PHASES = (
     "PLAN",
     "RUN_TASK",
@@ -313,7 +314,7 @@ class CommandRuntimeAdapter:
         if set(value) != {"status", "machine_code", "receipt"}:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         code = value["machine_code"]
-        if not isinstance(code, str) or not code:
+        if not isinstance(code, str) or MACHINE_CODE_RE.fullmatch(code) is None:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         if value["status"] == "BLOCKED" and value["receipt"] is None:
             raise PhaseBlocked(code)
@@ -600,6 +601,14 @@ def _valid_demo_receipt(value: Mapping[str, object], merge_sha: object) -> bool:
     )
 
 
+def _valid_phase_receipt(
+    phase: str, value: Mapping[str, object], merge_sha: object
+) -> bool:
+    if phase == "DEMO":
+        return _valid_demo_receipt(value, merge_sha)
+    return set(value) == {"phase"} and value["phase"] == phase
+
+
 def _block_demo(
     saved: Mapping[str, Any], store: CheckpointStore
 ) -> AdvanceResult:
@@ -647,9 +656,13 @@ def advance(
             if saved["pending_phase"] is not None:
                 state, receipt = reconcile(target_phase)
                 if state == "APPLIED" and receipt:
-                    if target_phase == "DEMO" and not _valid_demo_receipt(
-                        receipt, saved["merge_sha"]
+                    if not _valid_phase_receipt(
+                        target_phase, receipt, saved["merge_sha"]
                     ):
+                        if target_phase != "DEMO":
+                            return _result(
+                                "ESCALATE", "RECEIPT_INVALID", saved, store
+                            )
                         return _block_demo(saved, store)
                     completed = _complete(saved, target_phase, merge_sha)
                     store.save(completed)
@@ -685,9 +698,12 @@ def advance(
                 return _result(
                     "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store
                 )
-            if target_phase == "DEMO" and not _valid_demo_receipt(
-                receipt, saved["merge_sha"]
-            ):
+            if not _valid_phase_receipt(target_phase, receipt, saved["merge_sha"]):
+                if target_phase != "DEMO":
+                    failed = dict(pending)
+                    failed["status"] = "ESCALATE"
+                    store.save(failed)
+                    return _result("ESCALATE", "RECEIPT_INVALID", failed, store)
                 return _block_demo(pending, store)
             completed = _complete(pending, target_phase, merge_sha)
             store.save(completed)

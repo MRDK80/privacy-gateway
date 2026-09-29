@@ -170,7 +170,7 @@ def test_unknown_write_outcome_requires_reconciliation(tmp_path: Path) -> None:
         store=store,
         target_phase="RUN_TASK",
         effect=lambda: pytest.fail("applied write must not repeat"),
-        reconcile=lambda _phase: ("APPLIED", {"receipt": "verified"}),
+        reconcile=lambda _phase: ("APPLIED", {"phase": "RUN_TASK"}),
     )
 
     assert unknown.machine_code == "ESCALATE_UNKNOWN_OUTCOME"
@@ -191,7 +191,7 @@ def test_reconciled_not_applied_can_execute_once(tmp_path: Path) -> None:
 
     def record_run() -> dict[str, object]:
         calls.append("run")
-        return {"receipt": "created"}
+        return {"phase": "RUN_TASK"}
 
     result = loop.advance(
         value,
@@ -504,6 +504,47 @@ def test_runtime_adapter_fails_closed_on_unsafe_output(
 
     with pytest.raises(loop.LoopError, match=code):
         adapter.live()
+
+
+def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    command = (
+        sys.executable,
+        "-c",
+        "import json; print(json.dumps({'status': 'BLOCKED', "
+        "'machine_code': 'secret diagnostic', 'receipt': None}))",
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=1024,
+    )
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+        adapter.effect("RUN_TASK")
+
+
+def test_advance_rejects_receipt_for_wrong_phase(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    value = _checkpoint()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+
+    result = loop.advance(
+        value,
+        live=_live(value),
+        store=store,
+        target_phase="RUN_TASK",
+        effect=lambda: {"phase": "MERGE"},
+        reconcile=lambda _phase: ("NOT_APPLIED", None),
+    )
+
+    assert result.status == "ESCALATE"
+    assert result.machine_code == "RECEIPT_INVALID"
 
 
 def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
