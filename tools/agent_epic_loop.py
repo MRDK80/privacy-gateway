@@ -183,7 +183,10 @@ class CommandRuntimeAdapter:
                     or info.st_uid != owner
                     or state_info.st_uid != owner
                     or stat.S_IMODE(info.st_mode) & 0o077
-                    or stat.S_IMODE(state_info.st_mode) & 0o077
+                    or (
+                        os.name != "nt"
+                        and stat.S_IMODE(state_info.st_mode) & 0o077
+                    )
                 ):
                     raise LoopError("UNSAFE_RUNTIME_CONFIG")
                 value = json.load(stream)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -454,7 +455,8 @@ def test_status_keeps_success_exit_code_and_default_resume_config(
     value = json.loads(capsys.readouterr().out)
     assert value["status"] == "READY"
     assert value["resume_command"].endswith(
-        f"--state-dir {state.resolve()} --repository-root {root.resolve()}"
+        f"--state-dir {shlex.quote(str(state.resolve()))} "
+        f"--repository-root {shlex.quote(str(root.resolve()))}"
     )
 
 
