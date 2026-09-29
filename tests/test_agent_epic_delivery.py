@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from typing import cast
 
 import pytest
 from tools import agent_epic_delivery as delivery
@@ -11,11 +12,20 @@ from tools import agent_epic_delivery as delivery
 
 def _mandate() -> dict[str, object]:
     value: dict[str, object] = {
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "repository": "OWNER/repository",
         "epic": 248,
         "roadmap_ref": "roadmap/248-autonomous-epic-runner",
         "policy_sha": "a" * 40,
+        "issued_at": 100,
+        "expires_at": 1000,
+        "owner_identity": "OWNER",
+        "limits": {
+            "max_duration_seconds": 600,
+            "max_task_iterations": 10,
+            "max_follow_up_issues": 3,
+        },
+        "revoked": False,
         "operations": [
             "commit_task",
             "push_task",
@@ -30,9 +40,15 @@ def _mandate() -> dict[str, object]:
                 "allowed_paths": ["tools/agent_epic_delivery.py"],
             }
         },
-        "approval": {"mandate_digest": "pending"},
+        "approval": {
+            "mandate_digest": "pending",
+            "approved_by": "OWNER",
+            "approved_at": 100,
+        },
     }
-    value["approval"] = {"mandate_digest": delivery.mandate_digest(value)}
+    approval = value["approval"]
+    assert isinstance(approval, dict)
+    approval["mandate_digest"] = delivery.mandate_digest(value)
     return value
 
 
@@ -83,6 +99,7 @@ def _run(
     effect: delivery.Effect | None = None,
     reconcile: delivery.Reconcile | None = None,
     mandate: dict[str, object] | None = None,
+    mandate_context: delivery.MandateContext | None = None,
 ) -> delivery.Result:
     approved = mandate or _mandate()
     return delivery.deliver(
@@ -93,6 +110,8 @@ def _run(
         ledger=delivery.Ledger(tmp_path / "private", tmp_path / "repository"),
         revalidate=lambda _request: True,
         effect=effect or (lambda _request: {"receipt": "merged"}),
+        mandate_context=mandate_context
+        or delivery.MandateContext(200, "OWNER", 150, 0, 0),
         reconcile=reconcile,
     )
 
@@ -224,6 +243,78 @@ def test_issue_text_cannot_expand_mandate(tmp_path: Path) -> None:
     operations = mandate["operations"]
     assert isinstance(operations, list)
     operations.remove("merge_task_pr")
-    mandate["approval"] = {"mandate_digest": delivery.mandate_digest(mandate)}
+    approval = mandate["approval"]
+    assert isinstance(approval, dict)
+    approval["mandate_digest"] = delivery.mandate_digest(mandate)
     result = _run(tmp_path, mandate=mandate)
     assert result.machine_code == "MANDATE_AUTHORITY_MISSING"
+
+
+@pytest.mark.parametrize(
+    ("change", "context", "code"),
+    [
+        ({"schema_version": "1.0"}, {}, "MANDATE_SCHEMA_UNSUPPORTED"),
+        ({"revoked": True}, {}, "MANDATE_REVOKED"),
+        ({}, {"now": 1000}, "MANDATE_EXPIRED"),
+        ({}, {"owner_identity": "OTHER"}, "MANDATE_OWNER_MISMATCH"),
+        ({}, {"now": 800}, "MANDATE_DURATION_LIMIT"),
+        ({}, {"task_iterations": 10}, "MANDATE_TASK_LIMIT"),
+        ({}, {"follow_up_issues": 4}, "MANDATE_FOLLOW_UP_LIMIT"),
+    ],
+)
+def test_invalid_lifecycle_blocks_before_side_effect(
+    tmp_path: Path,
+    change: dict[str, object],
+    context: dict[str, object],
+    code: str,
+) -> None:
+    (tmp_path / "repository").mkdir()
+    mandate = _mandate()
+    mandate.update(change)
+    approval = mandate["approval"]
+    assert isinstance(approval, dict)
+    approval["mandate_digest"] = delivery.mandate_digest(mandate)
+    values: dict[str, object] = {
+        "now": 200,
+        "owner_identity": "OWNER",
+        "started_at": 150,
+        "task_iterations": 0,
+        "follow_up_issues": 0,
+    }
+    values.update(context)
+
+    result = _run(
+        tmp_path,
+        mandate=mandate,
+        mandate_context=delivery.MandateContext(
+            now=cast(int, values["now"]),
+            owner_identity=cast(str, values["owner_identity"]),
+            started_at=cast(int, values["started_at"]),
+            task_iterations=cast(int, values["task_iterations"]),
+            follow_up_issues=cast(int, values["follow_up_issues"]),
+        ),
+        effect=lambda _request: pytest.fail("invalid mandate must not write"),
+    )
+
+    assert result == delivery.Result("BLOCKED", code, None)
+
+
+def test_approval_identity_is_digest_bound_and_checked(tmp_path: Path) -> None:
+    (tmp_path / "repository").mkdir()
+    mandate = _mandate()
+    approval = mandate["approval"]
+    assert isinstance(approval, dict)
+    approved_digest = delivery.mandate_digest(mandate)
+    approval["approved_by"] = "OTHER"
+
+    stale = delivery.deliver(
+        _request(),
+        mandate=mandate,
+        approved_mandate_digest=approved_digest,
+        assessment=_assessment(),
+        ledger=delivery.Ledger(tmp_path / "private", tmp_path / "repository"),
+        revalidate=lambda _request: True,
+        effect=lambda _request: pytest.fail("changed approval must not write"),
+        mandate_context=delivery.MandateContext(200, "OWNER", 150, 0, 0),
+    )
+    assert stale.machine_code == "MANDATE_APPROVAL_IDENTITY_MISMATCH"

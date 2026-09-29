@@ -22,6 +22,27 @@ gate, GitHub CI или независимую проверку следующе�
 
 ## Решение
 
+### Версионированная schema и migration policy
+
+Полный lifecycle впервые представлен schema `2.0`. Мандат содержит точные
+поля `issued_at`, `expires_at`, `owner_identity`, `limits`, `revoked` и
+`approval`; время задаётся целым Unix timestamp в UTC. `limits` связывает
+`max_duration_seconds`, `max_task_iterations` и `max_follow_up_issues`, а
+`approval` — `mandate_digest`, `approved_by` и `approved_at`.
+
+Schema `1.0` не содержит достаточной authority для безопасной миграции и
+поэтому отклоняется с `MANDATE_SCHEMA_UNSUPPORTED`. Автоматически дополнять её
+значениями по умолчанию запрещено: владелец должен выпустить и отдельно
+утвердить новый мандат `2.0`, получив новый digest.
+
+Непосредственно перед каждым разрешённым side effect runtime получает только
+локальный проверенный lifecycle context: текущее время, identity активного
+владельца, время старта сессии и фактически использованные task/follow-up
+лимиты. Он останавливается с отдельным стабильным machine code при неверной
+schema/форме, несовпадении owner или approver, времени до выдачи/после expiry,
+отзыве либо превышении duration/task/follow-up limit. Эти проверки выполняются
+повторно после обычной identity revalidation и до записи intent в ledger.
+
 ### Два режима approval
 
 Без валидного мандата действует прежний per-action режим ADR-233: каждое

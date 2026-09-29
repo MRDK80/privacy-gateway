@@ -13,7 +13,9 @@ from pathlib import Path
 from typing import cast
 
 from tools.agent_coordinator_delivery import REQUIRED_CHECKS as REQUIRED_CHECKS
+from tools.agent_epic_handover import MandateContext as MandateContext
 from tools.agent_epic_handover import mandate_digest as mandate_digest
+from tools.agent_epic_handover import mandate_lifecycle_code as mandate_lifecycle_code
 
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
@@ -153,9 +155,13 @@ def _authorized(
     request: Request,
     mandate: Mapping[str, object],
     approved_mandate_digest: str,
+    mandate_context: MandateContext,
 ) -> str | None:
     if DIGEST_RE.fullmatch(approved_mandate_digest) is None:
         return "MANDATE_APPROVAL_MISMATCH"
+    lifecycle = mandate_lifecycle_code(mandate, mandate_context)
+    if lifecycle is not None:
+        return lifecycle
     approval = mandate.get("approval")
     operations = mandate.get("operations")
     grants = mandate.get("task_grants")
@@ -166,7 +172,7 @@ def _authorized(
     ):
         return "MANDATE_APPROVAL_MISMATCH"
     if (
-        mandate.get("schema_version") != "1.0"
+        mandate.get("schema_version") != "2.0"
         or mandate.get("repository") != request.repository
         or mandate.get("epic") != request.epic
         or mandate.get("roadmap_ref") != request.base_ref
@@ -261,12 +267,15 @@ def deliver(
     ledger: Ledger,
     revalidate: Revalidate,
     effect: Effect,
+    mandate_context: MandateContext,
     reconcile: Reconcile | None = None,
 ) -> Result:
     """Apply one exact side effect after authority and live-state revalidation."""
     if not _valid_request(request):
         return _blocked("REQUEST_INVALID")
-    authority = _authorized(request, mandate, approved_mandate_digest)
+    authority = _authorized(
+        request, mandate, approved_mandate_digest, mandate_context
+    )
     if authority is not None:
         return _blocked(authority)
     gate = _assessment_code(request, assessment)
@@ -301,6 +310,11 @@ def deliver(
                 return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
     if not revalidate(request):
         return _blocked("STALE_IDENTITY")
+    authority = _authorized(
+        request, mandate, approved_mandate_digest, mandate_context
+    )
+    if authority is not None:
+        return _blocked(authority)
     entries[request.operation_id] = _entry(request, "INTENT", None)
     try:
         ledger.save(entries)
