@@ -684,11 +684,14 @@ def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
         pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
-    script = (
-        "import subprocess; "
-        f"subprocess.Popen([{sys.executable!r}, '-c', "
-        "'import time; time.sleep(5)'], start_new_session=True)"
-    )
+    escaped_marker = tmp_path / "escaped"
+    child = [
+        sys.executable,
+        "-c",
+        "import pathlib,sys,time; time.sleep(1); pathlib.Path(sys.argv[1]).touch()",
+        str(escaped_marker),
+    ]
+    script = f"import subprocess; subprocess.Popen({child!r}, start_new_session=True)"
     command = (sys.executable, "-c", script)
     adapter = loop.CommandRuntimeAdapter(
         root=root,
@@ -700,7 +703,11 @@ def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
     )
 
     started = time.monotonic()
-    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+    with pytest.raises(
+        loop.LoopError, match="RUNTIME_ADAPTER_(?:FAILED|INVALID)"
+    ):
         adapter.live()
 
     assert time.monotonic() - started < 2
+    time.sleep(1.2)
+    assert not escaped_marker.exists()

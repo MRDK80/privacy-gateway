@@ -46,8 +46,9 @@ machines, а runtime adapter только связывает их.
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
 коммитится. Production adapter запускается только на POSIX: проверяются owner
-и mode config/state, наличие системного Bubblewrap, а output-файлы
-ограничиваются `RLIMIT_FSIZE`. Фаза `RUN_TASK` делегирует executor существующему
+и mode config/state; каждая команда выполняется в Bubblewrap PID namespace с
+`--die-with-parent`, а output-файлы ограничиваются `RLIMIT_FSIZE`. Фаза
+`RUN_TASK` делегирует executor существующему
 sandbox adapter ADR-225 с minimal-file Bubblewrap boundary; delivery-фазы
 остаются в узком driver ADR-252. На Windows
 он fail-closed возвращает `RUNTIME_ADAPTER_UNSUPPORTED`, поскольку этот runtime

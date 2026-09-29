@@ -146,6 +146,13 @@ class CommandRuntimeAdapter:
         self._merge_sha: str | None = None
 
     @staticmethod
+    def _bubblewrap() -> Path:
+        for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap")):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+        raise LoopError("BUBBLEWRAP_REQUIRED")
+
+    @staticmethod
     def _command(value: Any) -> tuple[str, ...]:
         if (
             not isinstance(value, list)
@@ -169,11 +176,7 @@ class CommandRuntimeAdapter:
     ) -> CommandRuntimeAdapter:
         if os.name == "nt":
             raise LoopError("RUNTIME_ADAPTER_UNSUPPORTED")
-        if not any(
-            candidate.is_file() and os.access(candidate, os.X_OK)
-            for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap"))
-        ):
-            raise LoopError("BUBBLEWRAP_REQUIRED")
+        cls._bubblewrap()
         config_is_symlink = path.is_symlink()
         requested = path.resolve()
         root = repository_root.resolve()
@@ -262,8 +265,23 @@ class CommandRuntimeAdapter:
                 tempfile.TemporaryFile() as stdout_file,
                 tempfile.TemporaryFile() as stderr_file,
             ):
+                contained_command = [
+                    str(self._bubblewrap()),
+                    "--die-with-parent",
+                    "--unshare-pid",
+                    "--bind",
+                    "/",
+                    "/",
+                    "--proc",
+                    "/proc",
+                    "--dev-bind",
+                    "/dev",
+                    "/dev",
+                    "--",
+                    *command,
+                ]
                 process = subprocess.Popen(
-                    list(command),
+                    contained_command,
                     cwd=self.root,
                     stdout=stdout_file,
                     stderr=stderr_file,
@@ -283,7 +301,9 @@ class CommandRuntimeAdapter:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         terminate_tree(process)
-                        raise subprocess.TimeoutExpired(command, self.timeout_seconds)
+                        raise subprocess.TimeoutExpired(
+                            contained_command, self.timeout_seconds
+                        )
                     try:
                         process.wait(timeout=min(0.05, remaining))
                     except subprocess.TimeoutExpired:
