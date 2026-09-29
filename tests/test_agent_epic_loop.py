@@ -308,6 +308,8 @@ def test_checkpoint_from_issue_253_loads_with_no_rate_limit_pause(
 def test_resume_runs_configured_adapter_from_first_unfinished_phase(
     tmp_path: Path,
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
     store = loop.CheckpointStore(tmp_path / "private", root)
@@ -483,6 +485,8 @@ def test_runtime_config_must_be_owner_only_inside_state_directory(
 
 
 def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
     state = tmp_path / "private"
@@ -524,6 +528,8 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
 def test_runtime_adapter_fails_closed_on_unsafe_output(
     tmp_path: Path, script: str, code: str
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
     command = (sys.executable, "-c", script)
@@ -541,6 +547,8 @@ def test_runtime_adapter_fails_closed_on_unsafe_output(
 
 
 def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
     command = (
@@ -584,6 +592,8 @@ def test_advance_rejects_receipt_for_wrong_phase(tmp_path: Path) -> None:
 def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
     tmp_path: Path,
 ) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
     root = tmp_path / "repository"
     root.mkdir()
     script = (

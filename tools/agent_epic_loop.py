@@ -165,6 +165,8 @@ class CommandRuntimeAdapter:
     def load(
         cls, path: Path, repository_root: Path, state_directory: Path
     ) -> CommandRuntimeAdapter:
+        if os.name == "nt":
+            raise LoopError("RUNTIME_ADAPTER_UNSUPPORTED")
         config_is_symlink = path.is_symlink()
         requested = path.resolve()
         root = repository_root.resolve()
@@ -184,13 +186,8 @@ class CommandRuntimeAdapter:
                     or not stat.S_ISREG(info.st_mode)
                     or info.st_uid != owner
                     or state_info.st_uid != owner
-                    or (
-                        os.name != "nt"
-                        and (
-                            stat.S_IMODE(info.st_mode) & 0o077
-                            or stat.S_IMODE(state_info.st_mode) & 0o077
-                        )
-                    )
+                    or stat.S_IMODE(info.st_mode) & 0o077
+                    or stat.S_IMODE(state_info.st_mode) & 0o077
                 ):
                     raise LoopError("UNSAFE_RUNTIME_CONFIG")
                 value = json.load(stream)
@@ -229,6 +226,9 @@ class CommandRuntimeAdapter:
         )
 
     def _run(self, command: Sequence[str]) -> Mapping[str, Any]:
+        if os.name == "nt":
+            raise LoopError("RUNTIME_ADAPTER_UNSUPPORTED")
+
         def terminate_tree(process: subprocess.Popen[bytes]) -> None:
             try:
                 if os.name == "nt":
@@ -244,6 +244,12 @@ class CommandRuntimeAdapter:
             except (OSError, subprocess.TimeoutExpired):
                 process.kill()
 
+        def limit_output_files() -> None:
+            resource = importlib.import_module("resource")
+            resource.setrlimit(
+                resource.RLIMIT_FSIZE, (self.output_limit, self.output_limit)
+            )
+
         try:
             with (
                 tempfile.TemporaryFile() as stdout_file,
@@ -254,6 +260,7 @@ class CommandRuntimeAdapter:
                     cwd=self.root,
                     stdout=stdout_file,
                     stderr=stderr_file,
+                    preexec_fn=limit_output_files,
                     start_new_session=os.name != "nt",
                 )
                 deadline = time.monotonic() + self.timeout_seconds
