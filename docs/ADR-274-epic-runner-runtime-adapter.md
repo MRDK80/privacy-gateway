@@ -45,7 +45,10 @@ machines, а runtime adapter только связывает их.
 ## Границы
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
-коммитится. Production adapter запускается только на POSIX: проверяются owner
+коммитится. Команды могут запускать только owner-only trusted scripts из
+`<state>/adapter-bin` через абсолютный текущий Python; repository executable,
+`-c`, PATH lookup и произвольные binaries запрещены. Production adapter
+запускается только на POSIX: проверяются owner
 и mode config/state; каждая команда выполняется в Bubblewrap PID namespace с
 `--die-with-parent`, а output-файлы ограничиваются `RLIMIT_FSIZE`. Фаза
 `RUN_TASK` делегирует executor существующему

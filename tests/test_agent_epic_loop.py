@@ -315,7 +315,9 @@ def test_resume_runs_configured_adapter_from_first_unfinished_phase(
     store = loop.CheckpointStore(tmp_path / "private", root)
     value = _checkpoint()
     store.save(value)
-    helper = tmp_path / "adapter.py"
+    adapter_bin = store.directory / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
     helper.write_text(
         """import json, sys
 phase = sys.argv[1]
@@ -337,6 +339,7 @@ else:
 """,
         encoding="utf-8",
     )
+    helper.chmod(0o600)
     identity = json.dumps(_live(value), sort_keys=True)
     commands = {
         phase: [sys.executable, str(helper), phase, identity]
@@ -527,7 +530,12 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
     state = tmp_path / "private"
     loop.CheckpointStore(state, root).save(_checkpoint())
     config = state / "runtime-adapter.json"
-    command = [sys.executable, "-c", "print('{}')"]
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
     config.write_text(
         json.dumps(
             {

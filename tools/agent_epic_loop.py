@@ -12,6 +12,7 @@ import shlex
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -170,6 +171,29 @@ class CommandRuntimeAdapter:
             raise LoopError("RUNTIME_CONFIG_INVALID")
         return tuple(value)
 
+    @staticmethod
+    def _trusted_command(command: tuple[str, ...], state: Path, owner: int) -> None:
+        if (
+            len(command) < 2
+            or Path(command[0]).resolve() != Path(sys.executable).resolve()
+        ):
+            raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
+        script = Path(command[1])
+        trusted_directory = (state / "adapter-bin").resolve()
+        try:
+            resolved_script = script.resolve()
+            resolved_script.relative_to(trusted_directory)
+            info = resolved_script.stat()
+        except (ValueError, OSError) as error:
+            raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
+        if (
+            script.is_symlink()
+            or not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner
+            or stat.S_IMODE(info.st_mode) & 0o077
+        ):
+            raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
+
     @classmethod
     def load(
         cls, path: Path, repository_root: Path, state_directory: Path
@@ -221,16 +245,25 @@ class CommandRuntimeAdapter:
             or not 1024 <= item["output_limit"] <= 1_000_000
         ):
             raise LoopError("RUNTIME_CONFIG_INVALID")
+        live_command = cls._command(item["live_command"])
+        phase_commands = {
+            phase: cls._command(phase_values[phase]) for phase in expected_phases
+        }
+        reconcile_commands = {
+            phase: cls._command(reconcile_values[phase])
+            for phase in expected_phases
+        }
+        for command in (
+            live_command,
+            *phase_commands.values(),
+            *reconcile_commands.values(),
+        ):
+            cls._trusted_command(command, state, owner)
         return cls(
             root=root,
-            live_command=cls._command(item["live_command"]),
-            phase_commands={
-                phase: cls._command(phase_values[phase]) for phase in expected_phases
-            },
-            reconcile_commands={
-                phase: cls._command(reconcile_values[phase])
-                for phase in expected_phases
-            },
+            live_command=live_command,
+            phase_commands=phase_commands,
+            reconcile_commands=reconcile_commands,
             timeout_seconds=item["timeout_seconds"],
             output_limit=item["output_limit"],
         )
