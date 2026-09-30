@@ -504,6 +504,10 @@ def test_status_keeps_success_exit_code_and_default_resume_config(
 def test_runtime_config_must_be_owner_only_inside_state_directory(
     tmp_path: Path,
 ) -> None:
+    if os.name == "nt":
+        with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):
+            loop.CommandRuntimeAdapter.load(tmp_path, tmp_path, tmp_path)
+        return
     root = tmp_path / "repository"
     root.mkdir()
     state = tmp_path / "private"
@@ -562,6 +566,10 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
 
 
 def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:
+    if os.name == "nt":
+        with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):
+            loop.CommandRuntimeAdapter.load(tmp_path, tmp_path, tmp_path)
+        return
     root = tmp_path / "repository"
     root.mkdir()
     state = tmp_path / "private"
@@ -623,6 +631,18 @@ def test_runtime_config_rejects_shared_adapter_directory(tmp_path: Path) -> None
 
     with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
         loop.CommandRuntimeAdapter.load(config, root, state)
+
+
+def test_runtime_config_rejects_replaceable_parent(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o777)
+    shared.chmod(0o777)
+    state = shared / "private"
+    state.mkdir(mode=0o700)
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter._secure_ancestry(state, os.getuid())
 
 
 def test_runtime_config_rejects_relative_adapter_script(tmp_path: Path) -> None:

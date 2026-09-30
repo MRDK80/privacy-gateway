@@ -147,6 +147,23 @@ class CommandRuntimeAdapter:
         self._merge_sha: str | None = None
 
     @staticmethod
+    def _secure_ancestry(directory: Path, owner: int) -> None:
+        system_owner = Path(directory.anchor).stat().st_uid
+        for ancestor in (directory, *directory.parents):
+            info = ancestor.lstat()
+            if (
+                not stat.S_ISDIR(info.st_mode)
+                or info.st_uid not in {system_owner, owner}
+                or (
+                    stat.S_IMODE(info.st_mode) & 0o022
+                    and not (
+                        info.st_uid == system_owner and info.st_mode & stat.S_ISVTX
+                    )
+                )
+            ):
+                raise LoopError("UNSAFE_RUNTIME_CONFIG")
+
+    @staticmethod
     def _bubblewrap() -> Path:
         for candidate in (Path("/usr/bin/bwrap"), Path("/bin/bwrap")):
             if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -188,7 +205,8 @@ class CommandRuntimeAdapter:
                 raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
             trusted_directory = configured_directory.resolve()
             resolved_script = script.resolve()
-            resolved_script.relative_to(trusted_directory)
+            if resolved_script.parent != trusted_directory:
+                raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
             info = resolved_script.stat()
         except (ValueError, OSError) as error:
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
@@ -196,8 +214,7 @@ class CommandRuntimeAdapter:
             not stat.S_ISDIR(directory_info.st_mode)
             or directory_info.st_uid != owner
             or stat.S_IMODE(directory_info.st_mode) & 0o077
-            or
-            script.is_symlink()
+            or script.is_symlink()
             or not stat.S_ISREG(info.st_mode)
             or info.st_uid != owner
             or stat.S_IMODE(info.st_mode) & 0o077
@@ -225,6 +242,7 @@ class CommandRuntimeAdapter:
             with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
                 info = os.fstat(stream.fileno())
                 owner = getattr(os, "getuid", lambda: info.st_uid)()
+                cls._secure_ancestry(state, owner)
                 if (
                     not stat.S_ISDIR(state_info.st_mode)
                     or not stat.S_ISREG(info.st_mode)

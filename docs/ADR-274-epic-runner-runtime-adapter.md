@@ -48,6 +48,10 @@ Runtime-config запрещён внутри repository, не содержит c
 коммитится. Команды могут запускать только owner-only trusted scripts из
 реального owner-only `<state>/adapter-bin` через абсолютные пути текущего
 Python и script;
+цепочка родителей state проверяется на защищённость от переименования другим
+OS account (system-owned sticky temporary directory допустим; system owner
+определяется по корню filesystem для поддержки UID mapping). Scripts находятся
+непосредственно в `adapter-bin`, вложенные каталоги запрещены.
 repository executable,
 `-c`, PATH lookup и произвольные binaries запрещены. Production adapter
 запускается только на POSIX: проверяются owner
