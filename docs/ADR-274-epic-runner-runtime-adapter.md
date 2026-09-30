@@ -46,7 +46,8 @@ machines, а runtime adapter только связывает их.
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
 коммитится. Команды могут запускать только owner-only trusted scripts из
-реального owner-only `<state>/adapter-bin` через абсолютный текущий Python;
+реального owner-only `<state>/adapter-bin` через абсолютные пути текущего
+Python и script;
 repository executable,
 `-c`, PATH lookup и произвольные binaries запрещены. Production adapter
 запускается только на POSIX: проверяются owner

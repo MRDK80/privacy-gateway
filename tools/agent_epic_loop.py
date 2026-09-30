@@ -179,6 +179,8 @@ class CommandRuntimeAdapter:
         ):
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
         script = Path(command[1])
+        if not script.is_absolute():
+            raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
         configured_directory = state / "adapter-bin"
         try:
             directory_info = configured_directory.lstat()
