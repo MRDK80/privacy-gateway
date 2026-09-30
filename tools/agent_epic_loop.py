@@ -189,11 +189,11 @@ class CommandRuntimeAdapter:
         return tuple(value)
 
     @staticmethod
-    def _trusted_command(command: tuple[str, ...], state: Path, owner: int) -> None:
-        if (
-            len(command) < 2
-            or Path(command[0]).resolve() != Path(sys.executable).resolve()
-        ):
+    def _trusted_command(
+        command: tuple[str, ...], state: Path, owner: int
+    ) -> tuple[str, ...]:
+        executable = Path(sys.executable).absolute()
+        if len(command) < 2 or Path(command[0]).resolve() != executable.resolve():
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
         script = Path(command[1])
         if not script.is_absolute():
@@ -220,6 +220,7 @@ class CommandRuntimeAdapter:
             or stat.S_IMODE(info.st_mode) & 0o077
         ):
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
+        return (str(executable), str(resolved_script), *command[2:])
 
     @classmethod
     def load(
@@ -281,12 +282,15 @@ class CommandRuntimeAdapter:
             phase: cls._command(reconcile_values[phase])
             for phase in expected_phases
         }
-        for command in (
-            live_command,
-            *phase_commands.values(),
-            *reconcile_commands.values(),
-        ):
-            cls._trusted_command(command, state, owner)
+        live_command = cls._trusted_command(live_command, state, owner)
+        phase_commands = {
+            phase: cls._trusted_command(command, state, owner)
+            for phase, command in phase_commands.items()
+        }
+        reconcile_commands = {
+            phase: cls._trusted_command(command, state, owner)
+            for phase, command in reconcile_commands.items()
+        }
         return cls(
             root=root,
             live_command=live_command,

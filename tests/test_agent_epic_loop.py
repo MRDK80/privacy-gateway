@@ -557,12 +557,30 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
     )
     config.chmod(0o600)
     lexical_state = state / "child" / ".."
+    executable_alias = tmp_path / "python-alias"
+    executable_alias.symlink_to(sys.executable)
+    configured = json.loads(config.read_text(encoding="utf-8"))
+    for entry in (
+        configured["live_command"],
+        *configured["phase_commands"].values(),
+        *configured["reconcile_commands"].values(),
+    ):
+        entry[0] = str(executable_alias)
+    config.write_text(json.dumps(configured), encoding="utf-8")
 
     adapter = loop.CommandRuntimeAdapter.load(
         lexical_state / "runtime-adapter.json", root, lexical_state
     )
 
     assert adapter.root == root.resolve()
+    executable_alias.unlink()
+    executable_alias.symlink_to(tmp_path / "untrusted")
+    for entry in (
+        adapter.live_command,
+        *adapter.phase_commands.values(),
+        *adapter.reconcile_commands.values(),
+    ):
+        assert entry[0] == str(Path(sys.executable).absolute())
 
 
 def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:

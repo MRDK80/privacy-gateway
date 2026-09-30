@@ -48,6 +48,9 @@ Runtime-config запрещён внутри repository, не содержит c
 коммитится. Команды могут запускать только owner-only trusted scripts из
 реального owner-only `<state>/adapter-bin` через абсолютные пути текущего
 Python и script;
+после проверки adapter сохраняет доверенный путь текущего interpreter
+(сохраняя virtualenv), а не executable alias из config, и resolved
+script path.
 цепочка родителей state проверяется на защищённость от переименования другим
 OS account (system-owned sticky temporary directory допустим; system owner
 определяется по корню filesystem для поддержки UID mapping). Scripts находятся
