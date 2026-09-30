@@ -6,12 +6,47 @@ import copy
 import json
 import os
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import pytest
 from tools import agent_epic_loop as loop
+
+
+@pytest.fixture
+def active_runtime_namespace() -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    try:
+        binary = loop.CommandRuntimeAdapter._bubblewrap()
+    except loop.LoopError:
+        pytest.skip("Bubblewrap is not installed")
+    probe = subprocess.run(
+        [
+            str(binary),
+            "--die-with-parent",
+            "--unshare-pid",
+            "--bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev-bind",
+            "/dev",
+            "/dev",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Bubblewrap namespace is unavailable on this runner")
 
 
 def _checkpoint() -> dict[str, object]:
@@ -305,6 +340,7 @@ def test_checkpoint_from_issue_253_loads_with_no_rate_limit_pause(
     assert store.load()["rate_limit_pause"] is None  # type: ignore[index]
 
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_resume_runs_configured_adapter_from_first_unfinished_phase(
     tmp_path: Path,
 ) -> None:
@@ -690,7 +726,7 @@ def test_runtime_config_rejects_shared_adapter_directory(tmp_path: Path) -> None
 
 
 def test_runtime_config_rejects_replaceable_parent(tmp_path: Path) -> None:
-    if os.name == "nt":
+    if sys.platform == "win32":
         pytest.skip("production runtime adapter requires POSIX isolation")
     shared = tmp_path / "shared"
     shared.mkdir(mode=0o777)
@@ -743,6 +779,7 @@ def test_runtime_config_rejects_relative_adapter_script(tmp_path: Path) -> None:
         ("import os; os.write(1, b'\\xff')", "RUNTIME_ADAPTER_INVALID"),
     ],
 )
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_runtime_adapter_fails_closed_on_unsafe_output(
     tmp_path: Path, script: str, code: str
 ) -> None:
@@ -764,6 +801,7 @@ def test_runtime_adapter_fails_closed_on_unsafe_output(
         adapter.live()
 
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("production runtime adapter requires POSIX isolation")
@@ -788,6 +826,7 @@ def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
         adapter.effect("RUN_TASK")
 
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_runtime_adapter_rejects_type_confused_live_identity(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("production runtime adapter requires POSIX isolation")
@@ -832,6 +871,7 @@ def test_advance_rejects_receipt_for_wrong_phase(tmp_path: Path) -> None:
     assert result.machine_code == "RECEIPT_INVALID"
 
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
     tmp_path: Path,
 ) -> None:
@@ -868,6 +908,7 @@ def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
     assert not escaped_marker.exists()
 
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_runtime_output_limit_does_not_limit_adapter_files(tmp_path: Path) -> None:
     if os.name == "nt":
         pytest.skip("production runtime adapter requires POSIX isolation")
@@ -891,3 +932,33 @@ def test_runtime_output_limit_does_not_limit_adapter_files(tmp_path: Path) -> No
 
     assert adapter._run(command) == {}
     assert artifact.stat().st_size == 2048
+
+
+def test_runtime_adapter_namespace_failure_does_not_run_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    monkeypatch.setattr(
+        loop.CommandRuntimeAdapter,
+        "_bubblewrap",
+        staticmethod(lambda: Path("/bin/false")),
+    )
+    marker = tmp_path / "must-not-exist"
+    command = (
+        sys.executable,
+        "-c",
+        "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+        str(marker),
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=tmp_path,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_FAILED"):
+        adapter._run(command)
+    assert not marker.exists()

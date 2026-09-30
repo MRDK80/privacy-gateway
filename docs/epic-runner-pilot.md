@@ -76,3 +76,8 @@ python tools/agent_epic_loop.py status \
 
 Synthetic E2E запускается как часть `pytest -q`; он не заменяет перечисленный
 production pilot, реальный GitHub CI или подтверждение финальной demo.
+Integration tests реальных runtime-команд сначала проверяют доступность
+Bubblewrap namespace. При запрете namespace ОС явно возвращают `skipped`,
+как существующие executor integration tests; тест fail-closed отказа остаётся
+обязательным. Успешный CI с такими skips не доказывает работоспособность
+production runtime на этом runner: pilot нужен на Linux с доступным namespace.

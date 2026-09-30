@@ -317,7 +317,7 @@ class CommandRuntimeAdapter:
 
         def terminate_tree(process: subprocess.Popen[bytes]) -> None:
             try:
-                if os.name == "nt":
+                if sys.platform == "win32":
                     subprocess.run(
                         ["taskkill", "/PID", str(process.pid), "/T", "/F"],
                         stdout=subprocess.DEVNULL,
