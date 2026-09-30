@@ -26,11 +26,17 @@ worktree и его digest.
 ```bash
 python tools/agent_epic_loop.py resume \
   --state-dir /PRIVATE/epic-248 \
-  --repository-root /PATH/privacy-gateway
+  --repository-root /PATH/privacy-gateway \
+  --runtime-config /PRIVATE/epic-248/runtime-adapter.json
 ```
 
-Без runtime adapters команда закономерно возвращает `ADAPTER_REQUIRED` и не
-делает side effect. Текущий безопасный status:
+Runtime-config хранится вне repository, содержит только argv-массивы
+`live_command`, команды всех фаз `RUN_TASK` — `NEXT_TASK`, соответствующие
+reconciliation-команды, timeout и лимит вывода. Это argv, а не shell-строки.
+Phase adapters связывают существующие discovery/handover, executor,
+deterministic gate, independent controller, ADR-252 delivery и ADR-256 final
+driver. Наличие config само по себе не даёт authority и не заменяет mandate,
+live revalidation или exact CI. Текущий безопасный status:
 
 ```bash
 python tools/agent_epic_loop.py status \
@@ -70,3 +76,8 @@ python tools/agent_epic_loop.py status \
 
 Synthetic E2E запускается как часть `pytest -q`; он не заменяет перечисленный
 production pilot, реальный GitHub CI или подтверждение финальной demo.
+Integration tests реальных runtime-команд сначала проверяют доступность
+Bubblewrap namespace. При запрете namespace ОС явно возвращают `skipped`,
+как существующие executor integration tests; тест fail-closed отказа остаётся
+обязательным. Успешный CI с такими skips не доказывает работоспособность
+production runtime на этом runner: pilot нужен на Linux с доступным namespace.

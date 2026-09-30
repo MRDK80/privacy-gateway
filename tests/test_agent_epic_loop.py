@@ -4,10 +4,49 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import shlex
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
 from tools import agent_epic_loop as loop
+
+
+@pytest.fixture
+def active_runtime_namespace() -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    try:
+        binary = loop.CommandRuntimeAdapter._bubblewrap()
+    except loop.LoopError:
+        pytest.skip("Bubblewrap is not installed")
+    probe = subprocess.run(
+        [
+            str(binary),
+            "--die-with-parent",
+            "--unshare-pid",
+            "--bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev-bind",
+            "/dev",
+            "/dev",
+            "--",
+            sys.executable,
+            "-c",
+            "pass",
+        ],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if probe.returncode != 0:
+        pytest.skip("Bubblewrap namespace is unavailable on this runner")
 
 
 def _checkpoint() -> dict[str, object]:
@@ -167,7 +206,7 @@ def test_unknown_write_outcome_requires_reconciliation(tmp_path: Path) -> None:
         store=store,
         target_phase="RUN_TASK",
         effect=lambda: pytest.fail("applied write must not repeat"),
-        reconcile=lambda _phase: ("APPLIED", {"receipt": "verified"}),
+        reconcile=lambda _phase: ("APPLIED", {"phase": "RUN_TASK"}),
     )
 
     assert unknown.machine_code == "ESCALATE_UNKNOWN_OUTCOME"
@@ -188,7 +227,7 @@ def test_reconciled_not_applied_can_execute_once(tmp_path: Path) -> None:
 
     def record_run() -> dict[str, object]:
         calls.append("run")
-        return {"receipt": "created"}
+        return {"phase": "RUN_TASK"}
 
     result = loop.advance(
         value,
@@ -299,3 +338,656 @@ def test_checkpoint_from_issue_253_loads_with_no_rate_limit_pause(
     store.path.write_text(json.dumps(legacy), encoding="utf-8")
 
     assert store.load()["rate_limit_pause"] is None  # type: ignore[index]
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_resume_runs_configured_adapter_from_first_unfinished_phase(
+    tmp_path: Path,
+) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    store.save(value)
+    adapter_bin = store.directory / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text(
+        """import json, sys
+phase = sys.argv[1]
+identity = json.loads(sys.argv[2])
+if phase == 'live':
+    identity['merge_sha'] = 'c' * 40
+    print(json.dumps(identity))
+elif phase == 'reconcile':
+    print(json.dumps({'state': 'NOT_APPLIED', 'receipt': None}))
+elif phase == 'DEMO':
+    print(json.dumps({'status': 'APPLIED', 'machine_code': 'OK',
+                      'receipt': {'status': 'DEMO_NOT_APPLICABLE',
+                                  'baseline_sha': 'd' * 40,
+                                  'roadmap_sha': 'c' * 40,
+                                  'reason': 'internal-only change'}}))
+else:
+    print(json.dumps({'status': 'APPLIED', 'machine_code': 'OK',
+                      'receipt': {'phase': phase}}))
+""",
+        encoding="utf-8",
+    )
+    helper.chmod(0o600)
+    identity = json.dumps(_live(value), sort_keys=True)
+    commands = {
+        phase: [sys.executable, str(helper), phase, identity]
+        for phase in loop.PHASES[1:]
+    }
+    config = {
+        "schema_version": "1.0",
+        "live_command": [sys.executable, str(helper), "live", identity],
+        "phase_commands": commands,
+        "reconcile_commands": {
+            phase: [sys.executable, str(helper), "reconcile", identity]
+            for phase in loop.PHASES[1:]
+        },
+        "timeout_seconds": 10,
+        "output_limit": 4096,
+    }
+    config_path = store.directory / "runtime-adapter.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    config_path.chmod(0o600)
+
+    adapter = loop.CommandRuntimeAdapter.load(config_path, root, store.directory)
+    result = loop.resume(store=store, adapter=adapter)
+
+    assert result.status == "TASK_DONE"
+    assert result.phase == "NEXT_TASK"
+    assert store.load()["completed_phases"] == list(loop.PHASES[1:])  # type: ignore[index]
+
+
+def test_resume_stops_cleanly_on_retryable_gate_without_unknown_outcome(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    store.save(value)
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            return _live(value)
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise loop.PhaseBlocked("CI_PENDING")
+
+        def reconcile(
+            self, phase: str
+        ) -> tuple[str, dict[str, object] | None]:
+            return "NOT_APPLIED", None
+
+        def merge_sha(self) -> str | None:
+            return None
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.status == "BLOCKED"
+    assert result.machine_code == "CI_PENDING"
+    saved = store.load()
+    assert saved is not None
+    assert saved["pending_phase"] is None
+    assert saved["phase"] == "PLAN"
+
+
+def test_resume_preserves_rate_limit_pause_without_invoking_adapter(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    value["status"] = "PAUSED_RATE_LIMIT"
+    value["rate_limit_pause"] = {
+        "exhausted_windows": ["primary"],
+        "resets_at": 1_800_000_000,
+        "next_check_at": 1_799_999_000,
+    }
+    store.save(value)
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def reconcile(self, phase: str) -> tuple[str, dict[str, object] | None]:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+        def merge_sha(self) -> str | None:
+            raise AssertionError("paused resume must not invoke the adapter")
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.status == "PAUSED_RATE_LIMIT"
+    assert result.machine_code == "RATE_LIMIT_PAUSED"
+    assert store.load() == value
+
+
+def test_resume_reconciles_pending_intent_before_live_identity(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+    value = _checkpoint()
+    value["pending_phase"] = "RUN_TASK"
+    value["status"] = "ESCALATE"
+    store.save(value)
+    calls: list[str] = []
+
+    class Adapter:
+        def live(self) -> dict[str, object]:
+            calls.append("live")
+            raise loop.LoopError("RUNTIME_ADAPTER_FAILED")
+
+        def effect(self, phase: str) -> dict[str, object]:
+            raise AssertionError("unknown outcome must not repeat")
+
+        def reconcile(
+            self, phase: str
+        ) -> tuple[str, dict[str, object] | None]:
+            calls.append("reconcile")
+            return "UNKNOWN", None
+
+        def merge_sha(self) -> str | None:
+            return None
+
+    result = loop.resume(store=store, adapter=Adapter())
+
+    assert result.machine_code == "ESCALATE_UNKNOWN_OUTCOME"
+    assert calls == ["reconcile"]
+
+
+def test_status_keeps_success_exit_code_and_default_resume_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agent_epic_loop.py",
+            "status",
+            "--state-dir",
+            str(state),
+            "--repository-root",
+            str(root),
+        ],
+    )
+
+    assert loop.main() == 0
+    value = json.loads(capsys.readouterr().out)
+    assert value["status"] == "READY"
+    assert value["resume_command"].endswith(
+        f"--state-dir {shlex.quote(str(state.resolve()))} "
+        f"--repository-root {shlex.quote(str(root.resolve()))}"
+    )
+
+
+def test_runtime_config_must_be_owner_only_inside_state_directory(
+    tmp_path: Path,
+) -> None:
+    if os.name == "nt":
+        with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):
+            loop.CommandRuntimeAdapter.load(tmp_path, tmp_path, tmp_path)
+        return
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    config.write_text("{}", encoding="utf-8")
+    config.chmod(0o644)
+
+    if os.name != "nt":
+        with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+            loop.CommandRuntimeAdapter.load(config, root, state)
+    config.chmod(0o600)
+    link = state / "runtime-link.json"
+    link.symlink_to(config)
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter.load(link, root, state)
+
+
+def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+    lexical_state = state / "child" / ".."
+    executable_alias = tmp_path / "python-alias"
+    executable_alias.symlink_to(sys.executable)
+    configured = json.loads(config.read_text(encoding="utf-8"))
+    for entry in (
+        configured["live_command"],
+        *configured["phase_commands"].values(),
+        *configured["reconcile_commands"].values(),
+    ):
+        entry[0] = str(executable_alias)
+    config.write_text(json.dumps(configured), encoding="utf-8")
+
+    adapter = loop.CommandRuntimeAdapter.load(
+        lexical_state / "runtime-adapter.json", root, lexical_state
+    )
+
+    assert adapter.root == root.resolve()
+    executable_alias.unlink()
+    executable_alias.symlink_to(tmp_path / "untrusted")
+    for entry in (
+        adapter.live_command,
+        *adapter.phase_commands.values(),
+        *adapter.reconcile_commands.values(),
+    ):
+        assert entry[0] == str(Path(sys.executable).absolute())
+
+
+def test_runtime_config_rejects_worktree_with_misleading_root(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    actual_root = tmp_path / "worktree"
+    actual_root.mkdir(mode=0o700)
+    (actual_root / ".git").write_text("gitdir: synthetic\n", encoding="utf-8")
+    declared_root = tmp_path / "unrelated"
+    declared_root.mkdir()
+    state = actual_root / "private"
+    state.mkdir(mode=0o700)
+    config = state / "runtime-adapter.json"
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter.load(config, declared_root, state)
+
+
+@pytest.mark.parametrize("target", ["config", "executable", "script"])
+def test_runtime_adapter_symlink_loops_have_bounded_errors(
+    tmp_path: Path, target: str
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    state.mkdir(mode=0o700)
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    first = adapter_bin / "first.py"
+    second = adapter_bin / "second.py"
+    first.symlink_to(second)
+    second.symlink_to(first)
+    if target == "config":
+        with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+            loop.CommandRuntimeAdapter.load(first, root, state)
+    else:
+        command = (
+            (str(first), str(first))
+            if target == "executable"
+            else (sys.executable, str(first))
+        )
+        with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
+            loop.CommandRuntimeAdapter._trusted_command(command, state, os.getuid())
+
+
+def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:
+    if os.name == "nt":
+        with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):
+            loop.CommandRuntimeAdapter.load(tmp_path, tmp_path, tmp_path)
+        return
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    config = state / "runtime-adapter.json"
+    command = ["python", "adapter.py"]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_CONFIG_INVALID"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+
+
+def test_runtime_config_rejects_shared_adapter_directory(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o777)
+    adapter_bin.chmod(0o777)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
+    config = state / "runtime-adapter.json"
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+
+
+def test_runtime_config_rejects_replaceable_parent(tmp_path: Path) -> None:
+    if sys.platform == "win32":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o777)
+    shared.chmod(0o777)
+    state = shared / "private"
+    state.mkdir(mode=0o700)
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter._secure_ancestry(state, os.getuid())
+
+
+def test_runtime_config_rejects_relative_adapter_script(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, os.path.relpath(helper, Path.cwd())]
+    config = state / "runtime-adapter.json"
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+
+
+@pytest.mark.parametrize(
+    ("script", "code"),
+    [
+        ("import sys; sys.stdout.write('x' * 8192)", "RUNTIME_ADAPTER_FAILED"),
+        ("import os; os.write(1, b'\\xff')", "RUNTIME_ADAPTER_INVALID"),
+    ],
+)
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_runtime_adapter_fails_closed_on_unsafe_output(
+    tmp_path: Path, script: str, code: str
+) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    command = (sys.executable, "-c", script)
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=1024,
+    )
+
+    with pytest.raises(loop.LoopError, match=code):
+        adapter.live()
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_runtime_adapter_rejects_free_form_machine_code(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    command = (
+        sys.executable,
+        "-c",
+        "import json; print(json.dumps({'status': 'BLOCKED', "
+        "'machine_code': 'secret diagnostic', 'receipt': None}))",
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=1024,
+    )
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+        adapter.effect("RUN_TASK")
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_runtime_adapter_rejects_type_confused_live_identity(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    live = _live(_checkpoint())
+    live["task"] = True
+    command = (
+        sys.executable,
+        "-c",
+        f"print({json.dumps(json.dumps(live))})",
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=10,
+        output_limit=4096,
+    )
+
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_INVALID"):
+        adapter.live()
+
+
+def test_advance_rejects_receipt_for_wrong_phase(tmp_path: Path) -> None:
+    root = tmp_path / "repository"
+    root.mkdir()
+    value = _checkpoint()
+    store = loop.CheckpointStore(tmp_path / "private", root)
+
+    result = loop.advance(
+        value,
+        live=_live(value),
+        store=store,
+        target_phase="RUN_TASK",
+        effect=lambda: {"phase": "MERGE"},
+        reconcile=lambda _phase: ("NOT_APPLIED", None),
+    )
+
+    assert result.status == "ESCALATE"
+    assert result.machine_code == "RECEIPT_INVALID"
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
+    tmp_path: Path,
+) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    escaped_marker = tmp_path / "escaped"
+    child = [
+        sys.executable,
+        "-c",
+        "import pathlib,sys,time; time.sleep(1); pathlib.Path(sys.argv[1]).touch()",
+        str(escaped_marker),
+    ]
+    script = f"import subprocess; subprocess.Popen({child!r}, start_new_session=True)"
+    command = (sys.executable, "-c", script)
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+
+    started = time.monotonic()
+    with pytest.raises(
+        loop.LoopError, match="RUNTIME_ADAPTER_(?:FAILED|INVALID)"
+    ):
+        adapter.live()
+
+    assert time.monotonic() - started < 2
+    time.sleep(1.2)
+    assert not escaped_marker.exists()
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+def test_runtime_output_limit_does_not_limit_adapter_files(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    artifact = tmp_path / "artifact"
+    script = (
+        "import json,pathlib,sys; "
+        "pathlib.Path(sys.argv[1]).write_bytes(b'x' * 2048); "
+        "print(json.dumps({}))"
+    )
+    command = (sys.executable, "-c", script, str(artifact))
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+
+    assert adapter._run(command) == {}
+    assert artifact.stat().st_size == 2048
+
+
+def test_runtime_adapter_namespace_failure_does_not_run_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    monkeypatch.setattr(
+        loop.CommandRuntimeAdapter,
+        "_bubblewrap",
+        staticmethod(lambda: Path("/bin/false")),
+    )
+    marker = tmp_path / "must-not-exist"
+    command = (
+        sys.executable,
+        "-c",
+        "import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",
+        str(marker),
+    )
+    adapter = loop.CommandRuntimeAdapter(
+        root=tmp_path,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+    with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_FAILED"):
+        adapter._run(command)
+    assert not marker.exists()
