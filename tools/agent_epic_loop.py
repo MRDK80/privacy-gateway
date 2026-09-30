@@ -193,7 +193,14 @@ class CommandRuntimeAdapter:
         command: tuple[str, ...], state: Path, owner: int
     ) -> tuple[str, ...]:
         executable = Path(sys.executable).absolute()
-        if len(command) < 2 or Path(command[0]).resolve() != executable.resolve():
+        try:
+            trusted_executable = (
+                len(command) >= 2
+                and Path(command[0]).resolve() == executable.resolve()
+            )
+        except (OSError, RuntimeError) as error:
+            raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
+        if not trusted_executable:
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
         script = Path(command[1])
         if not script.is_absolute():
@@ -208,7 +215,7 @@ class CommandRuntimeAdapter:
             if resolved_script.parent != trusted_directory:
                 raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
             info = resolved_script.stat()
-        except (ValueError, OSError) as error:
+        except (ValueError, OSError, RuntimeError) as error:
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
         if (
             not stat.S_ISDIR(directory_info.st_mode)
@@ -229,10 +236,13 @@ class CommandRuntimeAdapter:
         if os.name == "nt":
             raise LoopError("RUNTIME_ADAPTER_UNSUPPORTED")
         cls._bubblewrap()
-        config_is_symlink = path.is_symlink()
-        requested = path.resolve()
-        root = repository_root.resolve()
-        state = state_directory.resolve()
+        try:
+            config_is_symlink = path.is_symlink()
+            requested = path.resolve()
+            root = repository_root.resolve()
+            state = state_directory.resolve()
+        except (OSError, RuntimeError) as error:
+            raise LoopError("UNSAFE_RUNTIME_CONFIG") from error
         expected_path = state / "runtime-adapter.json"
         implementation_root = Path(__file__).resolve().parent.parent
         if (

@@ -657,6 +657,35 @@ def test_runtime_config_rejects_worktree_with_misleading_root(tmp_path: Path) ->
         loop.CommandRuntimeAdapter.load(config, declared_root, state)
 
 
+@pytest.mark.parametrize("target", ["config", "executable", "script"])
+def test_runtime_adapter_symlink_loops_have_bounded_errors(
+    tmp_path: Path, target: str
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    state.mkdir(mode=0o700)
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    first = adapter_bin / "first.py"
+    second = adapter_bin / "second.py"
+    first.symlink_to(second)
+    second.symlink_to(first)
+    if target == "config":
+        with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+            loop.CommandRuntimeAdapter.load(first, root, state)
+    else:
+        command = (
+            (str(first), str(first))
+            if target == "executable"
+            else (sys.executable, str(first))
+        )
+        with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
+            loop.CommandRuntimeAdapter._trusted_command(command, state, os.getuid())
+
+
 def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:
     if os.name == "nt":
         with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):
