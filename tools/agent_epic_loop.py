@@ -234,7 +234,18 @@ class CommandRuntimeAdapter:
         root = repository_root.resolve()
         state = state_directory.resolve()
         expected_path = state / "runtime-adapter.json"
-        if requested != expected_path or config_is_symlink:
+        implementation_root = Path(__file__).resolve().parent.parent
+        if (
+            requested != expected_path
+            or config_is_symlink
+            or state.is_relative_to(root)
+            or state.is_relative_to(implementation_root)
+            or any(
+                (ancestor / ".git").is_file()
+                or (ancestor / ".git" / "HEAD").is_file()
+                for ancestor in (state, *state.parents)
+            )
+        ):
             raise LoopError("UNSAFE_RUNTIME_CONFIG")
         try:
             state_info = state.stat()

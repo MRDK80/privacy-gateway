@@ -583,6 +583,44 @@ def test_runtime_config_accepts_normalized_state_path(tmp_path: Path) -> None:
         assert entry[0] == str(Path(sys.executable).absolute())
 
 
+def test_runtime_config_rejects_worktree_with_misleading_root(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    actual_root = tmp_path / "worktree"
+    actual_root.mkdir(mode=0o700)
+    (actual_root / ".git").write_text("gitdir: synthetic\n", encoding="utf-8")
+    declared_root = tmp_path / "unrelated"
+    declared_root.mkdir()
+    state = actual_root / "private"
+    state.mkdir(mode=0o700)
+    config = state / "runtime-adapter.json"
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o700)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="UNSAFE_RUNTIME_CONFIG"):
+        loop.CommandRuntimeAdapter.load(config, declared_root, state)
+
+
 def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None:
     if os.name == "nt":
         with pytest.raises(loop.LoopError, match="RUNTIME_ADAPTER_UNSUPPORTED"):

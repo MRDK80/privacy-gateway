@@ -45,7 +45,9 @@ machines, а runtime adapter только связывает их.
 ## Границы
 
 Runtime-config запрещён внутри repository, не содержит credentials и не
-коммитится. Команды могут запускать только owner-only trusted scripts из
+коммитится. State отклоняется внутри declared root, checkout самого supervisor
+и любого родительского Git worktree с `.git` directory/file, даже при ложном
+`repository-root`. Команды могут запускать только owner-only trusted scripts из
 реального owner-only `<state>/adapter-bin` через абсолютные пути текущего
 Python и script;
 после проверки adapter сохраняет доверенный путь текущего interpreter
