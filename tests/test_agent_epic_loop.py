@@ -790,3 +790,28 @@ def test_runtime_adapter_does_not_hang_on_inherited_output_pipe(
     assert time.monotonic() - started < 2
     time.sleep(1.2)
     assert not escaped_marker.exists()
+
+
+def test_runtime_output_limit_does_not_limit_adapter_files(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    artifact = tmp_path / "artifact"
+    script = (
+        "import json,pathlib,sys; "
+        "pathlib.Path(sys.argv[1]).write_bytes(b'x' * 2048); "
+        "print(json.dumps({}))"
+    )
+    command = (sys.executable, "-c", script, str(artifact))
+    adapter = loop.CommandRuntimeAdapter(
+        root=root,
+        live_command=command,
+        phase_commands={phase: command for phase in loop.PHASES[1:]},
+        reconcile_commands={phase: command for phase in loop.PHASES[1:]},
+        timeout_seconds=2,
+        output_limit=1024,
+    )
+
+    assert adapter._run(command) == {}
+    assert artifact.stat().st_size == 2048

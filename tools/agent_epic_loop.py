@@ -14,7 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -297,72 +297,69 @@ class CommandRuntimeAdapter:
             except (OSError, subprocess.TimeoutExpired):
                 process.kill()
 
-        def limit_output_files() -> None:
-            resource = importlib.import_module("resource")
-            resource.setrlimit(
-                resource.RLIMIT_FSIZE, (self.output_limit, self.output_limit)
-            )
+        stdout = bytearray()
+        stderr = bytearray()
+        overflow = threading.Event()
+
+        def drain(stream: BinaryIO, destination: bytearray) -> None:
+            while chunk := stream.read(8192):
+                remaining = self.output_limit - len(destination)
+                if len(chunk) > remaining:
+                    destination.extend(chunk[: max(remaining, 0)])
+                    overflow.set()
+                    terminate_tree(process)
+                    return
+                destination.extend(chunk)
 
         try:
-            with (
-                tempfile.TemporaryFile() as stdout_file,
-                tempfile.TemporaryFile() as stderr_file,
-            ):
-                contained_command = [
-                    str(self._bubblewrap()),
-                    "--die-with-parent",
-                    "--unshare-pid",
-                    "--bind",
-                    "/",
-                    "/",
-                    "--proc",
-                    "/proc",
-                    "--dev-bind",
-                    "/dev",
-                    "/dev",
-                    "--",
-                    *command,
-                ]
-                process = subprocess.Popen(
-                    contained_command,
-                    cwd=self.root,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                    preexec_fn=limit_output_files,
-                    start_new_session=os.name != "nt",
-                )
-                deadline = time.monotonic() + self.timeout_seconds
-                overflow = False
-                while process.poll() is None:
-                    if (
-                        os.fstat(stdout_file.fileno()).st_size > self.output_limit
-                        or os.fstat(stderr_file.fileno()).st_size > self.output_limit
-                    ):
-                        overflow = True
-                        terminate_tree(process)
-                        break
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        terminate_tree(process)
-                        raise subprocess.TimeoutExpired(
-                            contained_command, self.timeout_seconds
-                        )
-                    try:
-                        process.wait(timeout=min(0.05, remaining))
-                    except subprocess.TimeoutExpired:
-                        pass
-                return_code = process.wait()
-                if (
-                    overflow
-                    or os.fstat(stdout_file.fileno()).st_size > self.output_limit
-                    or os.fstat(stderr_file.fileno()).st_size > self.output_limit
-                ):
-                    raise LoopError("RUNTIME_ADAPTER_FAILED")
-                stdout_file.seek(0)
-                stdout = stdout_file.read(self.output_limit + 1)
+            contained_command = [
+                str(self._bubblewrap()),
+                "--die-with-parent",
+                "--unshare-pid",
+                "--bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "--dev-bind",
+                "/dev",
+                "/dev",
+                "--",
+                *command,
+            ]
+            process = subprocess.Popen(
+                contained_command,
+                cwd=self.root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            if process.stdout is None or process.stderr is None:
+                raise LoopError("RUNTIME_ADAPTER_FAILED")
+            threads = (
+                threading.Thread(target=drain, args=(process.stdout, stdout)),
+                threading.Thread(target=drain, args=(process.stderr, stderr)),
+            )
+            for thread in threads:
+                thread.start()
+            try:
+                return_code = process.wait(timeout=self.timeout_seconds)
+            except subprocess.TimeoutExpired:
+                terminate_tree(process)
+                process.wait()
+                raise
+            finally:
+                for thread in threads:
+                    thread.join(timeout=2)
+                if any(thread.is_alive() for thread in threads):
+                    terminate_tree(process)
+                    overflow.set()
+                else:
+                    process.stdout.close()
+                    process.stderr.close()
         except (OSError, subprocess.TimeoutExpired) as error:
             raise LoopError("RUNTIME_ADAPTER_FAILED") from error
-        if return_code != 0:
+        if overflow.is_set() or return_code != 0:
             raise LoopError("RUNTIME_ADAPTER_FAILED")
         try:
             output = stdout.decode("utf-8")

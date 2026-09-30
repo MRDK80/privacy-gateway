@@ -52,7 +52,7 @@ repository executable,
 `-c`, PATH lookup и произвольные binaries запрещены. Production adapter
 запускается только на POSIX: проверяются owner
 и mode config/state; каждая команда выполняется в Bubblewrap PID namespace с
-`--die-with-parent`, а output-файлы ограничиваются `RLIMIT_FSIZE`. Фаза
+`--die-with-parent`, а stdout/stderr ограничиваются capped readers. Фаза
 `RUN_TASK` делегирует executor существующему
 sandbox adapter ADR-225 с minimal-file Bubblewrap boundary; delivery-фазы
 остаются в узком driver ADR-252. На Windows
