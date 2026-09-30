@@ -179,14 +179,22 @@ class CommandRuntimeAdapter:
         ):
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
         script = Path(command[1])
-        trusted_directory = (state / "adapter-bin").resolve()
+        configured_directory = state / "adapter-bin"
         try:
+            directory_info = configured_directory.lstat()
+            if configured_directory.is_symlink():
+                raise LoopError("UNTRUSTED_RUNTIME_COMMAND")
+            trusted_directory = configured_directory.resolve()
             resolved_script = script.resolve()
             resolved_script.relative_to(trusted_directory)
             info = resolved_script.stat()
         except (ValueError, OSError) as error:
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
         if (
+            not stat.S_ISDIR(directory_info.st_mode)
+            or directory_info.st_uid != owner
+            or stat.S_IMODE(directory_info.st_mode) & 0o077
+            or
             script.is_symlink()
             or not stat.S_ISREG(info.st_mode)
             or info.st_uid != owner

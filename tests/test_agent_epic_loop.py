@@ -589,6 +589,42 @@ def test_runtime_config_rejects_path_resolved_executable(tmp_path: Path) -> None
         loop.CommandRuntimeAdapter.load(config, root, state)
 
 
+def test_runtime_config_rejects_shared_adapter_directory(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("production runtime adapter requires POSIX isolation")
+    root = tmp_path / "repository"
+    root.mkdir()
+    state = tmp_path / "private"
+    loop.CheckpointStore(state, root).save(_checkpoint())
+    adapter_bin = state / "adapter-bin"
+    adapter_bin.mkdir(mode=0o777)
+    adapter_bin.chmod(0o777)
+    helper = adapter_bin / "adapter.py"
+    helper.write_text("print('{}')\n", encoding="utf-8")
+    helper.chmod(0o600)
+    command = [sys.executable, str(helper)]
+    config = state / "runtime-adapter.json"
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "live_command": command,
+                "phase_commands": {phase: command for phase in loop.PHASES[1:]},
+                "reconcile_commands": {
+                    phase: command for phase in loop.PHASES[1:]
+                },
+                "timeout_seconds": 10,
+                "output_limit": 1024,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config.chmod(0o600)
+
+    with pytest.raises(loop.LoopError, match="UNTRUSTED_RUNTIME_COMMAND"):
+        loop.CommandRuntimeAdapter.load(config, root, state)
+
+
 @pytest.mark.parametrize(
     ("script", "code"),
     [
