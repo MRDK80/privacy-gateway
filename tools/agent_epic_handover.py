@@ -141,7 +141,7 @@ def mandate_lifecycle_code(
         or context.follow_up_issues < 0
         or not isinstance(mandate.get("owner_identity"), str)
         or not mandate["owner_identity"]
-        or mandate.get("revoked") not in {True, False}
+        or type(mandate.get("revoked")) is not bool
     ):
         return "MANDATE_INVALID"
     if mandate["owner_identity"] != context.owner_identity:

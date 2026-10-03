@@ -367,6 +367,8 @@ def test_issue_text_cannot_expand_mandate(tmp_path: Path) -> None:
     ("change", "context", "code"),
     [
         ({"schema_version": "1.0"}, {}, "MANDATE_SCHEMA_UNSUPPORTED"),
+        ({"revoked": 0}, {}, "MANDATE_INVALID"),
+        ({"revoked": 1}, {}, "MANDATE_INVALID"),
         ({"revoked": True}, {}, "MANDATE_REVOKED"),
         ({}, {"now": 1000}, "MANDATE_EXPIRED"),
         ({}, {"owner_identity": "OTHER"}, "MANDATE_OWNER_MISMATCH"),
