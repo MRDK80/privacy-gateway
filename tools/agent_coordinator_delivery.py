@@ -85,7 +85,7 @@ class GhClient:
                 "--repo",
                 repository,
                 "--json",
-                "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,files,mergeCommit",
+                "number,url,state,baseRefName,baseRefOid,headRefName,headRefOid,files,mergeCommit,isCrossRepository",
             )
         )
         if not isinstance(value, Mapping):

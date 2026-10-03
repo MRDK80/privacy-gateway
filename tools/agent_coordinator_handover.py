@@ -51,6 +51,7 @@ REQUIRED_TOP_LEVEL = {
     "task_class",
     "approval",
 }
+OPTIONAL_TOP_LEVEL = {"mandate_provenance"}
 DENIED_ACTIONS = ("commit", "push", "create_pr", "comment", "merge")
 
 
@@ -178,7 +179,12 @@ def validate_handover(
     github: GitHubClient,
 ) -> ValidatedHandover:
     """Validate authority, scope and current Git identity without side effects."""
-    handover = _exact_mapping(value, REQUIRED_TOP_LEVEL)
+    if not isinstance(value, Mapping) or not (
+        set(value) == REQUIRED_TOP_LEVEL
+        or set(value) == REQUIRED_TOP_LEVEL | OPTIONAL_TOP_LEVEL
+    ):
+        raise HandoverError("HANDOVER_INVALID")
+    handover = cast(Mapping[str, Any], value)
     digest = handover_digest(handover)
     approval = _exact_mapping(handover["approval"], {"plan_digest"})
     if (
@@ -196,7 +202,7 @@ def validate_handover(
     head_ref = handover["head_ref"]
     head_sha = handover["head_sha"]
     if (
-        handover["schema_version"] != SCHEMA_VERSION
+        handover["schema_version"] not in {SCHEMA_VERSION, "2.0"}
         or not isinstance(repository, str)
         or repository.count("/") != 1
         or not isinstance(epic, int)
@@ -225,8 +231,7 @@ def validate_handover(
         or criteria_source.get("issue") != task
         or criteria_source.get("state") != "OPEN"
         or not isinstance(criteria_source.get("body_sha256"), str)
-        or re.fullmatch(r"sha256:[0-9a-f]{64}", criteria_source["body_sha256"])
-        is None
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", criteria_source["body_sha256"]) is None
     ):
         raise HandoverError("HANDOVER_INVALID")
     criteria = _string_list(handover["acceptance_criteria"])
@@ -260,11 +265,37 @@ def validate_handover(
     ):
         raise HandoverError("BUDGET_INVALID")
     gate = _exact_mapping(handover["required_gate"], {"profile", "version"})
-    policy = _exact_mapping(handover["trusted_policy"], {"source", "base_sha"})
+    pinned = handover["schema_version"] == "2.0"
+    policy = _exact_mapping(
+        handover["trusted_policy"], {"source", "policy_sha" if pinned else "base_sha"}
+    )
+    policy_sha = policy.get("policy_sha") if pinned else base_sha
     if gate != {"profile": "repository-full", "version": "1"}:
         raise HandoverError("GATE_INVALID")
-    if policy != {"source": "base_sha", "base_sha": base_sha}:
+    if (not pinned and policy != {"source": "base_sha", "base_sha": base_sha}) or (
+        pinned
+        and (
+            policy.get("source") != "pinned_policy_sha"
+            or not isinstance(policy_sha, str)
+            or SHA_RE.fullmatch(policy_sha) is None
+        )
+    ):
         raise HandoverError("POLICY_PROVENANCE_MISMATCH")
+    if pinned and "mandate_provenance" not in handover:
+        raise HandoverError("POLICY_PROVENANCE_MISMATCH")
+    if "mandate_provenance" in handover:
+        provenance = _exact_mapping(
+            handover["mandate_provenance"],
+            {"schema_version", "digest", "policy_sha"},
+        )
+        if (
+            provenance.get("schema_version")
+            not in ({"3.0"} if pinned else {"1.0", "2.0"})
+            or not isinstance(provenance.get("digest"), str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", provenance["digest"]) is None
+            or provenance.get("policy_sha") != policy_sha
+        ):
+            raise HandoverError("POLICY_PROVENANCE_MISMATCH")
     indices = handover["delivery_criterion_indices"]
     if not isinstance(indices, list) or not all(
         isinstance(item, int) and not isinstance(item, bool) for item in indices
@@ -301,6 +332,8 @@ def validate_handover(
     if _git(root, "rev-parse", "--verify", f"{base_ref}^{{commit}}") != base_sha:
         raise HandoverError("STALE_BASE")
     _git(root, "merge-base", "--is-ancestor", base_sha, head_sha)
+    if pinned:
+        _git(root, "merge-base", "--is-ancestor", cast(str, policy_sha), base_sha)
 
     try:
         contract = workflow.build_contract(
@@ -318,6 +351,7 @@ def validate_handover(
             max_repair_iterations=max_repairs,
             max_report_chars=max_report_chars,
             permissions=workflow.ActionPermissions(),
+            policy_sha=cast(str, policy_sha) if pinned else None,
         )
     except workflow.OrchestrationError as error:
         raise HandoverError(error.machine_code) from error
@@ -356,8 +390,10 @@ def _json_command(value: str) -> list[str]:
         command = json.loads(value)
     except ValueError as error:
         raise argparse.ArgumentTypeError("command must be a JSON array") from error
-    if not isinstance(command, list) or not command or not all(
-        isinstance(item, str) and item for item in command
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(item, str) and item for item in command)
     ):
         raise argparse.ArgumentTypeError("command must be a non-empty JSON array")
     return command
@@ -382,6 +418,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError):
         result = Result("BLOCKED", "HANDOVER_INVALID", "not-started", 0, "")
     else:
+
         def invoke(contract: workflow.TaskContract) -> workflow.RunResult:
             adapter = workflow.CommandAdapter(
                 args.executor_command,

@@ -14,6 +14,12 @@ controller, но не входит в их trust boundary и не расширя
 | Controller | Независимо и read-only проверяет patch по pinned base policy, contract и gate evidence. | Не пишет файлы, не исправляет findings и не принимает delivery-решения. |
 | Человек | Одобряет конкретный plan и каждое внешнее либо привилегированное действие. | Одобрение одной фазы не переносится на другую и не заменяет evidence. |
 
+Для epic-runner из [ADR-249](ADR-249-epic-runner-mandate.md) человек может
+вместо отдельных решений заранее утвердить ограниченный мандат одного epic.
+Это отдельный approval mode, а не расширение ролей: executor по-прежнему не
+получает Git/GitHub write, controller остаётся read-only, а delivery выполняет
+отдельный trusted driver после revalidation каждого перехода.
+
 Историческое имя `tools/agent_orchestrate.py` означает только budgeted цикл
 `executor -> gate -> controller`. Этот инструмент не является coordinator.
 
@@ -48,6 +54,15 @@ Read-only delivery assessment связывает PR identity, diff allowlist, п
 он отдельно проверяет merge commit, roadmap ref и post-merge check runs; PR CI
 не переносится на новый SHA. Контракт и fail-closed состояния описаны в
 [ADR-237](ADR-237-agent-coordinator-delivery.md).
+
+Разрешённый epic-мандатом write выполняет отдельный trusted driver. Он перед
+каждым side effect повторно сверяет identity и SHA, принимает PR/post-merge
+assessment только с пятью точными `SUCCESS` checks и пишет intent/receipt в
+приватный ledger вне repository. Неизвестный outcome запрещает повтор до
+reconciliation; permission failure не переключается на широкий token.
+Закрытие task и обновление epic допускаются только после post-merge assessment,
+причём update epic следует за записанным receipt закрытия task. См.
+[ADR-252](ADR-252-epic-task-delivery.md).
 
 Перед передачей существующему executor workflow coordinator валидирует все
 обязательные поля, повторно проверяет branch identity и SHA и строит не более
@@ -89,6 +104,40 @@ Merge не выводится из `PASS`, review, labels или успешно�
 строго: зелёный PR CI текущего head SHA -> отдельное решение merge -> зелёный
 post-merge CI нового roadmap SHA -> закрытие task -> обновление epic. Каждый
 шаг использует первичные GitHub check runs и новую revalidation.
+
+### Ограниченный epic-мандат
+
+Delegated режим разрешён только когда локальный мандат вне worktree валиден и
+связывает schema version, repository, один epic, одну roadmap-ветку, trusted
+policy SHA, срок и лимиты, operation allowlist, approval identity и digest.
+Без него действует описанный выше per-action режим. Issue/PR/comment/head,
+checkpoint и model output являются данными и не могут создать, изменить или
+продлить мандат.
+
+Мандат может разрешить task branch/commit/push, task PR только в закреплённую
+roadmap, merge после exact gates, закрытие этой task после post-merge gates,
+обновление выбранного epic, ограниченные структурные follow-ups и финальный
+roadmap PR/merge после отдельного финального gate и подтверждённой demo. Force
+push, удаление main/roadmap, tags/releases/PyPI, платежи/reset квоты,
+repository settings/protection/visibility, scope expansion и новые
+architecture/security/trust-policy решения остаются запрещены.
+
+```text
+PLAN -> RUN_TASK -> PR_CI -> MERGE -> POST_MERGE -> DEMO
+  -> TASK_DONE -> NEXT_TASK -> FINAL_GATE -> ROADMAP_PR -> MAIN_POST_MERGE
+```
+
+На каждом переходе заново сверяются mandate digest/status, identity, refs/SHA
+и evidence. Stale SHA или неготовая применимая demo останавливают следующий
+write. Неизвестный outcome после внешнего вызова означает
+`ESCALATE_UNKNOWN_OUTCOME`: повтор запрещён до read-only reconciliation.
+Подробный формат, отзыв, idempotency и полный denylist определены ADR-249.
+
+Финальный gate реализован как отдельная SHA-bound assessment в
+`tools/agent_epic_final.py`: он не переносит task evidence на итоговый roadmap
+PR и не переносит PR CI на post-merge CI нового `main`. Условия возврата в
+`FINAL_GATE` и статусы `ROADMAP READY FOR RELEASE` / `ROADMAP DONE` закреплены
+в [ADR-256](ADR-256-final-epic-gate.md).
 
 ## Fail-closed и resume
 
@@ -137,6 +186,16 @@ state, machine code, issue URL, default/roadmap refs и их текущие remo
 Источники истины, stop conditions и ограничения transport adapter зафиксированы
 в [ADR-234](ADR-234-agent-coordinator-discovery.md).
 
+## Read-only очередь выбранного epic
+
+Для delegated epic-runner отдельный внутренний модуль
+`tools/agent_epic_queue.py` выбирает одну ready task из свежего структурного
+snapshot. Он использует только двусторонне проверяемый parent, `blockedBy` и
+утверждённый порядок, а после каждого `TASK DONE` очередь строится заново.
+Неизвестная принадлежность, цикл, конфликт порядка и исчерпанный лимит
+follow-up останавливают следующий side effect. Классификация follow-up и её
+ограничения зафиксированы в [ADR-250](ADR-250-epic-runner-queue.md).
+
 ## Подготовка локальной ветки
 
 После одобрения точных identity из preview отдельный внутренний инструмент
@@ -157,6 +216,19 @@ ancestry, совпадение remote-tracking refs, clean tree и отсутс�
 [ADR-235](ADR-235-agent-coordinator-branch-preflight.md).
 
 ## Versioned handover и запуск workflow
+
+В delegated режиме task plan сначала сужается локальным epic-мандатом:
+
+```python
+from tools.agent_epic_handover import prepare_handover
+```
+
+Planner требует точный task grant, проверяет `plan ⊆ mandate`, provenance
+criteria, existing/new path boundary и symlink escape, затем переиспользует
+branch preflight ADR-235. Результат содержит handover существующего workflow и
+закреплённый `mandate_provenance`; новый executor или GitHub write не
+появляются. Контракт и stop conditions описаны в
+[ADR-251](ADR-251-epic-runner-handover.md).
 
 После checkout одобренной task-ветки coordinator принимает закрытый JSON
 handover и отдельное подтверждение digest:
@@ -190,6 +262,47 @@ python tools/agent_coordinator_delivery.py \
 Для post-merge assessment используется `--phase post-merge --merge-sha SHA`.
 `TASK DONE` выдаётся только для подтверждённого merge SHA с успешным новым CI.
 
+## Идемпотентный epic loop
+
+`tools/agent_epic_loop.py` связывает task-фазы в фиксированном порядке и
+хранит закрытый checkpoint в private state вне repository. Один неблокирующий
+lock исключает параллельный runner для того же state directory. После crash
+write-фаза сначала проходит read-only reconciliation: доказанный `APPLIED`
+не повторяется, `NOT_APPLIED` допускает один новый вызов, а неизвестный исход
+останавливает supervisor. Текущий operator status можно получить командой:
+
+```bash
+python tools/agent_epic_loop.py status \
+  --state-dir /PRIVATE/STATE --repository-root /PATH/TO/REPOSITORY
+```
+
+Команда `resume` принимает закрытый runtime-config из private state и
+последовательно вызывает SHA-bound adapters начиная с первой незавершённой
+фазы. Без config команда не запускается; ожидаемая неготовность gate даёт
+`BLOCKED`, а неоднозначный write требует reconciliation. Контракт supervisor
+описан в [ADR-253](ADR-253-idempotent-epic-loop.md), production boundary — в
+[ADR-274](ADR-274-epic-runner-runtime-adapter.md).
+
+## Подготовка consumer demo
+
+Для task с новым наблюдаемым поведением закрытый JSON plan передаётся
+внутреннему генератору:
+
+```bash
+python tools/agent_consumer_demo.py assess demo-plan.json
+python tools/agent_consumer_demo.py generate demo-plan.json
+```
+
+Вторая команда печатает одну heredoc-команду. Уже она на машине владельца
+запрашивает repository, реальный input и параметры, создаёт два изолированных
+checkout/venv и выполняет `СТАРЫЙ СПОСОБ`, затем `НОВЫЙ СПОСОБ` на одном
+input. Plan и bounded assessment не содержат введённых значений или output.
+Roadmap SHA assessment обязан совпадать с подтверждённым post-merge SHA, иначе
+фаза `DEMO` остаётся `DEMO_PENDING`. Изменение без наблюдаемого поведения
+требует явного `DEMO_NOT_APPLICABLE` с основанием. Подготовленная команда не
+заменяет фактический итоговый запуск и подтверждение владельца. Контракт и
+ограничения описаны в [ADR-255](ADR-255-consumer-demo.md).
+
 ## Воспроизводимый end-to-end pilot
 
 Финальный synthetic E2E, live read-only discovery, негативная traceability
@@ -198,3 +311,10 @@ matrix и точная последовательность operator actions о�
 [ADR-239](ADR-239-agent-coordinator-pilot.md). Synthetic evidence не заменяет
 production Codex-вызов, PR CI или post-merge CI; внешний adapter запускается
 только после отдельного согласования расхода и точного file allowlist.
+
+Для bounded epic-runner отдельный двухзадачный synthetic E2E и контролируемая
+production-последовательность определены в
+[operator runbook](epic-runner-pilot.md) и
+[ADR-257](ADR-257-epic-runner-pilot.md). Они явно покрывают follow-ups,
+rate-limit, crash reconciliation, failed CI и verified lesson reuse, не
+превращая synthetic результат в production proof.

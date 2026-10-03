@@ -7,7 +7,7 @@ import argparse
 import json
 import re
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -224,7 +224,12 @@ def _sub_issue_numbers(issue: dict[str, Any]) -> set[int]:
     }
 
 
-def prepare_branch(options: Options, client: GitHubClient) -> Result:
+def prepare_branch(
+    options: Options,
+    client: GitHubClient,
+    *,
+    before_create: Callable[[], None] | None = None,
+) -> Result:
     """Revalidate an approved plan and create only its local branch ref."""
     if not options.approved:
         return _result(options, "APPROVAL_REQUIRED")
@@ -322,6 +327,8 @@ def prepare_branch(options: Options, client: GitHubClient) -> Result:
     result.before_sha = before
     result.current_branch_before = current.stdout.strip()
     if before is None:
+        if before_create is not None:
+            before_create()
         created = _git(
             options.root, "branch", "--no-track", options.head_ref, options.base_sha
         )

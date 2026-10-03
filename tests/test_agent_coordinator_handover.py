@@ -221,3 +221,24 @@ def test_wrong_gate_or_malformed_contract_never_invokes_workflow(
     )
     assert malformed.machine_code == "HANDOVER_INVALID"
     assert calls == []
+
+
+def test_mandate_provenance_is_bound_to_policy_sha(tmp_path: Path) -> None:
+    root, sha = _repository(tmp_path)
+    value = _value(sha)
+    value["mandate_provenance"] = {
+        "schema_version": "1.0",
+        "digest": "sha256:" + "a" * 64,
+        "policy_sha": "f" * 40,
+    }
+    value["approval"]["plan_digest"] = handover.handover_digest(value)
+
+    result = handover.run_handover(
+        value,
+        root=root,
+        approved_digest=value["approval"]["plan_digest"],
+        runner=lambda contract: handover.workflow.RunResult("PASS", "OK", 0, "bad"),
+        github=FakeGitHub(),
+    )
+
+    assert result.machine_code == "POLICY_PROVENANCE_MISMATCH"
