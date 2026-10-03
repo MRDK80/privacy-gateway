@@ -10,6 +10,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 MODULE_PATH = Path(__file__).resolve().parents[1] / "tools" / "agent_epic_handover.py"
 
 
@@ -185,6 +187,14 @@ def _context(**changes: Any) -> Any:
     }
     values.update(changes)
     return planner.MandateContext(**values)
+
+
+@pytest.mark.parametrize("revoked", [0, 1])
+def test_numeric_revoked_is_not_a_boolean(revoked: int) -> None:
+    mandate = _mandate("a" * 40)
+    mandate["revoked"] = revoked
+
+    assert planner.mandate_lifecycle_code(mandate, _context()) == "MANDATE_INVALID"
 
 
 def _plan(sha: str) -> dict[str, Any]:
