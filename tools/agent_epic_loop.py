@@ -728,6 +728,7 @@ class RunnerLock:
         fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     def __enter__(self) -> RunnerLock:
+        stream: BinaryIO | None = None
         try:
             self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.directory, 0o700)
@@ -735,9 +736,12 @@ class RunnerLock:
             os.chmod(stream.name, 0o600)
             self._lock(stream)
         except (BlockingIOError, PermissionError) as error:
-            stream.close()
+            if stream is not None:
+                stream.close()
             raise LoopError("RUNNER_LOCKED") from error
         except OSError as error:
+            if stream is not None:
+                stream.close()
             raise LoopError("LOCK_FAILED") from error
         self._stream = stream
         return self
