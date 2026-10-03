@@ -55,6 +55,61 @@ def _repository(tmp_path: Path) -> tuple[Path, str]:
 BODY = "minimal handover\nexact gates\n"
 
 
+def test_mandate_migration_invalidates_approval_without_mutating_input() -> None:
+    value = _mandate("a" * 40)
+    original_digest = planner.mandate_digest(value)
+    candidate = planner.migrate_pinned_mandate(value)
+    assert planner.mandate_digest(value) == original_digest
+    assert candidate["schema_version"] == "3.0"
+    assert candidate["policy_sha"] == value["policy_sha"]
+    assert candidate["approval"] == {
+        "mandate_digest": "pending",
+        "approved_by": "",
+        "approved_at": 0,
+    }
+    assert planner.mandate_lifecycle_code(candidate, _context()) is not None
+    plan = _plan("a" * 40)
+    assert (
+        planner.migrate_pinned_plan(plan, policy_sha="a" * 40)["schema_version"]
+        == "2.0"
+    )
+    assert plan["schema_version"] == "1.0"
+
+
+def test_pinned_plan_uses_new_base_without_changing_policy(tmp_path: Path) -> None:
+    root, policy_sha = _repository(tmp_path)
+    (root / "tools" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "delivery base advances")
+    base_sha = _git(root, "rev-parse", "HEAD")
+    _git(root, "update-ref", "refs/heads/roadmap/248-runner", base_sha)
+    _git(root, "update-ref", "refs/remotes/origin/main", base_sha)
+    _git(root, "update-ref", "refs/remotes/origin/roadmap/248-runner", base_sha)
+    mandate = _mandate(policy_sha)
+    mandate["schema_version"] = "3.0"
+    digest = planner.mandate_digest(mandate)
+    mandate["approval"]["mandate_digest"] = digest
+    plan = _plan(base_sha)
+    plan["schema_version"] = "2.0"
+    plan["policy_sha"] = policy_sha
+    result = planner.prepare_handover(
+        mandate,
+        plan,
+        root=root,
+        approved_mandate_digest=digest,
+        github=FakeGitHub(base_sha),
+        issue_body=BODY,
+        mandate_context=_context(),
+    )
+    assert result.machine_code == "OK"
+    assert result.handover["schema_version"] == "2.0"
+    assert result.handover["base_sha"] == base_sha
+    assert result.handover["trusted_policy"] == {
+        "source": "pinned_policy_sha",
+        "policy_sha": policy_sha,
+    }
+
+
 class FakeGitHub:
     def __init__(self, sha: str) -> None:
         self.sha = sha

@@ -3,20 +3,23 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from tools import agent_coordinator_branch as branch
 from tools import agent_coordinator_handover as coordinator_handover
+from tools import agent_epic_policy_binding as binding
 
 SCHEMA_VERSION = "1.0"
 MANDATE_SCHEMA_VERSION = "2.0"
+PINNED_MANDATE_SCHEMA_VERSION = "3.0"
 MANDATE_FIELDS = {
     "schema_version",
     "repository",
@@ -80,10 +83,13 @@ class MandateContext:
 
 
 def mandate_lifecycle_code(
-    mandate: Mapping[str, Any], context: MandateContext
+    mandate: Mapping[str, Any], context: MandateContext, *, at_task_start: bool = True
 ) -> str | None:
     """Return the fail-closed lifecycle reason for one imminent side effect."""
-    if mandate.get("schema_version") != MANDATE_SCHEMA_VERSION:
+    if mandate.get("schema_version") not in {
+        MANDATE_SCHEMA_VERSION,
+        PINNED_MANDATE_SCHEMA_VERSION,
+    }:
         return "MANDATE_SCHEMA_UNSUPPORTED"
     limits = mandate.get("limits")
     approval = mandate.get("approval")
@@ -150,7 +156,12 @@ def mandate_lifecycle_code(
         return "MANDATE_EXPIRED"
     if context.now - context.started_at >= duration:
         return "MANDATE_DURATION_LIMIT"
-    if context.task_iterations >= task_limit:
+    if context.task_iterations > task_limit or (
+        context.task_iterations == task_limit
+        and (
+            at_task_start or mandate["schema_version"] != PINNED_MANDATE_SCHEMA_VERSION
+        )
+    ):
         return "MANDATE_TASK_LIMIT"
     if context.follow_up_issues > follow_up_limit:
         return "MANDATE_FOLLOW_UP_LIMIT"
@@ -177,6 +188,42 @@ def mandate_digest(value: Mapping[str, Any]) -> str:
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def migrate_pinned_mandate(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Pure v2 -> v3 candidate; deliberately invalidate old owner approval."""
+    mandate = _exact_mapping(value, MANDATE_FIELDS)
+    if mandate["schema_version"] != MANDATE_SCHEMA_VERSION:
+        raise PlanningError("MANDATE_SCHEMA_UNSUPPORTED")
+    approval = _exact_mapping(
+        mandate["approval"], {"mandate_digest", "approved_by", "approved_at"}
+    )
+    if approval["mandate_digest"] != mandate_digest(mandate):
+        raise PlanningError("MANDATE_APPROVAL_MISMATCH")
+    candidate = copy.deepcopy(dict(mandate))
+    candidate["schema_version"] = PINNED_MANDATE_SCHEMA_VERSION
+    candidate["approval"] = {
+        "mandate_digest": "pending",
+        "approved_by": "",
+        "approved_at": 0,
+    }
+    return candidate
+
+
+def migrate_pinned_plan(value: Mapping[str, Any], *, policy_sha: str) -> dict[str, Any]:
+    """Pure candidate; migration does not infer a different legacy policy."""
+    plan = _exact_mapping(value, PLAN_FIELDS)
+    if plan["schema_version"] != SCHEMA_VERSION:
+        raise PlanningError("PLAN_INVALID")
+    if (
+        plan["base_sha"] != policy_sha
+        or re.fullmatch(r"[0-9a-f]{40}", policy_sha) is None
+    ):
+        raise PlanningError("MIGRATION_POLICY_MISMATCH")
+    return copy.deepcopy(dict(plan)) | {
+        "schema_version": "2.0",
+        "policy_sha": policy_sha,
+    }
 
 
 def _exact_mapping(value: Any, fields: set[str]) -> Mapping[str, Any]:
@@ -235,13 +282,15 @@ def _validate_inputs(
     issue_body: str,
     mandate_context: MandateContext,
 ) -> tuple[Mapping[str, Any], Mapping[str, Any], str]:
-    if (
-        not isinstance(mandate_value, Mapping)
-        or mandate_value.get("schema_version") != MANDATE_SCHEMA_VERSION
-    ):
+    if not isinstance(mandate_value, Mapping) or mandate_value.get(
+        "schema_version"
+    ) not in {MANDATE_SCHEMA_VERSION, PINNED_MANDATE_SCHEMA_VERSION}:
         raise PlanningError("MANDATE_SCHEMA_UNSUPPORTED")
     mandate = _exact_mapping(mandate_value, MANDATE_FIELDS)
-    plan = _exact_mapping(plan_value, PLAN_FIELDS)
+    pinned = mandate["schema_version"] == PINNED_MANDATE_SCHEMA_VERSION
+    plan = _exact_mapping(
+        plan_value, PLAN_FIELDS | ({"policy_sha"} if pinned else set())
+    )
     digest = mandate_digest(mandate)
     lifecycle = mandate_lifecycle_code(mandate, mandate_context)
     if lifecycle is not None:
@@ -258,12 +307,11 @@ def _validate_inputs(
 
     repository, epic, task = plan["repository"], plan["epic"], plan["task"]
     if (
-        mandate["schema_version"] != MANDATE_SCHEMA_VERSION
-        or plan["schema_version"] != SCHEMA_VERSION
+        plan["schema_version"] != ("2.0" if pinned else SCHEMA_VERSION)
         or repository != mandate["repository"]
         or epic != mandate["epic"]
         or plan["base_ref"] != mandate["roadmap_ref"]
-        or plan["base_sha"] != mandate["policy_sha"]
+        or (plan["policy_sha"] if pinned else plan["base_sha"]) != mandate["policy_sha"]
         or not isinstance(task, int)
         or isinstance(task, bool)
     ):
@@ -314,8 +362,9 @@ def prepare_handover(
     github: branch.GitHubClient,
     issue_body: str,
     mandate_context: MandateContext,
+    before_create: Callable[[], None] | None = None,
 ) -> Result:
-    """Validate plan authority, create its branch ref, and return handover v1.0."""
+    """Validate authority, create its branch ref and return versioned handover."""
     try:
         mandate, plan, digest = _validate_inputs(
             mandate_value,
@@ -338,7 +387,31 @@ def prepare_handover(
             root=root,
             approved=True,
         )
-        preflight = branch.prepare_branch(options, github)
+        if mandate["schema_version"] == PINNED_MANDATE_SCHEMA_VERSION:
+            try:
+                binding.validate_live_binding(
+                    {
+                        "schema_version": binding.SCHEMA_VERSION,
+                        "repository": plan["repository"],
+                        "epic": plan["epic"],
+                        "roadmap_ref": plan["base_ref"],
+                        "base_sha": plan["base_sha"],
+                        "policy_sha": mandate["policy_sha"],
+                    },
+                    repository_root=root,
+                    repository=cast(str, plan["repository"]),
+                    epic=cast(int, plan["epic"]),
+                    roadmap_ref=cast(str, plan["base_ref"]),
+                    policy_sha=cast(str, mandate["policy_sha"]),
+                    branches=github.branches,
+                )
+            except binding.BindingError as error:
+                raise PlanningError(str(error)) from None
+        preflight = (
+            branch.prepare_branch(options, github, before_create=before_create)
+            if before_create is not None
+            else branch.prepare_branch(options, github)
+        )
         if preflight.machine_code != "OK":
             raise PlanningError(preflight.machine_code)
 
@@ -370,6 +443,12 @@ def prepare_handover(
             },
             "approval": {"plan_digest": "pending"},
         }
+        if mandate["schema_version"] == PINNED_MANDATE_SCHEMA_VERSION:
+            handover["schema_version"] = "2.0"
+            handover["trusted_policy"] = {
+                "source": "pinned_policy_sha",
+                "policy_sha": mandate["policy_sha"],
+            }
         handover["approval"]["plan_digest"] = coordinator_handover.handover_digest(
             handover
         )

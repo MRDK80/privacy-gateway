@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, BinaryIO, Protocol, cast
 
 SCHEMA_VERSION = "1.0"
+BOOTSTRAP_SCHEMA_VERSION = "2.0"
+PINNED_SCHEMA_VERSION = "3.0"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
 MACHINE_CODE_RE = re.compile(r"[A-Z][A-Z0-9_]{0,63}")
 PHASES = (
@@ -108,9 +110,7 @@ class RuntimeAdapter(Protocol):
 
     def effect(self, phase: str) -> Mapping[str, object]: ...
 
-    def reconcile(
-        self, phase: str
-    ) -> tuple[str, Mapping[str, object] | None]: ...
+    def reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]: ...
 
     def merge_sha(self) -> str | None: ...
 
@@ -137,6 +137,7 @@ class CommandRuntimeAdapter:
         reconcile_commands: Mapping[str, tuple[str, ...]],
         timeout_seconds: int,
         output_limit: int,
+        epic_command: tuple[str, ...] | None = None,
     ) -> None:
         self.root = root.resolve()
         self.live_command = live_command
@@ -144,6 +145,7 @@ class CommandRuntimeAdapter:
         self.reconcile_commands = dict(reconcile_commands)
         self.timeout_seconds = timeout_seconds
         self.output_limit = output_limit
+        self.epic_command = epic_command
         self._merge_sha: str | None = None
 
     @staticmethod
@@ -195,8 +197,7 @@ class CommandRuntimeAdapter:
         executable = Path(sys.executable).absolute()
         try:
             trusted_executable = (
-                len(command) >= 2
-                and Path(command[0]).resolve() == executable.resolve()
+                len(command) >= 2 and Path(command[0]).resolve() == executable.resolve()
             )
         except (OSError, RuntimeError) as error:
             raise LoopError("UNTRUSTED_RUNTIME_COMMAND") from error
@@ -251,8 +252,7 @@ class CommandRuntimeAdapter:
             or state.is_relative_to(root)
             or state.is_relative_to(implementation_root)
             or any(
-                (ancestor / ".git").is_file()
-                or (ancestor / ".git" / "HEAD").is_file()
+                (ancestor / ".git").is_file() or (ancestor / ".git" / "HEAD").is_file()
                 for ancestor in (state, *state.parents)
             )
         ):
@@ -277,12 +277,17 @@ class CommandRuntimeAdapter:
                 value = json.load(stream)
         except (OSError, ValueError) as error:
             raise LoopError("RUNTIME_CONFIG_READ_FAILED") from error
-        item = _exact(value, RUNTIME_CONFIG_KEYS, "RUNTIME_CONFIG_INVALID")
+        epic = isinstance(value, Mapping) and value.get("schema_version") == "2.0"
+        item = _exact(
+            value,
+            RUNTIME_CONFIG_KEYS | ({"epic_command"} if epic else set()),
+            "RUNTIME_CONFIG_INVALID",
+        )
         phase_values = item["phase_commands"]
         reconcile_values = item["reconcile_commands"]
         expected_phases = set(PHASES[1:])
         if (
-            item["schema_version"] != "1.0"
+            item["schema_version"] not in {"1.0", "2.0"}
             or not isinstance(phase_values, Mapping)
             or set(phase_values) != expected_phases
             or not isinstance(reconcile_values, Mapping)
@@ -300,8 +305,7 @@ class CommandRuntimeAdapter:
             phase: cls._command(phase_values[phase]) for phase in expected_phases
         }
         reconcile_commands = {
-            phase: cls._command(reconcile_values[phase])
-            for phase in expected_phases
+            phase: cls._command(reconcile_values[phase]) for phase in expected_phases
         }
         live_command = cls._trusted_command(live_command, state, owner)
         phase_commands = {
@@ -319,7 +323,30 @@ class CommandRuntimeAdapter:
             reconcile_commands=reconcile_commands,
             timeout_seconds=item["timeout_seconds"],
             output_limit=item["output_limit"],
+            epic_command=cls._trusted_command(
+                cls._command(item["epic_command"]), state, owner
+            )
+            if epic
+            else None,
         )
+
+    def resume_epic(self) -> Mapping[str, Any]:
+        if self.epic_command is None:
+            raise LoopError("EPIC_ADAPTER_REQUIRED")
+        value = self._run(self.epic_command)
+        if (
+            set(value) != {"schema_version", "status", "machine_code", "result"}
+            or value["schema_version"] != "1.0"
+            or value["status"]
+            not in {"ROADMAP_DONE", "BLOCKED", "ESCALATE", "PAUSED_RATE_LIMIT"}
+            or not isinstance(value["machine_code"], str)
+            or MACHINE_CODE_RE.fullmatch(value["machine_code"]) is None
+            or (
+                value["result"] is not None and not isinstance(value["result"], Mapping)
+            )
+        ):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        return value
 
     def _run(self, command: Sequence[str]) -> Mapping[str, Any]:
         if os.name == "nt":
@@ -428,15 +455,15 @@ class CommandRuntimeAdapter:
                 isinstance(value[key], int)
                 and not isinstance(value[key], bool)
                 and value[key] > 0
-                for key in ("epic", "task", "pr")
+                for key in ("epic", "task")
             )
+            or not (value["pr"] is None or _positive_id(value["pr"]))
             or not all(
                 isinstance(value[key], str) and bool(value[key])
                 for key in ("base_ref", "head_ref")
             )
             or not all(
-                isinstance(value[key], str)
-                and SHA_RE.fullmatch(value[key]) is not None
+                isinstance(value[key], str) and SHA_RE.fullmatch(value[key]) is not None
                 for key in ("base_sha", "head_sha")
             )
         ):
@@ -463,9 +490,7 @@ class CommandRuntimeAdapter:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         return cast(Mapping[str, object], receipt)
 
-    def reconcile(
-        self, phase: str
-    ) -> tuple[str, Mapping[str, object] | None]:
+    def reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]:
         value = self._run(self.reconcile_commands[phase])
         if set(value) != {"state", "receipt"}:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
@@ -499,7 +524,20 @@ def _next_phase(phase: str) -> str | None:
 
 def validate_checkpoint(value: Any) -> dict[str, Any]:
     """Validate the closed authority and progress checkpoint."""
-    item = _exact(value, CHECKPOINT_KEYS, "CHECKPOINT_INVALID")
+    pinned = (
+        isinstance(value, Mapping)
+        and value.get("schema_version") == PINNED_SCHEMA_VERSION
+    )
+    item = _exact(
+        value,
+        CHECKPOINT_KEYS | ({"policy_sha"} if pinned else set()),
+        "CHECKPOINT_INVALID",
+    )
+    if pinned and (
+        not isinstance(item["policy_sha"], str)
+        or SHA_RE.fullmatch(item["policy_sha"]) is None
+    ):
+        raise LoopError("CHECKPOINT_INVALID")
     phase = item["phase"]
     completed = item["completed_phases"]
     pending = item["pending_phase"]
@@ -508,14 +546,24 @@ def validate_checkpoint(value: Any) -> dict[str, Any]:
     expected_completed = list(PHASES[1 : PHASES.index(phase) + 1])
     merge_required = PHASES.index(phase) >= PHASES.index("POST_MERGE")
     if (
-        item["schema_version"] != SCHEMA_VERSION
+        item["schema_version"]
+        not in {SCHEMA_VERSION, BOOTSTRAP_SCHEMA_VERSION, PINNED_SCHEMA_VERSION}
         or not isinstance(item["repository"], str)
         or item["repository"].count("/") != 1
         or not all(
             isinstance(item[key], int)
             and not isinstance(item[key], bool)
             and item[key] > 0
-            for key in ("epic", "task", "pr")
+            for key in ("epic", "task")
+        )
+        or not (
+            _positive_id(item["pr"])
+            or (
+                item["schema_version"]
+                in {BOOTSTRAP_SCHEMA_VERSION, PINNED_SCHEMA_VERSION}
+                and item["pr"] is None
+                and phase == "PLAN"
+            )
         )
         or item["epic"] == item["task"]
         or not isinstance(item["base_ref"], str)
@@ -551,6 +599,31 @@ def validate_checkpoint(value: Any) -> dict[str, Any]:
     ):
         raise LoopError("CHECKPOINT_INVALID")
     return dict(item)
+
+
+def _positive_id(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def migrate_checkpoint(value: Any) -> dict[str, Any]:
+    """Explicit pure migration; never infer or reset delivery identity."""
+    checked = validate_checkpoint(value)
+    if checked["pending_phase"] is not None:
+        raise LoopError("MIGRATION_PENDING_INTENT")
+    if checked["schema_version"] == PINNED_SCHEMA_VERSION:
+        raise LoopError("MIGRATION_DOWNGRADE_FORBIDDEN")
+    return checked | {"schema_version": BOOTSTRAP_SCHEMA_VERSION}
+
+
+def migrate_pinned_checkpoint(value: Any, *, policy_sha: str) -> dict[str, Any]:
+    """Return a candidate only; legacy migration cannot infer a new policy."""
+    checked = validate_checkpoint(value)
+    if checked["pending_phase"] is not None:
+        raise LoopError("MIGRATION_PENDING_INTENT")
+    expected = checked.get("policy_sha", checked["base_sha"])
+    if policy_sha != expected:
+        raise LoopError("MIGRATION_POLICY_MISMATCH")
+    return checked | {"schema_version": PINNED_SCHEMA_VERSION, "policy_sha": policy_sha}
 
 
 def _valid_rate_limit_pause(value: Any, status: Any) -> bool:
@@ -708,9 +781,14 @@ def _result(
 
 
 def _complete(
-    saved: Mapping[str, Any], target_phase: str, merge_sha: str | None
+    saved: Mapping[str, Any],
+    target_phase: str,
+    merge_sha: str | None,
+    binding: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     updated = dict(saved)
+    if binding is not None:
+        updated.update(binding)
     updated["phase"] = target_phase
     updated["completed_phases"] = [*saved["completed_phases"], target_phase]
     updated["pending_phase"] = None
@@ -749,14 +827,50 @@ def _valid_phase_receipt(
     return set(value) == {"phase"} and value["phase"] == phase
 
 
-def _block_demo(
-    saved: Mapping[str, Any], store: CheckpointStore
-) -> AdvanceResult:
+def _block_demo(saved: Mapping[str, Any], store: CheckpointStore) -> AdvanceResult:
     blocked = dict(saved)
     blocked["pending_phase"] = None
     blocked["status"] = "BLOCKED"
     store.save(blocked)
     return _result("BLOCKED", "DEMO_PENDING", blocked, store)
+
+
+def _bootstrap(saved: Mapping[str, Any], phase: str) -> bool:
+    return bool(
+        saved["schema_version"] in {BOOTSTRAP_SCHEMA_VERSION, PINNED_SCHEMA_VERSION}
+        and saved["pr"] is None
+        and saved["phase"] == "PLAN"
+        and phase == "RUN_TASK"
+    )
+
+
+def _delivery_binding(
+    saved: Mapping[str, Any],
+    receipt: Mapping[str, object],
+    fresh_live: Callable[[], Mapping[str, Any]] | None,
+) -> Mapping[str, Any]:
+    if set(receipt) != {"phase", "delivery_identity"} or receipt["phase"] != "RUN_TASK":
+        raise LoopError("RECEIPT_INVALID")
+    binding = _exact(receipt["delivery_identity"], IDENTITY_KEYS, "RECEIPT_INVALID")
+    if any(binding[key] != saved[key] for key in IDENTITY_KEYS - {"pr", "head_sha"}):
+        raise LoopError("BINDING_SCOPE_CHANGED")
+    if (
+        not _positive_id(binding["pr"])
+        or not isinstance(binding["head_sha"], str)
+        or SHA_RE.fullmatch(binding["head_sha"]) is None
+    ):
+        raise LoopError("RECEIPT_INVALID")
+    if fresh_live is None:
+        raise LoopError("BINDING_REVALIDATION_REQUIRED")
+    try:
+        facts = _exact(fresh_live(), LIVE_KEYS, "LIVE_IDENTITY_CHANGED")
+    except LoopError:
+        raise
+    except Exception as error:
+        raise LoopError("BINDING_REVALIDATION_FAILED") from error
+    if any(facts[key] != binding[key] for key in IDENTITY_KEYS):
+        raise LoopError("LIVE_IDENTITY_CHANGED")
+    return binding
 
 
 def advance(
@@ -768,13 +882,12 @@ def advance(
     effect: Effect,
     reconcile: Reconcile,
     merge_sha: str | None = None,
+    binding_live: Callable[[], Mapping[str, Any]] | None = None,
 ) -> AdvanceResult:
     """Advance exactly one phase; reconcile any prior uncertain effect first."""
     try:
         wanted = validate_checkpoint(expected)
         facts = _exact(live, LIVE_KEYS, "LIVE_IDENTITY_CHANGED")
-        if any(facts[key] != wanted[key] for key in IDENTITY_KEYS):
-            raise LoopError("LIVE_IDENTITY_CHANGED")
         with RunnerLock(store.directory):
             saved = store.load()
             if saved is None:
@@ -782,6 +895,10 @@ def advance(
                 store.save(saved)
             if any(saved[key] != wanted[key] for key in IDENTITY_KEYS):
                 raise LoopError("RESUME_IDENTITY_CHANGED")
+            bootstrap = _bootstrap(saved, target_phase)
+            if not (bootstrap and saved["pending_phase"] is not None):
+                if any(facts[key] != wanted[key] for key in IDENTITY_KEYS):
+                    raise LoopError("LIVE_IDENTITY_CHANGED")
             current = cast(str, saved["phase"])
             if target_phase == current:
                 return _result("NO_OP", "ALREADY_COMPLETED", saved, store)
@@ -796,21 +913,24 @@ def advance(
             if saved["pending_phase"] is not None:
                 state, receipt = reconcile(target_phase)
                 if state == "APPLIED" and receipt:
+                    if bootstrap:
+                        binding = _delivery_binding(saved, receipt, binding_live)
+                        completed = _complete(saved, target_phase, merge_sha, binding)
+                        store.save(completed)
+                        return _result("NO_OP", "ALREADY_APPLIED", completed, store)
                     if not _valid_phase_receipt(
                         target_phase, receipt, saved["merge_sha"]
                     ):
                         if target_phase != "DEMO":
-                            return _result(
-                                "ESCALATE", "RECEIPT_INVALID", saved, store
-                            )
+                            return _result("ESCALATE", "RECEIPT_INVALID", saved, store)
                         return _block_demo(saved, store)
                     completed = _complete(saved, target_phase, merge_sha)
                     store.save(completed)
                     return _result("NO_OP", "ALREADY_APPLIED", completed, store)
                 if state != "NOT_APPLIED":
-                    return _result(
-                        "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store
-                    )
+                    return _result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store)
+                if any(facts[key] != saved[key] for key in IDENTITY_KEYS):
+                    raise LoopError("LIVE_IDENTITY_CHANGED")
 
             pending = dict(saved)
             pending["pending_phase"] = target_phase
@@ -828,16 +948,28 @@ def advance(
                 failed = dict(pending)
                 failed["status"] = "ESCALATE"
                 store.save(failed)
-                return _result(
-                    "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store
-                )
+                return _result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store)
             if not receipt:
                 failed = dict(pending)
                 failed["status"] = "ESCALATE"
                 store.save(failed)
-                return _result(
-                    "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store
-                )
+                return _result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", failed, store)
+            if bootstrap:
+                try:
+                    binding = _delivery_binding(pending, receipt, binding_live)
+                except Exception as error:
+                    failed = dict(pending)
+                    failed["status"] = "ESCALATE"
+                    store.save(failed)
+                    code = (
+                        error.machine_code
+                        if isinstance(error, LoopError)
+                        else "ESCALATE_UNKNOWN_OUTCOME"
+                    )
+                    return _result("ESCALATE", code, failed, store)
+                completed = _complete(pending, target_phase, merge_sha, binding)
+                store.save(completed)
+                return _result("CONTINUE", "OK", completed, store)
             if not _valid_phase_receipt(target_phase, receipt, saved["merge_sha"]):
                 if target_phase != "DEMO":
                     failed = dict(pending)
@@ -877,9 +1009,7 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
             except LoopError as error:
                 return _result("ESCALATE", error.machine_code, saved, store)
             if reconciled[0] == "UNKNOWN":
-                return _result(
-                    "ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store
-                )
+                return _result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store)
         try:
             live = adapter.live()
         except LoopError as error:
@@ -904,6 +1034,7 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
             effect=run_effect,
             reconcile=run_reconcile,
             merge_sha=merge_sha,
+            binding_live=adapter.live,
         )
         if result.status not in {"CONTINUE", "NO_OP"}:
             return result
@@ -942,11 +1073,19 @@ def main() -> int:
             adapter = CommandRuntimeAdapter.load(
                 runtime_config, args.repository_root, args.state_dir
             )
-            value = asdict(resume(store=store, adapter=adapter))
+            value = (
+                dict(adapter.resume_epic())
+                if adapter.epic_command is not None
+                else asdict(resume(store=store, adapter=adapter))
+            )
         print(json.dumps(value, sort_keys=True))
         if args.command == "status":
             return 0
-        return 0 if value["status"] in {"TASK_DONE", "CONTINUE", "NO_OP"} else 2
+        return (
+            0
+            if value["status"] in {"TASK_DONE", "CONTINUE", "NO_OP", "ROADMAP_DONE"}
+            else 2
+        )
     except LoopError as error:
         print(json.dumps({"status": "ESCALATE", "machine_code": error.machine_code}))
         return 2

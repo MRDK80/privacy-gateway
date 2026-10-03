@@ -22,6 +22,20 @@ BASE_SHA = "a" * 40
 HEAD_SHA = "b" * 40
 
 
+def test_controller_accepts_explicit_pinned_policy_sha_without_rebasing_evidence() -> (
+    None
+):
+    request = _controller_request()
+    contract = request["contract"]
+    assert isinstance(contract, dict)
+    contract["policy_sha"] = "c" * 40
+    codex_adapter._validate_controller_review(request)
+    assert contract["base_sha"] == BASE_SHA
+    contract["policy_sha"] = "invalid"
+    with pytest.raises(codex_adapter.AdapterError, match="INVALID_REQUEST"):
+        codex_adapter._validate_controller_review(request)
+
+
 @pytest.fixture
 def active_bubblewrap() -> None:
     if sys.platform != "linux":
