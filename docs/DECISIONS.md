@@ -27,7 +27,7 @@
 
 **Обоснование.** Системные хранилища (SecretService / macOS Keychain / Windows Credential Vault) предоставляют шифрование «из коробки» с привязкой к учётной записи пользователя.
 
-**Последствия.** На headless Linux необходим `dbus-run-session + gnome-keyring-daemon`. В CI нужен mock или `PGW_KEYRING_BACKEND`. Backend валидируется по allowlist до любой операции (fail closed).
+**Последствия.** На headless Linux необходим `dbus-run-session + gnome-keyring-daemon`. В CI используется изолированный mock системного keyring. Backend валидируется по allowlist до любой операции (fail closed); уточнение выбора backend приведено в ADR-03 ниже.
 
 **Статус:** действует.
 
@@ -37,11 +37,16 @@
 
 **Контекст.** Библиотека `keyring` может автоматически выбрать небезопасный backend (plaintext, in-memory) на headless системах.
 
-**Решение.** Валидировать backend по полному имени класса (`module.qualname`) против allowlist: `SecretService.Keyring`, `macOS.Keyring`, `WinVaultKeyring`. Override через `PGW_KEYRING_BACKEND` также проходит валидацию. При несоответствии — `KeystoreError` до записи или чтения ключа.
+**Решение.** Валидировать backend по полному имени класса (`module.qualname`) против allowlist: `SecretService.Keyring`, `macOS.Keyring`, `WinVaultKeyring`. При несоответствии — `KeystoreError` до записи или чтения ключа.
+
+Privacy Gateway получает текущий backend через `keyring.get_keyring()`;
+выбор backend выполняется средствами библиотеки `keyring`.
 
 **Обоснование.** Fail closed: лучше упасть с ошибкой, чем молча записать ключ в plaintext-хранилище.
 
 **Последствия.** На неподдерживаемых системах или в CI без настройки операции с ключом не работают. Это намеренное поведение.
+
+**Уточнение #128, 2026-10-03.** Ранее ADR-02 и ADR-03 обещали override через `PGW_KEYRING_BACKEND`, которого реализация не содержит. Выбран documentation-only вариант: Privacy Gateway не читает эту переменную и не добавляет собственный механизм выбора backend. Полученный от `keyring` backend проходит существующий allowlist до доступа к ключам. Это уточнение не меняет allowlist, fail-closed поведение, CLI или Library API.
 
 **Статус:** действует.
 

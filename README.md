@@ -54,6 +54,11 @@
 активная сессия keyring (`dbus-run-session` и `gnome-keyring-daemon`);
 подробности — в [`docs/SECURITY.md`](docs/SECURITY.md).
 
+Backend выбирается средствами библиотеки `keyring`: Privacy Gateway использует
+`keyring.get_keyring()` и проверяет выбранный класс по allowlist безопасных
+системных backend до обращения к ключам. Переменная `PGW_KEYRING_BACKEND`
+в Privacy Gateway не поддерживается.
+
 ## Установка
 
 ```bash
