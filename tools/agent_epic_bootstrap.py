@@ -11,7 +11,7 @@ from tools import agent_epic_delivery as delivery
 from tools import agent_epic_loop as loop
 from tools.agent_coordinator_handover import _repository_identity
 from tools.agent_epic_runtime import Authority, TaskPhaseRuntime
-from tools.agent_epic_snapshot import commit_reviewed_snapshot
+from tools.agent_epic_snapshot import SnapshotCommit, commit_reviewed_snapshot
 from tools.agent_epic_workflow import ReviewedWorkflow
 
 
@@ -29,6 +29,76 @@ class BootstrapTask:
         self.authority = authority
 
     def __call__(self) -> Mapping[str, object]:
+        from tools import agent_epic_recovery as recovery
+
+        guard = self.runtime.recovery
+        if guard is None and recovery.present(self.runtime.store.directory):
+            raise loop.LoopError("RECOVERY_PROFILE_REQUIRED")
+        if guard is not None:
+            with guard.control.lock():
+                try:
+                    return self._run()
+                except Exception:
+                    guard.stop()
+                    raise
+        return self._run()
+
+    def reconcile(self) -> tuple[str, Mapping[str, object] | None]:
+        """Canonical complete binding only; partial outcomes never authorize retry."""
+        try:
+            saved = self.runtime._checkpoint("RUN_TASK")
+            if saved["pr"] is not None or saved["schema_version"] != "3.0":
+                return "UNKNOWN", None
+            if (
+                _repository_identity(self.runtime.store.repository_root)
+                != saved["repository"]
+            ):
+                return "UNKNOWN", None
+            artifact = self.reviewed.artifacts()
+            gate = artifact["gate"]
+            review = artifact["review_receipt"]
+            head = gate["snapshot"]["snapshot_commit"]
+            fields = {key: saved[key] for key in loop.IDENTITY_KEYS}
+            policy = {"schema_version": "3.0", "policy_sha": saved["policy_sha"]}
+            receipts: dict[str, Mapping[str, object]] = {}
+            for operation in ("commit_task", "push_task", "create_task_pr"):
+                item = fields | {
+                    "head_sha": saved["head_sha"]
+                    if operation == "commit_task"
+                    else head
+                }
+                operation_id = hashlib.sha256(
+                    json.dumps(
+                        {**item, **policy, "operation": operation}, sort_keys=True
+                    ).encode()
+                ).hexdigest()
+                value = delivery.Request(
+                    operation_id=operation_id, operation=operation, **item, **policy
+                )
+                state, receipt = (
+                    SnapshotCommit(
+                        self.runtime.store.repository_root,
+                        artifact["allowed_paths"],
+                        gate,
+                        review,
+                    ).reconcile(value)
+                    if operation == "commit_task"
+                    else self.runtime.transport.reconcile(value)
+                )
+                if state != "APPLIED" or not receipt:
+                    return "UNKNOWN", None
+                receipts[operation] = receipt
+            pr = receipts["create_task_pr"].get("pr")
+            if type(pr) is not int or pr < 1:
+                return "UNKNOWN", None
+            return "APPLIED", {
+                "phase": "RUN_TASK",
+                "delivery_identity": fields | {"head_sha": head, "pr": pr},
+            }
+        except Exception:
+            return "UNKNOWN", None
+
+    def _run(self) -> Mapping[str, object]:
         saved = self.runtime._checkpoint("RUN_TASK")
         if saved["schema_version"] not in {"2.0", "3.0"} or saved["pr"] is not None:
             raise loop.PhaseBlocked("BOOTSTRAP_IDENTITY_REQUIRED")
@@ -103,7 +173,10 @@ class BootstrapTask:
                 )
                 if proof is not None:
                     raise loop.PhaseBlocked(proof)
-        artifact = dict(self.reviewed.run())
+        guard = self.runtime.recovery
+        artifact = dict(
+            self.reviewed.artifacts() if guard is not None else self.reviewed.run()
+        )
         gate = artifact.get("gate")
         snapshot = gate.get("snapshot") if isinstance(gate, Mapping) else None
         if not isinstance(snapshot, Mapping) or not isinstance(gate, Mapping):
@@ -113,7 +186,9 @@ class BootstrapTask:
             raise loop.PhaseBlocked("WORKFLOW_EVIDENCE_MISSING")
         identity = {key: saved[key] for key in loop.IDENTITY_KEYS}
         ledger = delivery.Ledger(
-            self.runtime.store.directory, self.runtime.store.repository_root
+            self.runtime.store.directory,
+            self.runtime.store.repository_root,
+            recovery=guard,
         )
 
         def request(operation: str) -> delivery.Request:
@@ -166,9 +241,39 @@ class BootstrapTask:
                 return (
                     approval == digest
                     and delivery._authorized(value, current, approval, now) is None
+                    and (guard is None or guard.refresh(value))
                 )
             except Exception:
                 return False
+
+        if guard is not None:
+            review = artifact.get("review_receipt")
+            paths = artifact.get("allowed_paths")
+            if (
+                not isinstance(review, Mapping)
+                or not isinstance(paths, list)
+                or not paths
+            ):
+                raise loop.LoopError("WORKFLOW_REVIEW_NOT_VERIFIED")
+            requests = {
+                operation: request(operation)
+                for operation in ("commit_task", "push_task", "create_task_pr")
+            }
+            local = SnapshotCommit(
+                self.runtime.store.repository_root, paths, gate, review
+            )
+
+            def canonical(
+                value: delivery.Request,
+            ) -> tuple[str, Mapping[str, object] | None]:
+                if value.operation == "commit_task":
+                    return local.reconcile(value)
+                state, _ = local.reconcile(requests["commit_task"])
+                if state != "APPLIED":
+                    return "UNKNOWN", None
+                return self.runtime.transport.reconcile(value)
+
+            guard.prepare(saved, artifact, requests, canonical)
 
         # Authority is checked before starting the bounded model workflow too;
         # every actual write then reloads it, including revocation and time.
@@ -217,6 +322,13 @@ class BootstrapTask:
                 )
             if result.status == "BLOCKED":
                 # Prior writes may already have occurred; preserve phase intent.
+                if guard is not None:
+                    guard.stop(
+                        "stale_identity"
+                        if result.machine_code == "STALE_IDENTITY"
+                        else "unknown"
+                    )
+                    raise loop.LoopError(result.machine_code)
                 raise loop.LoopError("BOOTSTRAP_DELIVERY_BLOCKED")
             if result.status not in {"APPLIED", "NO_OP"}:
                 raise loop.LoopError("ESCALATE_UNKNOWN_OUTCOME")
