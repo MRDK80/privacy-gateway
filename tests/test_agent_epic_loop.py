@@ -312,6 +312,28 @@ def test_lock_rejects_second_runner_and_status_is_actionable(tmp_path: Path) -> 
     assert "agent_epic_loop.py resume" in status.resume_command
 
 
+@pytest.mark.parametrize("operation", ["mkdir", "open"])
+def test_lock_early_permission_error_is_controlled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    directory = tmp_path / "private"
+    runner = loop.RunnerLock(directory)
+
+    def denied(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError("synthetic denial")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, operation, denied)
+        with pytest.raises(loop.LoopError, match="^RUNNER_LOCKED$") as caught:
+            runner.__enter__()
+        assert isinstance(caught.value.__cause__, PermissionError)
+        assert runner._stream is None
+        assert not (directory / "epic-loop.lock").exists()
+
+    with loop.RunnerLock(directory):
+        pass
+
+
 def test_private_state_rejects_repository_path_and_unknown_fields(
     tmp_path: Path,
 ) -> None:
