@@ -108,6 +108,7 @@ class TaskContract:
     max_report_chars: int = 20_000
     allowed_tools: tuple[str, ...] = ("workspace", "git-read", "quality-gate")
     permissions: ActionPermissions = field(default_factory=ActionPermissions)
+    policy_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -245,6 +246,7 @@ def build_contract(
     max_repair_iterations: int = 2,
     max_report_chars: int = 20_000,
     permissions: ActionPermissions | None = None,
+    policy_sha: str | None = None,
 ) -> TaskContract:
     """Build a validated contract; issue text is deliberately treated as data only."""
     del issue_text
@@ -261,6 +263,10 @@ def build_contract(
     if max_minutes < 1 or max_report_chars < 1:
         raise OrchestrationError("INVALID_CONTRACT")
     base_sha = _git(root, "rev-parse", "--verify", f"{base_ref}^{{commit}}")
+    if policy_sha is not None:
+        if re.fullmatch(r"[0-9a-f]{40}", policy_sha) is None:
+            raise OrchestrationError("POLICY_PROVENANCE_MISMATCH")
+        _git(root, "merge-base", "--is-ancestor", policy_sha, base_sha)
     return TaskContract(
         issue=issue,
         epic=epic,
@@ -275,6 +281,7 @@ def build_contract(
         max_repair_iterations=max_repair_iterations,
         max_report_chars=max_report_chars,
         permissions=permissions or ActionPermissions(),
+        policy_sha=policy_sha,
     )
 
 
@@ -318,12 +325,21 @@ def default_storage() -> StateStore:
     return StateStore(base / "privacy-gateway" / "agent-runs")
 
 
+def _contract_fields(contract: TaskContract) -> dict[str, Any]:
+    value = asdict(contract)
+    if contract.policy_sha is None:
+        del value["policy_sha"]
+    return value
+
+
 def _run_key(contract: TaskContract) -> str:
     payload = f"{contract.issue}\0{contract.base_sha}\0{contract.head_ref}"
     if contract.delivery_criterion_indices:
         payload += "\0" + json.dumps(
-            asdict(contract), ensure_ascii=False, sort_keys=True
+            _contract_fields(contract), ensure_ascii=False, sort_keys=True
         )
+    if contract.policy_sha is not None:
+        payload += "\0policy:" + contract.policy_sha
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
@@ -555,7 +571,9 @@ def _load_trusted_policy(root: Path, contract: TaskContract) -> dict[str, str]:
     policy: dict[str, str] = {}
     for path in POLICY_FILES:
         try:
-            content = _git(root, "show", f"{contract.base_sha}:{path}")
+            content = _git(
+                root, "show", f"{contract.policy_sha or contract.base_sha}:{path}"
+            )
         except OrchestrationError:
             continue
         policy[path] = content
@@ -1431,7 +1449,7 @@ def run(
             executor_calls += 1
             executor_started = time.perf_counter()
             executor_request: dict[str, Any] = {
-                "contract": asdict(contract),
+                "contract": _contract_fields(contract),
                 "contract_object": contract,
                 "head_sha": head_sha,
                 "repair_iteration": repairs,
@@ -1551,6 +1569,8 @@ def run(
                 review_request["contract"]["delivery_criterion_indices"] = list(
                     contract.delivery_criterion_indices
                 )
+            if contract.policy_sha is not None:
+                review_request["contract"]["policy_sha"] = contract.policy_sha
             verdict_payload = adapter.review(
                 review_request, trusted_policy, controller_session
             )
@@ -1785,7 +1805,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json.dumps(
                     {
                         "status": "DRY_RUN",
-                        "contract": asdict(contract),
+                        "contract": _contract_fields(contract),
                         "scope": {
                             "mode": (
                                 "explicit"

@@ -10,7 +10,7 @@ itself supplies the pinned review contract and snapshot identity.
 Security boundaries enforced here:
 
 * the controller runs read-only over a trusted policy bundle materialised from
-  ``base_sha``, never over the untrusted head worktree;
+  the pinned policy SHA (legacy: ``base_sha``), never from the head worktree;
 * identity fields and ``review_basis`` are written by the adapter, not by the
   model;
 * ``--output-schema`` is treated as a generation hint only, and every response
@@ -28,6 +28,7 @@ import argparse
 import errno
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -237,6 +238,14 @@ def _validate_controller_review(request: Mapping[str, Any]) -> None:
     expected_keys = required | (
         {"delivery_criterion_indices"} if delivery_indices is not None else set()
     )
+    if "policy_sha" in contract:
+        policy_sha = contract["policy_sha"]
+        if (
+            not isinstance(policy_sha, str)
+            or re.fullmatch(r"[0-9a-f]{40}", policy_sha) is None
+        ):
+            raise AdapterError("INVALID_REQUEST")
+        expected_keys.add("policy_sha")
     if set(contract) != expected_keys:
         raise AdapterError("INVALID_REQUEST")
     if contract["issue"] != request.get("issue") or contract["base_sha"] != request.get(
