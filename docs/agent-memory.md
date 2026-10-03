@@ -19,11 +19,20 @@ Private records разделены логически:
 - confirmed project facts — подтверждённые несколькими evidence sources факты;
 - durable-rule candidates — только прошедшие классификацию и sanitization
   предложения, ещё не являющиеся доверенной policy.
+- verified lessons — ограниченные недоверенные hints с gate/controller и
+  PR/post-merge provenance по [ADR-259](ADR-259-verified-prompt-lessons.md).
 
 История append-only: исправление добавляется новой записью; прежняя не
 удаляется и не редактируется.
 Полные retrospectives не загружаются в agent context: используется релевантная
 выборка либо агрегированный `report`.
+
+Verified lesson выбирается только по точному совпадению task/problem class и
+environment, не более трёх записей. Он передаётся отдельным envelope с меткой
+`UNTRUSTED_VERIFIED_HINT`, не содержит permissions и не изменяет task contract,
+policy, scope, budget, approval или gates. Disable добавляет tombstone, а не
+переписывает историю. Польза оценивается сравнением baseline/hinted iterations,
+duration и calls; регрессия требует rollback/disable.
 
 ## Publication checklist
 
