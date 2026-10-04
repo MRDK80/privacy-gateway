@@ -26,10 +26,12 @@ class GhTaskTransport:
         *,
         reporting: Callable[[], Mapping[str, Any]] | None = None,
         before_write: Callable[[Any], None] | None = None,
+        read: Callable[[Sequence[str]], str] | None = None,
     ) -> None:
         self.root = root
         self.reporting = reporting
         self.before_write = before_write
+        self.read = read
 
     def write_command(self, argv: Sequence[str], request: Any) -> str:
         if self.before_write is not None:
@@ -183,6 +185,16 @@ class GhTaskTransport:
         except ValueError as error:
             raise delivery.OutcomeUnknown from error
 
+    def read_json(self, argv: Sequence[str]) -> Any:
+        if self.read is None:
+            return self.json(argv)
+        from tools.agent_github_read import ReadFailure
+
+        try:
+            return json.loads(self.read(argv))
+        except (ValueError, ReadFailure) as error:
+            raise delivery.OutcomeUnknown from error
+
     @staticmethod
     def comment(request: delivery.Request) -> str:
         digest = hashlib.sha256(request.operation_id.encode()).hexdigest()
@@ -305,7 +317,7 @@ class GhTaskTransport:
                 if lines == [f"{request.head_sha}\trefs/heads/{request.head_ref}"]:
                     return "APPLIED", {"head_sha": request.head_sha}
             elif request.operation == "create_task_pr":
-                value = self.json(
+                value = self.read_json(
                     (
                         "gh",
                         "api",
@@ -348,7 +360,7 @@ class GhTaskTransport:
                         "head_sha": request.head_sha,
                     }
             elif request.operation == "merge_task_pr":
-                value = self.json(
+                value = self.read_json(
                     (
                         "gh",
                         "pr",
@@ -378,7 +390,7 @@ class GhTaskTransport:
                 ):
                     return "APPLIED", {"merge_sha": sha}
             elif request.operation == "close_task":
-                value = self.json(
+                value = self.read_json(
                     (
                         "gh",
                         "issue",
@@ -405,7 +417,7 @@ class GhTaskTransport:
                 if value.get("state") == "OPEN":
                     return "NOT_APPLIED", None
             elif request.operation == "update_epic":
-                pages = self.json(
+                pages = self.read_json(
                     (
                         "gh",
                         "api",

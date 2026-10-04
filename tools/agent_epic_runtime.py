@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -14,6 +14,7 @@ from tools import agent_epic_delivery as delivery
 from tools import agent_epic_loop as loop
 from tools import agent_epic_policy_binding as binding
 from tools import agent_epic_queue as queue
+from tools import agent_github_read as reads
 from tools.agent_coordinator_handover import _repository_identity
 from tools.agent_epic_transport import GhTaskTransport
 
@@ -48,14 +49,95 @@ class TaskPhaseRuntime:
         self.demo_completion = demo_completion
         self.continuation_enabled = False
         self.recovery: Any = None
-        self.github: assessment.GitHubClient = assessment.GhClient()
-        self.issues: queue.GitHubClient = queue.GhClient()
+        self.github: assessment.GitHubClient = assessment.GhClient(
+            read=self._github_read
+        )
+        self.issues: queue.GitHubClient = queue.GhClient(read=self._github_read)
         self.transport = GhTaskTransport(
             store.repository_root,
             reporting=artifacts,
             before_write=self._before_transport_write,
+            read=self._github_read,
         )
         self._merge: str | None = None
+
+    def _github_read(self, argv: Sequence[str]) -> str:
+        # Baseline is local and immutable for this one request/retry sequence.
+        saved = self._checkpoint()
+        identity = {key: saved[key] for key in loop.IDENTITY_KEYS}
+        policy = saved.get("policy_sha")
+        initial_mandate, initial_digest, _ = self.authority()
+        initial_identity = {
+            key: initial_mandate.get(key)
+            for key in ("repository", "epic", "roadmap_ref", "policy_sha")
+        }
+        from tools import agent_epic_recovery as recovery
+
+        control = recovery.Control(self.store.directory, self.store.repository_root)
+        generation = (
+            control.load()["generation"]
+            if recovery.present(self.store.directory)
+            else None
+        )
+
+        recovery_digest = (
+            self.recovery.approved() if self.recovery is not None else None
+        )
+
+        def guard() -> None:
+            mandate, approved, context = self.authority()
+            if (
+                approved != initial_digest
+                or delivery.mandate_digest(mandate) != approved
+                or any(
+                    mandate.get(key) != value for key, value in initial_identity.items()
+                )
+            ):
+                raise loop.LoopError("MANDATE_APPROVAL_MISMATCH")
+            code = delivery.mandate_lifecycle_code(mandate, context)
+            if code is not None:
+                raise loop.LoopError(code)
+            current = self._checkpoint()
+            if (
+                any(current[key] != value for key, value in identity.items())
+                or current.get("policy_sha") != policy
+                or _repository_identity(self.store.repository_root)
+                != saved["repository"]
+            ):
+                raise loop.LoopError("LIVE_IDENTITY_CHANGED")
+            present = recovery.present(self.store.directory)
+            if present != (generation is not None):
+                raise loop.LoopError("RECOVERY_STOPPED")
+            if present:
+                state = control.load()
+                if (
+                    generation is None
+                    or state["generation"] != generation
+                    or (state["stopped"] and state["generation"] > 0)
+                ):
+                    raise loop.LoopError("RECOVERY_STOPPED")
+            if self.recovery is not None:
+                pinned = self.recovery.approved()
+                if pinned != recovery_digest:
+                    raise loop.LoopError("RECOVERY_STOPPED")
+                if pinned is not None:
+                    approval = recovery.private_value(
+                        self.store.directory / "bootstrap-recovery-approval.json"
+                    )
+                    if (
+                        set(approval) != recovery.APPROVAL_KEYS
+                        or recovery.digest(approval) != pinned
+                        or approval["generation"]
+                        != (generation if generation is not None else 0)
+                        or type(approval["issued_at"]) is not int
+                        or type(approval["expires_at"]) is not int
+                        or not approval["issued_at"]
+                        <= context.now
+                        < approval["expires_at"]
+                    ):
+                        raise loop.LoopError("RECOVERY_STOPPED")
+
+        return reads.Reader(guard=guard).command(argv)
 
     def _checkpoint(self, phase: str | None = None) -> dict[str, Any]:
         saved = self.store.load()
