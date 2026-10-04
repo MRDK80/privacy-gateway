@@ -181,3 +181,33 @@ it cannot merge/close tasks or invoke whole-epic continuation. Follow-on runtime
 deployment/transition requires a separately reviewed state procedure; do not
 clear the recovery marker to bypass the guard. No live #131 resumption is
 authorized by this implementation or by the synthetic tests.
+
+## Bounded task-runtime GitHub reads (ADR-290)
+
+The concrete one-task runtime retries individual issue/ref/check and GitHub
+reconciliation read commands only for positively classified transient transport
+failures. See [ADR-290](ADR-290-bounded-github-read-retries.md) for the exact
+schedule: at most eleven attempts with 58 minutes of scheduled waiting,
+excluding request durations. Writes, executor/controller runs, local Git and
+network `git ls-remote` retain their existing behavior; standalone discovery,
+session/final factories and unsupported adapters do not opt into this runner.
+An attempt means one complete read command, including its existing pagination;
+this is not a bound on individual HTTP page requests inside GitHub CLI.
+
+The existing outer adapter timeout remains authoritative. A deadline shorter
+than the sequence stops it early. Even one exhausted read can take up to
+80 minutes with eleven 120-second requests; a phase with several reads needs
+its own bounded deadline. Do not extend mandate/recovery expiry to fit retries.
+Local authority, identity, recovery generation and pinned approval checks run
+during waiting and before another read. Later writes still need fresh guards.
+Success cannot clear a stopped recovery state or grant write authority.
+
+Interrupt the running process to cancel an active wait; the existing namespace
+adapter terminates its child process tree on timeout. For owner stop during
+recovery, cancel the running process first, then use the existing locked
+`Control.stop()` procedure above: recovery holds that lock across bootstrap,
+so a second operator must not bypass the lock to edit state. A stop already
+recorded or a revocation prevents further retries. Valid runtime error envelopes
+preserve their sanitized original machine code; malformed envelopes remain
+invalid. This code is not installed or activated by a task PR, and #131 remains
+stopped until separately reviewed owner deployment/recovery decisions.
