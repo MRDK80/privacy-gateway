@@ -91,7 +91,10 @@ def private_value(path: Path) -> dict[str, Any]:
         info = path.lstat()
         if not stat.S_ISREG(info.st_mode) or (
             os.name != "nt"
-            and (info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077)
+            and (
+                info.st_uid != getattr(os, "getuid", lambda: -1)()
+                or stat.S_IMODE(info.st_mode) & 0o077
+            )
         ):
             raise RecoveryError("RECOVERY_STATE_INVALID")
         value = json.loads(path.read_text(encoding="utf-8"))
