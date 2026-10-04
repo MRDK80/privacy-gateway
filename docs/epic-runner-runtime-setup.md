@@ -135,3 +135,49 @@ its real PR and identity; it cannot turn an existing task into a new bootstrap.
 Bootstrap checkpoint `2.0` belongs to the legacy one-task profile. Whole-epic
 bootstrap `3.0` must come from the approved planner and pinned policy contract.
 Local tests do not establish production readiness, GitHub CI or real demo success.
+
+## Explicit partial-bootstrap recovery (ADR-284)
+
+This is a separately approved one-task recovery profile, not automatic resume
+of an old stopped epic. Keep the original state available and unchanged.
+Review/install the corrective policy first and obtain a new mandate pinned to
+it. An old review receipt cannot be relabelled with the new policy SHA: any
+explicit import requires fresh trusted review of the preserved exact snapshot
+under the new policy. There is no automatic pending-checkpoint migration.
+
+Only after owner review of the exact private recovery candidate, use
+`runtime-task.json` version `2.0`: retain all `1.0` fields and add exactly
+`approved_recovery_digest`, either null (no write approval) or the separately
+approved canonical SHA-256 digest of `bootstrap-recovery-approval.json`.
+Approval version `1.0` has exactly the fields listed in ADR-284, enforced by
+the installed recovery module. These private state contracts are not model
+output schemas in `docs/schemas`.
+Use `agent_epic_recovery.checkpoint_digest` on the original checkpoint and
+`artifact_digest` on the existing trusted artifact. The first digest excludes
+only status/pending phase; the second excludes only final delivery identity.
+Bind the actual mandate digest, policy SHA, owner, current stop generation,
+issue identity, issued/expiry times and budgets keyed by the three exact
+bootstrap operation IDs. IDs use the existing canonical BootstrapTask
+identity algorithm. Budgets are integers 1–3; already confirmed operations
+consume no attempt. Computing these values does not approve them.
+
+Runtime owns `bootstrap-recovery.json` version `1.0` and its separate lock.
+Absent state starts stopped at generation zero. Never reset this file, delete
+attempts or edit ledger receipts. To stop explicitly, the owner/operator holds
+`Control.lock()` and calls `Control.stop()`; an active write's final guards
+still refresh this stop state. UNKNOWN or unfinished reservation advances the
+stop generation and invalidates the old approval. A successful read-only
+probe cannot reopen it. A new owner approval must bind the resulting exact
+generation and evidence; neither a model nor a checkpoint can supply it.
+
+Use the installed one-task supervisor and existing owner-only namespace
+adapter. Recovery refuses missing reviewed artifacts, stale local snapshot,
+noncanonical receipts, duplicate PRs, changed authority and exhausted budgets.
+It preserves commit/push/PR receipts and resumes only proven absent operations.
+Canonical reconciliation can confirm a complete PR binding after artifact-save
+interruption, but a partial phase is never returned as whole-phase NOT_APPLIED.
+After RUN_TASK completes, this profile returns for owner review before PR_CI;
+it cannot merge/close tasks or invoke whole-epic continuation. Follow-on runtime
+deployment/transition requires a separately reviewed state procedure; do not
+clear the recovery marker to bypass the guard. No live #131 resumption is
+authorized by this implementation or by the synthetic tests.
