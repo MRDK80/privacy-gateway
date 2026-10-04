@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -83,8 +83,11 @@ class Ledger:
         directory: Path,
         repository_root: Path,
         recovery: BootstrapRecovery | None = None,
+        *,
+        read: Callable[[Sequence[str]], str] | None = None,
     ) -> None:
         self.recovery = recovery
+        self.read = read
         self.directory = directory.resolve()
         root = repository_root.resolve()
         self.repository_root = root
@@ -338,7 +341,7 @@ def _binding_code(request: Request, ledger: Ledger) -> str | None:
             epic=request.epic,
             roadmap_ref=request.base_ref,
             policy_sha=cast(str, request.policy_sha),
-            branches=branch.GitHubCLI().branches,
+            branches=branch.GitHubCLI(read=ledger.read).branches,
             merge_sha=request.merge_sha,
         )
     except binding.BindingError as error:

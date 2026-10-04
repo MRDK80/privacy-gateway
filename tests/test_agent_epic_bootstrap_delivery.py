@@ -1,6 +1,9 @@
 """Bootstrap sequence with real isolated Git objects and fake remote transport."""
 
+import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tools import agent_coordinator_branch as branch
@@ -17,10 +20,15 @@ from tests.test_agent_epic_snapshot import git, setup
 from tests.test_agent_epic_workflow import NeverAdapter
 
 
+@pytest.mark.parametrize("binding_retry", [False, True])
 @pytest.mark.parametrize("pinned", [False, True])
 @pytest.mark.parametrize("strict_subset", [False, True])
 def test_real_exact_commit_precedes_push_and_pr_without_live_network(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned: bool, strict_subset: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pinned: bool,
+    strict_subset: bool,
+    binding_retry: bool,
 ) -> None:
     root = tmp_path / "repo"
     request, gate, review = setup(root)
@@ -36,11 +44,12 @@ def test_real_exact_commit_precedes_push_and_pr_without_live_network(
         initial.update(schema_version="3.0", policy_sha=request.base_sha)
         review.update(schema_version="2.0", policy_sha=request.base_sha)
         git(root, "remote", "add", "origin", "https://github.com/OWNER/repository.git")
-        monkeypatch.setattr(
-            branch.GitHubCLI,
-            "branches",
-            lambda _self, _repo: {request.base_ref: request.base_sha},
-        )
+        if not binding_retry:
+            monkeypatch.setattr(
+                branch.GitHubCLI,
+                "branches",
+                lambda _self, _repo: {request.base_ref: request.base_sha},
+            )
     store = loop.CheckpointStore(tmp_path / "state", root)
     store.save(initial)
     mandate = _mandate()
@@ -102,6 +111,63 @@ def test_real_exact_commit_precedes_push_and_pr_without_live_network(
     monkeypatch.setattr(engine.github, "ref_sha", lambda repo, ref: request.base_sha)
     engine.issues = Issues()
     monkeypatch.setattr(bootstrap, "_repository_identity", lambda _: request.repository)
+    starts: list[float] = []
+    sleeps: list[float] = []
+    if binding_retry and pinned:
+        from tools import agent_github_read as reads
+
+        # Legacy client cannot escape to live GitHub in this offline regression.
+        monkeypatch.setattr(
+            branch,
+            "_run",
+            lambda *_: branch.CommandResult(
+                1, "", 'Get "https://example.invalid": net/http: TLS handshake timeout'
+            ),
+        )
+        reader_type = reads.Reader
+        now = 0.0
+
+        def sleep(seconds: float) -> None:
+            nonlocal now
+            sleeps.append(seconds)
+            now += seconds
+
+        def run(argv: list[str], **kwargs: Any) -> Any:
+            nonlocal now
+            assert argv == [
+                "gh",
+                "api",
+                "--paginate",
+                "--slurp",
+                "repos/OWNER/repository/branches?per_page=100",
+            ]
+            assert kwargs["timeout"] == 120
+            starts.append(now)
+            now += 7
+            if len(starts) == 1:
+                return subprocess.CompletedProcess(
+                    argv,
+                    1,
+                    "",
+                    'Get "https://example.invalid": net/http: TLS handshake timeout',
+                )
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                json.dumps(
+                    [[{"name": request.base_ref, "commit": {"sha": request.base_sha}}]]
+                ),
+                "",
+            )
+
+        monkeypatch.setattr(
+            reads,
+            "Reader",
+            lambda *, guard: reader_type(
+                run=run, monotonic=lambda: now, sleep=sleep, guard=guard
+            ),
+        )
+
     calls: list[str] = []
     snapshot = gate["snapshot"]
     assert isinstance(snapshot, dict)
@@ -120,6 +186,10 @@ def test_real_exact_commit_precedes_push_and_pr_without_live_network(
     result = bootstrap.BootstrapTask(engine, reviewed, authority)()
     assert result["phase"] == "RUN_TASK"
     assert calls == ["push_task", "create_task_pr"]
+    if binding_retry and pinned:
+        assert starts[:2] == [0, 67] and sum(sleeps) == 60
+        # Three preflight reads and two fresh binding reads per write.
+        assert len(starts) == 10
     bound = result["delivery_identity"]
     assert isinstance(bound, dict) and bound["pr"] == 278
     assert bound["head_sha"] == snapshot["snapshot_commit"]
