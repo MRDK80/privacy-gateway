@@ -10,7 +10,10 @@ import tempfile
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from tools.agent_epic_recovery import BootstrapRecovery
 
 from tools import agent_coordinator_branch as branch
 from tools import agent_epic_policy_binding as binding
@@ -75,7 +78,13 @@ Reconcile = Callable[[Request], tuple[str, Mapping[str, object] | None]]
 class Ledger:
     """Private atomic intent/receipt ledger, forbidden inside the repository."""
 
-    def __init__(self, directory: Path, repository_root: Path) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        repository_root: Path,
+        recovery: BootstrapRecovery | None = None,
+    ) -> None:
+        self.recovery = recovery
         self.directory = directory.resolve()
         root = repository_root.resolve()
         self.repository_root = root
@@ -350,6 +359,11 @@ def deliver(
     reconcile: Reconcile | None = None,
 ) -> Result:
     """Apply one exact side effect after authority and live-state revalidation."""
+    from tools import agent_epic_recovery as recovery
+
+    guard = ledger.recovery
+    if recovery.present(ledger.directory) and guard is None:
+        return _blocked("RECOVERY_PROFILE_REQUIRED")
     if not _valid_request(request):
         return _blocked("REQUEST_INVALID")
     authority = _authorized(request, mandate, approved_mandate_digest, mandate_context)
@@ -375,11 +389,18 @@ def deliver(
             return _blocked("OPERATION_ID_COLLISION")
         receipt = previous.get("receipt")
         if previous.get("status") == "APPLIED":
+            if guard is not None and not guard.verify_receipt(
+                request, cast(dict[str, object] | None, receipt)
+            ):
+                guard.stop()
+                return _blocked("RECOVERY_RECEIPT_CONFLICT")
             return Result("NO_OP", "ALREADY_APPLIED", cast(dict[str, object], receipt))
         if previous.get("status") in {"INTENT", "UNKNOWN"}:
             if reconcile is None:
                 return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
-            state, reconciled_receipt = reconcile(request)
+            state, reconciled_receipt = (
+                guard.reconcile(request) if guard is not None else reconcile(request)
+            )
             if state == "APPLIED" and reconciled_receipt is not None:
                 entries[request.operation_id] = _entry(
                     request, "APPLIED", reconciled_receipt
@@ -398,24 +419,38 @@ def deliver(
         return _blocked(authority)
     entries[request.operation_id] = _entry(request, "INTENT", None)
     try:
+        if guard is not None:
+            guard.before_effect(request)
         ledger.save(entries)
         receipt = dict(effect(request))
     except PermissionDenied:
+        if guard is not None:
+            guard.stop("permission")
         entries[request.operation_id] = _entry(request, "FAILED", None)
         ledger.save(entries)
         return _blocked("GITHUB_PERMISSION_DENIED")
-    except OutcomeUnknown:
+    except OutcomeUnknown as error:
+        if guard is not None:
+            guard.stop(recovery.diagnostic(error))
         entries[request.operation_id] = _entry(request, "UNKNOWN", None)
         ledger.save(entries)
         return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
     except Exception:
+        if guard is not None:
+            guard.stop()
         entries[request.operation_id] = _entry(request, "UNKNOWN", None)
         ledger.save(entries)
         return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
-    if not receipt:
+    if not receipt or (
+        guard is not None and not guard.verify_receipt(request, receipt)
+    ):
+        if guard is not None:
+            guard.stop("invalid_adapter_response")
         entries[request.operation_id] = _entry(request, "UNKNOWN", None)
         ledger.save(entries)
         return Result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", None)
     entries[request.operation_id] = _entry(request, "APPLIED", receipt)
     ledger.save(entries)
+    if guard is not None:
+        guard.complete(request)
     return Result("APPLIED", "OK", receipt)

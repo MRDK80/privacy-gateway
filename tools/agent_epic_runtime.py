@@ -47,6 +47,7 @@ class TaskPhaseRuntime:
         self.bootstrap = bootstrap
         self.demo_completion = demo_completion
         self.continuation_enabled = False
+        self.recovery: Any = None
         self.github: assessment.GitHubClient = assessment.GhClient()
         self.issues: queue.GitHubClient = queue.GhClient()
         self.transport = GhTaskTransport(
@@ -290,6 +291,8 @@ class TaskPhaseRuntime:
             self._assess("post-merge" if post else "pr")
             if post:
                 self._demo(require_completion=True)
+        if self.recovery is not None and not self.recovery.refresh(request):
+            raise delivery.OutcomeUnknown
         mandate, approved, context = self.authority()
         if delivery._authorized(request, mandate, approved, context) is not None:
             raise delivery.OutcomeUnknown
@@ -347,6 +350,14 @@ class TaskPhaseRuntime:
         return result
 
     def effect(self, phase: str) -> Mapping[str, object]:
+        from tools import agent_epic_recovery as recovery
+
+        if recovery.present(self.store.directory):
+            if self.recovery is None:
+                raise loop.PhaseBlocked("RECOVERY_PROFILE_REQUIRED")
+            if phase != "RUN_TASK":
+                self.recovery.control.check_entry()
+                raise loop.PhaseBlocked("RECOVERY_COMPLETE_REVIEW_REQUIRED")
         self._checkpoint(phase)
         if phase == "RUN_TASK":
             if self.bootstrap is None:
@@ -415,6 +426,8 @@ class TaskPhaseRuntime:
                     return "UNKNOWN", None
             return "APPLIED", {"phase": phase}
         if phase == "RUN_TASK":
+            if self.recovery is not None and self.bootstrap is not None:
+                return self.bootstrap.reconcile()  # type: ignore[attr-defined,no-any-return]
             bound = self.artifacts().get("delivery_identity")
             if isinstance(bound, Mapping):
                 return "APPLIED", {"phase": phase, "delivery_identity": dict(bound)}

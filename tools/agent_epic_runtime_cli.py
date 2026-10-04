@@ -266,8 +266,23 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
 def build_runtime(state: Path, root: Path) -> Any:
     state = secure_directory(state, root)
     config = private_json(state / "runtime-task.json")
-    if set(config) != CONFIG_KEYS or config["schema_version"] != "1.0":
+    recovery_profile = config.get("schema_version") == "2.0"
+    if set(config) != CONFIG_KEYS | (
+        {"approved_recovery_digest"} if recovery_profile else set()
+    ) or config["schema_version"] not in {"1.0", "2.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    if (
+        recovery_profile
+        and config["approved_recovery_digest"] is not None
+        and (
+            not isinstance(config["approved_recovery_digest"], str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", config["approved_recovery_digest"])
+            is None
+        )
+    ):
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    if not recovery_profile and (state / "bootstrap-recovery.json").exists():
+        raise DeploymentError("RECOVERY_PROFILE_REQUIRED")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=False)
     policy = Path(config["policy_root"])
@@ -345,11 +360,26 @@ def build_runtime(state: Path, root: Path) -> Any:
         approved_order=tuple(config["approved_order"]),
     )
     engine.bootstrap = BootstrapTask(engine, reviewed, authority)
+    if recovery_profile:
+        from tools.agent_epic_recovery import BootstrapRecovery
+
+        def approved_recovery() -> str | None:
+            fresh = private_json(state / "runtime-task.json")
+            if fresh != config:
+                raise DeploymentError("RECOVERY_APPROVAL_CHANGED")
+            return config["approved_recovery_digest"]  # type: ignore[no-any-return]
+
+        engine.recovery = BootstrapRecovery(state, root, authority, approved_recovery)
     return engine
 
 
 def build_session(state: Path, root: Path) -> Any:
     state = secure_directory(state, root)
+    if (state / "bootstrap-recovery.json").exists() or (
+        (state / "runtime-task.json").exists()
+        and private_json(state / "runtime-task.json").get("schema_version") == "2.0"
+    ):
+        raise DeploymentError("RECOVERY_ONE_TASK_REQUIRED")
     config = private_json(state / "epic-runtime.json")
     if set(config) != EPIC_CONFIG_KEYS or config.get("schema_version") != "1.0":
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
