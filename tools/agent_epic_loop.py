@@ -138,6 +138,7 @@ class CommandRuntimeAdapter:
         timeout_seconds: int,
         output_limit: int,
         epic_command: tuple[str, ...] | None = None,
+        state_directory: Path | None = None,
     ) -> None:
         self.root = root.resolve()
         self.live_command = live_command
@@ -146,6 +147,7 @@ class CommandRuntimeAdapter:
         self.timeout_seconds = timeout_seconds
         self.output_limit = output_limit
         self.epic_command = epic_command
+        self.state_directory = state_directory
         self._merge_sha: str | None = None
 
     @staticmethod
@@ -318,6 +320,7 @@ class CommandRuntimeAdapter:
         }
         return cls(
             root=root,
+            state_directory=state,
             live_command=live_command,
             phase_commands=phase_commands,
             reconcile_commands=reconcile_commands,
@@ -331,6 +334,10 @@ class CommandRuntimeAdapter:
         )
 
     def resume_epic(self) -> Mapping[str, Any]:
+        from tools import agent_epic_recovery as recovery
+
+        if self.state_directory is not None and recovery.present(self.state_directory):
+            raise LoopError("RECOVERY_ONE_TASK_REQUIRED")
         if self.epic_command is None:
             raise LoopError("EPIC_ADAPTER_REQUIRED")
         value = self._run(self.epic_command)
@@ -477,6 +484,30 @@ class CommandRuntimeAdapter:
         return {key: value[key] for key in LIVE_KEYS}
 
     def effect(self, phase: str) -> Mapping[str, object]:
+        from tools import agent_epic_recovery as recovery
+
+        directory = self.state_directory
+        guarded = directory is not None and recovery.present(directory)
+        if guarded:
+            assert directory is not None
+            recovery.command_entry(directory, self.root)
+        try:
+            return self._effect(phase)
+        except Exception as error:
+            if guarded:
+                assert directory is not None
+                control = recovery.Control(directory, self.root)
+                with control.lock():
+                    category = (
+                        "invalid_adapter_response"
+                        if getattr(error, "machine_code", None)
+                        == "RUNTIME_ADAPTER_INVALID"
+                        else recovery.diagnostic(error)
+                    )
+                    control.stop(category)
+            raise
+
+    def _effect(self, phase: str) -> Mapping[str, object]:
         value = self._run(self.phase_commands[phase])
         if set(value) != {"status", "machine_code", "receipt"}:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
@@ -893,7 +924,14 @@ def advance(
         wanted = validate_checkpoint(expected)
         facts = _exact(live, LIVE_KEYS, "LIVE_IDENTITY_CHANGED")
         with RunnerLock(store.directory):
+            from tools import agent_epic_recovery as recovery
+
+            guarded = recovery.present(store.directory)
             saved = store.load()
+            if guarded and saved is not None and saved["status"] == "PAUSED_RATE_LIMIT":
+                return _result("PAUSED_RATE_LIMIT", "RATE_LIMIT_PAUSED", saved, store)
+            if guarded:
+                recovery.Control(store.directory, store.repository_root).check_entry()
             if saved is None:
                 saved = wanted
                 store.save(saved)
@@ -936,6 +974,8 @@ def advance(
                 if any(facts[key] != saved[key] for key in IDENTITY_KEYS):
                     raise LoopError("LIVE_IDENTITY_CHANGED")
 
+            if guarded:
+                raise LoopError("RECOVERY_SUPERVISOR_REQUIRED")
             pending = dict(saved)
             pending["pending_phase"] = target_phase
             pending["status"] = "RUNNING"
@@ -994,10 +1034,40 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
     saved = store.load()
     if saved is None:
         raise LoopError("CHECKPOINT_NOT_FOUND")
-    if saved["phase"] == PHASES[-1]:
-        return _result("TASK_DONE", "ALREADY_COMPLETED", saved, store)
     if saved["status"] == "PAUSED_RATE_LIMIT":
         return _result("PAUSED_RATE_LIMIT", "RATE_LIMIT_PAUSED", saved, store)
+    from tools import agent_epic_recovery as recovery
+
+    if recovery.present(store.directory):
+        if saved["phase"] != "PLAN" or saved["pending_phase"] != "RUN_TASK":
+            return _result("BLOCKED", "RECOVERY_COMPLETE_REVIEW_REQUIRED", saved, store)
+        try:
+            recovery.command_entry(store.directory, store.repository_root)
+            receipt = adapter.effect("RUN_TASK")
+            live = adapter.live()
+            recovery_result = advance(
+                saved,
+                live=live,
+                store=store,
+                target_phase="RUN_TASK",
+                effect=lambda: receipt,
+                reconcile=lambda _: ("APPLIED", receipt),
+                binding_live=adapter.live,
+            )
+            if recovery_result.status not in {"CONTINUE", "NO_OP"}:
+                control = recovery.Control(store.directory, store.repository_root)
+                with control.lock():
+                    control.stop("invalid_adapter_response")
+            return recovery_result
+        except (LoopError, PhaseBlocked) as error:
+            control = recovery.Control(store.directory, store.repository_root)
+            with control.lock():
+                control.stop()
+            failed = dict(saved) | {"status": "ESCALATE"}
+            store.save(failed)
+            return _result("ESCALATE", error.machine_code, failed, store)
+    if saved["phase"] == PHASES[-1]:
+        return _result("TASK_DONE", "ALREADY_COMPLETED", saved, store)
     result: AdvanceResult | None = None
     for _ in PHASES[1:]:
         saved = store.load()
