@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any, Protocol, cast
 
@@ -21,32 +21,48 @@ class GitHubClient(Protocol):
 class GhClient:
     """Minimal read-only adapter for structural issue facts."""
 
-    def __init__(self, *, run: Any = subprocess.run) -> None:
+    def __init__(
+        self,
+        *,
+        run: Any = subprocess.run,
+        read: Callable[[Sequence[str]], str] | None = None,
+    ) -> None:
         self._run = run
+        self._read = read
 
     def issue(self, repository: str, number: int) -> dict[str, Any]:
+        command = [
+            "gh",
+            "issue",
+            "view",
+            str(number),
+            "--repo",
+            repository,
+            "--json",
+            "number,title,state,url,parent,subIssues,blockedBy",
+        ]
+        if self._read is not None:
+            from tools.agent_github_read import ReadFailure
+
+            try:
+                output = self._read(command)
+            except ReadFailure as error:
+                raise GitHubError from error
+        else:
+            try:
+                completed = self._run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except OSError as error:
+                raise GitHubError from error
+            if completed.returncode != 0:
+                raise GitHubError
+            output = completed.stdout
         try:
-            completed = self._run(
-                [
-                    "gh",
-                    "issue",
-                    "view",
-                    str(number),
-                    "--repo",
-                    repository,
-                    "--json",
-                    "number,title,state,url,parent,subIssues,blockedBy",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-        except OSError as error:
-            raise GitHubError from error
-        if completed.returncode != 0:
-            raise GitHubError
-        try:
-            value = json.loads(completed.stdout)
+            value = json.loads(output)
         except (TypeError, ValueError) as error:
             raise GitHubError from error
         if not isinstance(value, dict):
