@@ -7,7 +7,7 @@ import argparse
 import json
 import re
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -60,8 +60,17 @@ class GitHubClient(Protocol):
 
 
 class GhClient:
-    @staticmethod
-    def _json(command: Sequence[str]) -> Any:
+    def __init__(self, *, read: Callable[[Sequence[str]], str] | None = None) -> None:
+        self._read = read
+
+    def _json(self, command: Sequence[str]) -> Any:
+        if self._read is not None:
+            from tools.agent_github_read import ReadFailure
+
+            try:
+                return json.loads(self._read(command))
+            except (ReadFailure, ValueError) as error:
+                raise GitHubError from error
         try:
             run = subprocess.run(
                 list(command), capture_output=True, text=True, check=False

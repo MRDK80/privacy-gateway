@@ -450,8 +450,26 @@ class CommandRuntimeAdapter:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         return cast(Mapping[str, Any], value)
 
+    @staticmethod
+    def _error_envelope(value: Mapping[str, Any]) -> None:
+        if set(value) != {"status", "machine_code", "receipt"}:
+            return
+        code = value["machine_code"]
+        if (
+            not isinstance(value["status"], str)
+            or value["status"] not in {"BLOCKED", "ESCALATE"}
+            or value["receipt"] is not None
+            or not isinstance(code, str)
+            or MACHINE_CODE_RE.fullmatch(code) is None
+        ):
+            raise LoopError("RUNTIME_ADAPTER_INVALID")
+        if value["status"] == "BLOCKED":
+            raise PhaseBlocked(code)
+        raise LoopError(code)
+
     def live(self) -> Mapping[str, Any]:
         value = self._run(self.live_command)
+        self._error_envelope(value)
         allowed = LIVE_KEYS | {"merge_sha"}
         if not set(value).issubset(allowed) or not LIVE_KEYS.issubset(value):
             raise LoopError("RUNTIME_ADAPTER_INVALID")
@@ -509,6 +527,8 @@ class CommandRuntimeAdapter:
 
     def _effect(self, phase: str) -> Mapping[str, object]:
         value = self._run(self.phase_commands[phase])
+        if value.get("status") != "APPLIED":
+            self._error_envelope(value)
         if set(value) != {"status", "machine_code", "receipt"}:
             raise LoopError("RUNTIME_ADAPTER_INVALID")
         code = value["machine_code"]
@@ -901,6 +921,8 @@ def _delivery_binding(
         facts = _exact(fresh_live(), LIVE_KEYS, "LIVE_IDENTITY_CHANGED")
     except LoopError:
         raise
+    except PhaseBlocked as error:
+        raise LoopError(error.machine_code) from None
     except Exception as error:
         raise LoopError("BINDING_REVALIDATION_FAILED") from error
     if any(facts[key] != binding[key] for key in IDENTITY_KEYS):
@@ -1086,6 +1108,8 @@ def resume(*, store: CheckpointStore, adapter: RuntimeAdapter) -> AdvanceResult:
                 return _result("ESCALATE", "ESCALATE_UNKNOWN_OUTCOME", saved, store)
         try:
             live = adapter.live()
+        except PhaseBlocked as error:
+            return _result("BLOCKED", error.machine_code, saved, store)
         except LoopError as error:
             return _result("ESCALATE", error.machine_code, saved, store)
         merge_sha = adapter.merge_sha() if target == "POST_MERGE" else None
