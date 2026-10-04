@@ -105,7 +105,10 @@ class TaskPhaseRuntime:
                 != saved["repository"]
             ):
                 raise loop.LoopError("LIVE_IDENTITY_CHANGED")
-            if recovery.present(self.store.directory):
+            present = recovery.present(self.store.directory)
+            if present != (generation is not None):
+                raise loop.LoopError("RECOVERY_STOPPED")
+            if present:
                 state = control.load()
                 if (
                     generation is None
@@ -113,25 +116,26 @@ class TaskPhaseRuntime:
                     or (state["stopped"] and state["generation"] > 0)
                 ):
                     raise loop.LoopError("RECOVERY_STOPPED")
-                if self.recovery is not None:
-                    pinned = self.recovery.approved()
-                    if pinned != recovery_digest:
+            if self.recovery is not None:
+                pinned = self.recovery.approved()
+                if pinned != recovery_digest:
+                    raise loop.LoopError("RECOVERY_STOPPED")
+                if pinned is not None:
+                    approval = recovery.private_value(
+                        self.store.directory / "bootstrap-recovery-approval.json"
+                    )
+                    if (
+                        set(approval) != recovery.APPROVAL_KEYS
+                        or recovery.digest(approval) != pinned
+                        or approval["generation"]
+                        != (generation if generation is not None else 0)
+                        or type(approval["issued_at"]) is not int
+                        or type(approval["expires_at"]) is not int
+                        or not approval["issued_at"]
+                        <= context.now
+                        < approval["expires_at"]
+                    ):
                         raise loop.LoopError("RECOVERY_STOPPED")
-                    if pinned is not None:
-                        approval = recovery.private_value(
-                            self.store.directory / "bootstrap-recovery-approval.json"
-                        )
-                        if (
-                            set(approval) != recovery.APPROVAL_KEYS
-                            or recovery.digest(approval) != pinned
-                            or approval["generation"] != generation
-                            or type(approval["issued_at"]) is not int
-                            or type(approval["expires_at"]) is not int
-                            or not approval["issued_at"]
-                            <= context.now
-                            < approval["expires_at"]
-                        ):
-                            raise loop.LoopError("RECOVERY_STOPPED")
 
         return reads.Reader(guard=guard).command(argv)
 

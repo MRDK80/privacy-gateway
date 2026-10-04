@@ -534,3 +534,54 @@ def test_delay_is_measured_from_completion_before_diagnostic_validation(
     monkeypatch.setattr(read, "_category", diagnostic)
     assert runner(clock, [TRANSIENT, (0, "{}", "")], starts).command(COMMAND) == "{}"
     assert starts == [0, 67]
+
+
+@pytest.mark.parametrize("change", ["state_missing", "approval_without_state"])
+def test_missing_recovery_state_does_not_bypass_retry_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from tools import agent_epic_delivery as delivery
+    from tools import agent_epic_recovery as recovery
+    from tools import agent_github_read as read
+
+    from tests.test_agent_epic_recovery import approved_control
+    from tests.test_agent_epic_runtime import build
+
+    engine, _ = build(tmp_path, monkeypatch, "RUN_TASK")
+    control, approval, _ = approved_control(tmp_path)
+    approval["expires_at"] = 212
+    pinned = recovery.digest(approval)
+    path = control.directory / "bootstrap-recovery-approval.json"
+    path.write_text(json.dumps(approval), encoding="utf-8")
+    path.chmod(0o600)
+    engine.recovery = SimpleNamespace(approved=lambda: pinned)
+    if change == "approval_without_state":
+        control.path.unlink()
+    clock = Clock()
+    starts: list[float] = []
+    mandate, digest, _ = engine.authority()
+    engine.authority = lambda: (
+        mandate,
+        digest,
+        delivery.MandateContext(200 + int(clock.now), "OWNER", 150, 0, 0),
+    )
+
+    def sleep(seconds: float) -> None:
+        clock.sleep(seconds)
+        if clock.now == 12 and change == "state_missing":
+            control.path.unlink()
+
+    item = runner(clock, [TRANSIENT, (0, "{}", "")], starts)
+    item.sleep = sleep
+
+    def factory(*, guard: Any) -> Any:
+        item.guard = guard
+        return item
+
+    monkeypatch.setattr(read, "Reader", factory)
+    with pytest.raises(loop.LoopError, match="RECOVERY_STOPPED"):
+        engine._github_read(COMMAND)
+    assert len(starts) == 1 and sum(clock.sleeps) == 5
