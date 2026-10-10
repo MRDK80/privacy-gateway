@@ -229,3 +229,16 @@ def test_keep_artifacts_preserves_workspace(
     gateway.discard(prepared.context)
 
     assert list(tmp_path.iterdir()) != []
+
+
+def test_prepare_accepts_tokens_joined_by_punctuation(
+    tmp_path: Path, mock_keyring: bytes,
+) -> None:
+    prepared = _gateway(tmp_path).prepare(
+        "(user@example.com)/(other@example.org)"
+    )
+
+    assert prepared.text in {
+        "([EMAIL_1])/([EMAIL_2])", "([EMAIL_2])/([EMAIL_1])",
+    }
+    assert prepared.token_count == 2
