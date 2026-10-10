@@ -168,7 +168,9 @@ class BootstrapTask:
                 proof = delivery._binding_code(
                     probe,
                     delivery.Ledger(
-                        self.runtime.store.directory, self.runtime.store.repository_root
+                        self.runtime.store.directory,
+                        self.runtime.store.repository_root,
+                        read=self.runtime._github_read,
                     ),
                 )
                 if proof is not None:
@@ -189,6 +191,7 @@ class BootstrapTask:
             self.runtime.store.directory,
             self.runtime.store.repository_root,
             recovery=guard,
+            read=self.runtime._github_read,
         )
 
         def request(operation: str) -> delivery.Request:

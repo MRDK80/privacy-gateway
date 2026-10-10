@@ -69,3 +69,15 @@ reconciliation and bounded operation recovery rules in ADR-249/ADR-284 remain.
 Original and replay #131 artifacts, mandates, checkpoints and ledgers remain
 unchanged. Installation, new mandate/recovery approval and #131 restart require
 separate owner decisions.
+
+## Delivery binding read wiring (#307)
+
+Pinned bootstrap preflight and both delivery policy-binding checks use the
+concrete task runtime's guarded read dependency for the paginated branches
+GET. The branches client and delivery ledger accept that dependency explicitly;
+standalone callers retain their previous default transport. Binding reads use
+the same Reader schedule, timeout and authority/cancellation guards as the
+other concrete runtime reads. JSON parsing and base/ancestry checks remain
+outside retries, with their existing fail-closed machine codes. Writes are
+not retried and no stop generation, approval expiry or session deadline is
+reset or extended. This wiring does not install policy or resume #131.

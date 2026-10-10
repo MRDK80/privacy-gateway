@@ -340,7 +340,11 @@ class TaskPhaseRuntime:
             mandate=mandate,
             approved_mandate_digest=digest,
             assessment=checked,
-            ledger=delivery.Ledger(self.store.directory, self.store.repository_root),
+            ledger=delivery.Ledger(
+                self.store.directory,
+                self.store.repository_root,
+                read=self._github_read,
+            ),
             mandate_context=context,
             revalidate=revalidate,
             effect=effect,
