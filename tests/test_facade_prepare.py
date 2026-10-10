@@ -22,7 +22,7 @@ from privacy_gateway.exceptions import (
     KeyStoreError,
 )
 from privacy_gateway.facade import GatewayConfig, PrivacyGateway
-from privacy_gateway.keystore import KeyNotFoundError
+from privacy_gateway.keystore import KeyNotFoundError, KeystoreError
 
 SYNTH_EMAIL = "user@example.com"  # pragma: allowlist secret
 SYNTH_IP = "192.0.2.10"
@@ -169,6 +169,30 @@ def test_prepare_without_key_raises_public_error(tmp_path: Path) -> None:
             _gateway(tmp_path).prepare(SYNTH_TEXT)
 
     assert isinstance(exc_info.value.__cause__, KeyNotFoundError)
+
+
+@pytest.mark.parametrize(
+    ("module", "name"),
+    [
+        ("keyrings.alt.file", "PlaintextKeyring"),
+        ("keyring.backends.fail", "Keyring"),
+    ],
+)
+def test_prepare_rejected_backend_raises_public_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, module: str, name: str,
+) -> None:
+    backend = type(name, (), {"__module__": module})()
+    monkeypatch.setattr("keyring.get_keyring", lambda: backend)
+
+    with pytest.raises(KeyStoreError) as exc_info:
+        _gateway(tmp_path).prepare(SYNTH_TEXT)
+
+    assert type(exc_info.value) is KeyStoreError
+    assert type(exc_info.value.__cause__) is KeystoreError
+    assert KeyStoreError.__subclasses__() == []
+    assert SYNTH_EMAIL not in str(exc_info.value)
+    assert SYNTH_IP not in str(exc_info.value)
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_prepare_rejects_invalid_routing_config(
