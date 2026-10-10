@@ -99,6 +99,23 @@ roadmap/<roadmap-issue>-<slug> -> main
 roadmap-ветки; при обновлении `main` сначала обновляется roadmap. Проверяй
 фактические head, base и SHA, а не только имена веток.
 
+## Сопровождение запущенных процессов
+
+- Запуск runner не завершает сопровождение. Сохраняй process/session identity,
+  task/phase, время последнего наблюдения и отдельно доказанного progress.
+- Живой процесс, тишина и checkpoint `RUNNING` не доказывают progress.
+  Наблюдай до проверенного terminal result или конкретной блокировки.
+- Не завершай turn обещанием фонового наблюдения: сначала проверь поддержку,
+  настройку и восстановление wakeup/handoff в текущем клиенте. Промпт сам
+  по себе этого не обеспечивает. Без проверенного перехода оставайся в turn.
+- При `CI_PENDING` проверяй primary read-only CI примерно раз в минуту;
+  продолжай только после exact gates и свежей authority/identity проверки.
+- После потери связи сначала сверяй process/checkpoint/ledger/pending effects
+  read-only. Не запускай второй runner и не повторяй writes из-за тишины.
+  Stop, expiry/revocation и UNKNOWN сохраняют приоритет.
+- Проверяемый протокол, ограничения клиента, сценарии и handover описаны в
+  [runbook supervision](docs/epic-runner-supervision.md) и `CONTRIBUTING.md`.
+
 ## Запрещённые автоматические действия
 
 Без явного подтверждения владельца не выполняй merge и не закрывай issues.
