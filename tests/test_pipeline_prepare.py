@@ -6,9 +6,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from privacy_gateway.crypto import generate_key
 from privacy_gateway.models import ProcessingStatus
 
 # Синтетические тестовые данные (не реальные)
@@ -26,10 +23,6 @@ SYNTH_TEXT = (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-@pytest.fixture()
-def fernet_key() -> bytes:
-    return generate_key()
 
 
 def _run_prepare(

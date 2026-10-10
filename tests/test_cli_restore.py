@@ -11,14 +11,13 @@
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from privacy_gateway.crypto import generate_key
+from tests.conftest import run_cli
 
 # ---------------------------------------------------------------------------
 # Синтетические тестовые данные (не реальные PII)
@@ -33,11 +32,6 @@ SYNTH_TEXT = f"Связь: {SYNTH_EMAIL}, {SYNTH_IP}, {SYNTH_PHONE}\n"
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def fernet_key() -> bytes:
-    return generate_key()
 
 
 @pytest.fixture()
@@ -64,26 +58,6 @@ def _prepare_artifacts(tmp_path: Path, key: bytes, text: str = SYNTH_TEXT) -> Pa
     )
     assert result.status == ProcessingStatus.OK, f"prepare failed: {result.message}"
     return out_dir
-
-
-def _exit_code(exc: SystemExit) -> int:
-    """Нормализовать SystemExit.code к int; поведение не меняется."""
-    code = exc.code
-    if code is None:
-        return 0
-    if isinstance(code, int):
-        return code
-    return int(code)
-
-
-def _run_cli(*args: str) -> int:
-    """Запустить pgw CLI через sys.argv + main(); вернуть код завершения."""
-    from privacy_gateway.cli import main
-
-    with patch.object(sys, "argv", ["pgw", *args]):
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-    return _exit_code(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +92,7 @@ def test_no_output_on_failure(
             original_prompt + " [EMAIL_99]",
             encoding="utf-8",
         )
-        code = _run_cli(
+        code = run_cli(
             "restore",
             str(llm_reply_path),
             "--route", str(route_path),
@@ -131,7 +105,7 @@ def test_no_output_on_failure(
             (out_dir2 / "manifest.json").read_bytes()
         )
         llm_reply_path = out_dir / "prompt.txt"
-        code = _run_cli(
+        code = run_cli(
             "restore",
             str(llm_reply_path),
             "--route", str(route_path),
@@ -144,7 +118,7 @@ def test_no_output_on_failure(
             "privacy_gateway.restore.get_all_keys",
             side_effect=KeyNotFoundError("no key"),
         ):
-            code = _run_cli(
+            code = run_cli(
                 "restore",
                 str(llm_reply_path),
                 "--route", str(route_path),
@@ -177,7 +151,7 @@ def test_report_does_not_leak_values(
     route_path = out_dir / "route.json"
     result_path = tmp_path / "restored.txt"
 
-    code = _run_cli(
+    code = run_cli(
         "restore",
         str(out_dir / "prompt.txt"),
         "--route", str(route_path),
@@ -218,7 +192,7 @@ def test_cli_restore_success(
     route_path = out_dir / "route.json"
     result_path = tmp_path / "restored.txt"
 
-    code = _run_cli(
+    code = run_cli(
         "restore",
         str(out_dir / "prompt.txt"),
         "--route", str(route_path),
@@ -258,7 +232,7 @@ def test_cli_restore_strict_failure(
         encoding="utf-8",
     )
 
-    code = _run_cli(
+    code = run_cli(
         "restore",
         str(llm_reply_path),
         "--route", str(route_path),
