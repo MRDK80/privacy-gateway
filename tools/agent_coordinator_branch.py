@@ -110,6 +110,9 @@ def _gh_json(arguments: Sequence[str]) -> Any:
 class GitHubCLI:
     """Read-only transport for facts required immediately before branch creation."""
 
+    def __init__(self, *, read: Callable[[Sequence[str]], str] | None = None) -> None:
+        self.read = read
+
     def repository(self, repository: str) -> dict[str, Any]:
         value = _gh_json(
             ("repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef")
@@ -135,14 +138,19 @@ class GitHubCLI:
         return value
 
     def branches(self, repository: str) -> dict[str, str]:
-        values = _gh_json(
-            (
-                "api",
-                "--paginate",
-                "--slurp",
-                f"repos/{repository}/branches?per_page=100",
-            )
+        arguments = (
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{repository}/branches?per_page=100",
         )
+        if self.read is None:
+            values = _gh_json(arguments)
+        else:
+            try:
+                values = json.loads(self.read(("gh", *arguments)))
+            except ValueError as error:
+                raise GitHubError("invalid branches response") from error
         if not isinstance(values, list):
             raise GitHubError("invalid branches response")
         result: dict[str, str] = {}
