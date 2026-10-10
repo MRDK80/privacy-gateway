@@ -3,6 +3,11 @@
 This is a local corrective implementation, not an activated production loop.
 Do not run the old consumer-demo command against the current private state.
 
+Process launch is not operator completion. Follow the
+[supervision runbook](epic-runner-supervision.md) for observation, CI waiting,
+reconnect and verified turn transitions. It grants no runtime authority and
+does not establish background wakeup from a prompt or a running session ID.
+
 ## Trusted installation
 
 First review and integrate the corrective code through the normal task PR

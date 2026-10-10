@@ -269,6 +269,37 @@ post-merge CI нового `main` SHA.
 Executor не получает Git/GitHub write, а controller остаётся независимым
 read-only; разрешённые writes выполняет отдельный trusted delivery driver.
 
+## Сопровождение runner и переходы между turns
+
+Оператор сопровождает каждый запущенный процесс до проверенного terminal
+result или конкретной установленной блокировки. Возвращённый running session
+ID означает необходимость следующего наблюдения, а не завершение работы.
+Process alive и checkpoint `RUNNING` не являются доказательством progress.
+В приватной записи наблюдения отдельно фиксируются process/session identity,
+task/phase, last observation и последнее подтверждённое продвижение с основанием.
+
+Нельзя завершать turn произвольным final с обещанием фонового наблюдения.
+Сначала проверяются доступность и настройка wakeup/handoff в текущем клиенте,
+а затем его фактическое срабатывание и восстановление наблюдения на synthetic
+процессе. Обновлённый prompt, наличие инструмента или живая OS process этого
+не доказывают. Если переход не проверен, используется сопровождение внутри
+активного turn; если оно невозможно, фиксируется конкретная блокировка,
+состояние процесса и действие, требуемое от владельца, без обещания wakeup.
+
+`CI_PENDING` требует primary read-only проверок примерно раз в минуту и свежих
+пяти exact checks для соответствующего SHA. Resume допускается только после
+повторной authority/identity проверки и в уже разрешённом scope. При reconnect
+сначала сверяются процесс, checkpoint, ledger и pending effects; второй runner,
+повтор writes из-за тишины и reset attempts/stop latch/receipts запрещены.
+ADR-290 transport retries учитываются отдельно: deadline и approval не
+продлеваются. Owner stop, expiry/revocation и UNKNOWN имеют приоритет.
+
+После `TASK_DONE` записывается фактическая redacted саморефлексия с provenance,
+ограничениями и критерием применимости; она не меняет trusted policy или
+полномочия. После любой остановки handover содержит точные SHA, раздельные
+local/CI evidence, последнее наблюдение, reconciliation и порядок продолжения.
+Проверяемые сценарии и ограничения: [supervision runbook](docs/epic-runner-supervision.md).
+
 ## Статусы
 
 - `TASK READY FOR REVIEW` — task-изменения применены, локальный gate зелёный,
