@@ -724,3 +724,21 @@ def test_frozen_config4_two_task_supervision_retains_ci_wait_on_restart(
     assert f"TASK:{second}:NEXT_TASK" in stages
     assert "FINAL:FINAL_GATE" in stages
     assert "DISCOVERY" not in stages
+
+
+def test_active_context_survives_nested_entry_and_clears_on_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, state = configured(tmp_path, monkeypatch)
+    budget = scope.Scope.for_root(state, root)
+    assert budget is not None
+    assert budget.active_stage is None
+    with pytest.raises(RuntimeError, match="synthetic"):
+        with budget.context("DISCOVERY"):
+            assert budget.active_stage == "DISCOVERY"
+            with budget.context("DISCOVERY"):
+                assert budget.active_stage == "DISCOVERY"
+            assert budget.active_stage == "DISCOVERY"
+            raise RuntimeError("synthetic")
+    assert budget.active_stage is None

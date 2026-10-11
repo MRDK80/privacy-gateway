@@ -1,6 +1,7 @@
 """Bootstrap regressions: real PR identity can only be bound once."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from tools import agent_epic_loop as loop
@@ -284,3 +285,74 @@ def test_unknown_bootstrap_outcome_never_repeats_effect(tmp_path: Path) -> None:
     )
     assert result.machine_code == "ESCALATE_UNKNOWN_OUTCOME"
     assert store.load() == initial
+
+
+@pytest.mark.parametrize("ledger_present", [False, True])
+def test_quota_controller_boundary_reconciles_only_before_delivery_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ledger_present: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from tools import agent_epic_bootstrap as bootstrap
+
+    root, state = tmp_path / "repo", tmp_path / "state"
+    root.mkdir()
+    state.mkdir()
+    if ledger_present:
+        (state / "delivery-ledger.json").write_text("{}", encoding="utf-8")
+    saved = checkpoint(version="3.0") | {"policy_sha": "c" * 40}
+    reviewed = SimpleNamespace(
+        artifacts=lambda: {},
+        controller_resume_available=lambda: True,
+    )
+    runtime = SimpleNamespace(
+        _checkpoint=lambda phase: saved,
+        store=SimpleNamespace(directory=state, repository_root=root),
+    )
+    monkeypatch.setattr(
+        bootstrap, "_repository_identity", lambda path: saved["repository"]
+    )
+    task = bootstrap.BootstrapTask(
+        cast(Any, runtime),
+        cast(Any, reviewed),
+        cast(Any, lambda: None),
+    )
+    result = task.reconcile()
+    assert (
+        result == ("UNKNOWN", None)
+        if ledger_present
+        else result == ("NOT_APPLIED", None)
+    )
+
+
+def test_positive_quota_pause_does_not_stop_bootstrap_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from tools import agent_epic_bootstrap as bootstrap
+
+    stopped: list[str] = []
+    guard = SimpleNamespace(
+        control=SimpleNamespace(lock=lambda: loop.RunnerLock(tmp_path / "lock")),
+        stop=lambda: stopped.append("stopped"),
+    )
+    runtime = SimpleNamespace(recovery=guard)
+    task = bootstrap.BootstrapTask(cast(Any, runtime), cast(Any, None), cast(Any, None))
+
+    def paused() -> Any:
+        raise loop.QuotaPaused(
+            {
+                "exhausted_windows": ["primary"],
+                "resets_at": None,
+                "next_check_at": 1300,
+            }
+        )
+
+    monkeypatch.setattr(task, "_run", paused)
+    with pytest.raises(loop.QuotaPaused):
+        task()
+    assert stopped == []

@@ -42,7 +42,7 @@ class SessionRuntime:
         self.root = root
         self.config = config
         self.wait_scope = wait_scope
-        if config.get("schema_version") == "4.0" and wait_scope is None:
+        if config.get("schema_version") in {"4.0", "5.0"} and wait_scope is None:
             raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED")
         self.store = loop.CheckpointStore(state, root)
         self.plans = private_json(state / "approved-plans.json")
@@ -146,10 +146,14 @@ class SessionRuntime:
         return mandate, approved, context
 
     def _adapter(self) -> workflow.CommandAdapter:
+        options: dict[str, Any] = {}
+        if self.config.get("schema_version") == "5.0":
+            options = {"quota_state": self.state, "wait_scope": self.wait_scope}
         return codex_role_adapter(
             policy_root=Path(self.config["policy_root"]),
             root=self.root,
             policy_sha=self.identity["policy_sha"],
+            **options,
         )
 
     def _fresh_authority(
@@ -521,7 +525,7 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
-        if self.config.get("schema_version") == "4.0":
+        if self.config.get("schema_version") in {"4.0", "5.0"}:
             with self._stage(f"SUCCESSOR:{previous['task']}:{task}"):
                 self._prepare(previous, task, store, iterations)
             return
@@ -887,7 +891,9 @@ class SessionRuntime:
         handover._git(self.root, "switch", owner["roadmap_ref"])
         return asdict(engine.resume())
 
-    def resume(self) -> dict[str, Any]:
+    def resume(
+        self, *, supervisor_lock: loop.RunnerLock | None = None,
+    ) -> dict[str, Any]:
         return Session(
             store=self.store,
             adapter=self.task_adapter,
@@ -897,4 +903,6 @@ class SessionRuntime:
             final_resume=self.final_resume,
             maximum_tasks=self.maximum,
             initial_iterations=self.config["task_iterations"],
-        ).resume()
+        ).resume(**(
+            {"supervisor_lock": supervisor_lock} if supervisor_lock is not None else {}
+        ))

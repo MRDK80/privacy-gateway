@@ -9,6 +9,7 @@ import platform
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,16 @@ from tools import agent_coordinator_handover as handover
 from tools import agent_epic_loop as loop
 from tools import agent_gate
 from tools import agent_orchestrate as workflow
+from tools.agent_quota_wait import bare_digest
 
 
 def codex_role_adapter(
-    *, policy_root: Path, root: Path, policy_sha: str
+    *,
+    policy_root: Path,
+    root: Path,
+    policy_sha: str,
+    quota_state: Path | None = None,
+    wait_scope: Any = None,
 ) -> workflow.CommandAdapter:
     """Use only an owner-installed policy copy, never task checkout code."""
     if os.name == "nt":
@@ -96,6 +103,123 @@ def codex_role_adapter(
         for role in ("executor", "controller")
     ]
     commands[1] += ("--input-limit", "1000000")
+    if quota_state is not None:
+        from tools import agent_epic_runtime_cli as guards
+        from tools import agent_quota as quota
+        from tools import agent_quota_role as transport
+
+        state = guards.secure_directory(quota_state, root)
+        config = guards.private_json(state / "epic-runtime.json")
+        if config.get("schema_version") != "5.0":
+            raise loop.LoopError("QUOTA_PROFILE_REQUIRED")
+        mandate = guards.private_json(state / "mandate.json")
+        owner_profile = quota.profile(
+            guards.quota_profile_guard(state, config, mandate)
+        )
+        if owner_profile["policy_sha"] != policy_sha:
+            raise loop.LoopError("POLICY_PROVENANCE_MISMATCH")
+
+        def guard() -> None:
+            guards.managed_launch_guard(state, root)
+            fresh_config = guards.private_json(state / "epic-runtime.json")
+            fresh_mandate = guards.private_json(state / "mandate.json")
+            if fresh_config != config or fresh_mandate != mandate:
+                raise loop.LoopError("QUOTA_BINDING_CHANGED")
+            fresh_owner = guards.quota_profile_guard(state, config, mandate)
+            if fresh_owner != owner_profile:
+                raise loop.LoopError("QUOTA_APPROVAL_MISMATCH")
+
+        def on_interruption(event: dict[str, Any]) -> None:
+            from tools import agent_epic_entry as entry
+            from tools import agent_quota_source as source
+            from tools.agent_quota_supervisor import prepare
+            from tools.agent_quota_wait import QuotaWait
+
+            guard()
+            if wait_scope is None:
+                raise transport.Interrupted(event)
+            workflow.StateStore(state / "quota-role-events").save(
+                event["invocation_digest"],
+                event,
+            )
+            cursor_path = state / "session-control" / "cursor.json"
+            cursor = guards.private_json(cursor_path) if cursor_path.exists() else None
+            if cursor is not None and cursor.get("mode") == "FINAL":
+                stage = wait_scope.active_stage
+                if stage is None or not stage.startswith(
+                    ("FINAL:", "RECONCILE:FINAL:")
+                ):
+                    raise transport.Interrupted(event)
+            else:
+                saved = entry._active_store(state, root).load()
+                if saved is None:
+                    raise transport.Interrupted(event)
+                phase = saved["pending_phase"] or saved["phase"]
+                stage = f"TASK:{saved['task']}:{phase}"
+            identity = {
+                "repository": mandate["repository"],
+                "epic": mandate["epic"],
+                "policy_sha": mandate["policy_sha"],
+                "mandate_digest": config["approved_mandate_digest"],
+                "quota_profile_digest": bare_digest(owner_profile),
+                "wait_profile_digest": config["approved_wait_digest"],
+                "runtime_config_digest": guards.launch_config_digest(
+                    config,
+                    guards.private_json(state / "runtime-adapter.json"),
+                ),
+                "limit_id": owner_profile["limit_id"],
+                "source_digest": bare_digest(owner_profile["source"]),
+            }
+            candidate, _service = prepare(state, root, config)
+            try:
+                with wait_scope.context(stage) as reader:
+                    current = QuotaWait(
+                        reader,
+                        owner_profile,
+                        identity,
+                        runtime_deadline=candidate["expires_at"],
+                        now=lambda: int(time.time()),
+                        guard=guard,
+                    )
+                    value = current.poll(
+                        lambda: source.read(
+                            owner_profile["source"],
+                            owner_profile["limit_id"],
+                            guard=guard,
+                        )
+                    )
+            except (quota.QuotaError, loop.LoopError):
+                raise transport.Interrupted(event) from None
+            if value["status"] != "WAITING":
+                raise transport.Interrupted(event)
+            guard()
+            raise loop.QuotaPaused(
+                {
+                    "exhausted_windows": value["exhausted_windows"],
+                    "resets_at": value["resets_at"],
+                    "next_check_at": value["next_check_at"],
+                },
+                interruption=event,
+            )
+
+        guard()
+        for index in range(2):
+            commands[index] += (
+                "--quota-profile",
+                str(state / "quota-profile.json"),
+                "--approved-quota-digest",
+                config["approved_quota_digest"],
+            )
+        return transport.CommandAdapter(
+            commands[0],
+            commands[1],
+            root=root,
+            timeout_seconds=3600,
+            output_limit=200_000,
+            backend_digest=bare_digest(owner_profile["source"]),
+            guard=guard,
+            on_interruption=on_interruption,
+        )
     return workflow.CommandAdapter(
         commands[0], commands[1], root=root, timeout_seconds=3600, output_limit=200_000
     )
@@ -148,6 +272,21 @@ class ReviewedWorkflow:
     def artifacts(self) -> Mapping[str, Any]:
         return self.artifact_store.load(self.key) or {}
 
+    def controller_resume_available(self) -> bool:
+        if getattr(self.adapter, "quota_resume_enabled", False) is not True:
+            return False
+        validated = handover.validate_handover(
+            self.value,
+            root=self.root,
+            approved_digest=self.approved_digest,
+            github=handover.GitHubCLI(),
+        )
+        return workflow.controller_resume_available(
+            validated.contract,
+            root=self.root,
+            storage=workflow.StateStore(self.directory / "bounded-workflow"),
+        )
+
     def run(self) -> Mapping[str, Any]:
         existing = self.artifacts()
         if existing:
@@ -163,6 +302,10 @@ class ReviewedWorkflow:
         contract = validated.contract
 
         class CaptureAdapter:
+            quota_resume_enabled = (
+                getattr(delegate, "quota_resume_enabled", False) is True
+            )
+
             def execute(
                 self, request: dict[str, Any], session_id: str
             ) -> dict[str, Any]:
@@ -212,12 +355,41 @@ class ReviewedWorkflow:
                     captured.clear()
                 return value
 
-        result = workflow.run(
-            contract,
-            root=self.root,
-            storage=workflow.StateStore(self.directory / "bounded-workflow"),
-            adapter=CaptureAdapter(),
-        )
+        try:
+            result = workflow.run(
+                contract,
+                root=self.root,
+                storage=workflow.StateStore(self.directory / "bounded-workflow"),
+                adapter=CaptureAdapter(),
+            )
+        except loop.QuotaPaused as error:
+            saved = loop.CheckpointStore(self.directory, self.root).load()
+            reservation = workflow.StateStore(self.directory / "bounded-workflow").load(
+                workflow._run_key(contract)
+            )
+            event = error.interruption
+            if (
+                saved is None
+                or event is None
+                or reservation is None
+                or reservation.get("invocation_digest")
+                != event.get("invocation_digest")
+                or reservation.get("role_pending") != event.get("role")
+            ):
+                raise loop.LoopError("QUOTA_INTERRUPTION_BINDING_INVALID") from None
+            workflow.StateStore(self.directory).save(
+                "quota-interruption",
+                {
+                    "schema_version": "1.0",
+                    "checkpoint_identity_digest": bare_digest(
+                        {key: saved[key] for key in loop.IDENTITY_KEYS}
+                    ),
+                    "phase": saved["pending_phase"] or saved["phase"],
+                    "workflow_key": workflow._run_key(contract),
+                    "event": event,
+                },
+            )
+            raise
         if not captured or not (
             result.status in {"PASS", "PASS_WITH_NOTES"}
             or (

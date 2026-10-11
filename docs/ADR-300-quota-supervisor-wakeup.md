@@ -249,3 +249,55 @@ to actual role calls; unknown effect reconciliation; full local gate,
 independent controller and exact PR/post-merge CI/demo. Real installed host
 readiness requires separate owner-approved installation and observed durable
 wakeup proof. No public Library/pgw/schema change or production pilot.
+
+### Derived implementation bindings
+
+The fixed role transport accepts the supported native App Server's returned
+approval policy, sandbox, cwd and instruction-source list before sending the
+first turn. It rejects server approval requests and foreign thread/turn events.
+The native version and executable bytes remain owner-pinned. The quota-read
+connection sends only initialize, initialized and account/rateLimits/read;
+role inference is a separate connection and reservation.
+
+Before a controller call, an opt-in bounded workflow retains the exact contract,
+head and passing full gate in its private reservation. A fresh controller-only
+continuation checks current policy, scope and unchanged gate snapshot, preserves
+original start and consumed calls, and charges its next controller call before
+launch. It does not repeat executor work or infer delivery success. Bootstrap
+can classify this boundary as NOT_APPLIED only while reviewed delivery artifacts
+and the delivery ledger are absent. Any delivery intent keeps canonical ledger
+reconciliation and UNKNOWN handling. Legacy orphaned calls remain blocked.
+
+Final role reservations retain one original call, with no repair allowance.
+A verified quota interruption saves a separate closed private final pause bound
+to the owner approval, reservation key, active FINAL/RECONCILE stage and event.
+The supervisor polls and arms a wake within that stage's original finite wait.
+Once quota is free, an exhausted final role allowance returns
+FINAL_ROLE_BUDGET_EXHAUSTED; quota recovery never refunds it or authorizes a new
+final review. Any pending final delivery ledger is handled fail closed rather
+than discarded as a read-only interruption.
+
+Readiness executes a fixed stdlib namespace probe over temporary synthetic
+files, never candidate Python. Both role namespaces must deny protected writes;
+only executor may write the single bound allowed file, and scratch remains
+writable. Unsupported namespace behavior returns QUOTA_NAMESPACE_UNSUPPORTED.
+The proof is specific to filesystem permissions and does not substitute for the
+separately owner-pinned persistent host wake proof.
+
+The host proof has a closed internal shape: schema_version, kind, backend,
+host_digest, source_digest, supervisor_sha256, service_sha256,
+timer_template_sha256, origin_exit_digest, restart_digest, runner_count,
+budget_before_digest, budget_after_digest, observed_at and probe_digest.
+runner_count is exactly one, retained original budget digests must match, and
+origin/restart observations must be distinct. kind=synthetic is always refused
+by real readiness. A schema-valid observation without the exact approved digest
+and current installation/source/host bindings cannot yield READY.
+
+An existing arm is reconciled through its exact installed unit bytes, loaded
+fragment and active state without replaying start. The timestamp is checked
+again immediately before start after bounded host reads. A wake arriving before
+its origin releases the supervisor lock waits with fresh authority guards only
+within its invocation deadline, then rechecks original stage budgets before any
+effect. This wait grants no new quota or role attempts. Cancellation persists
+its own reservation and reconciles an uncertain stop read-only; an inactive
+owned timer proves completion without another stop call.

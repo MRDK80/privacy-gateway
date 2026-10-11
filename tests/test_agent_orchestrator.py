@@ -116,6 +116,8 @@ def _verdict(request: dict[str, Any], value: str) -> dict[str, Any]:
 
 
 class FakeAdapter:
+    quota_resume_enabled = False
+
     def __init__(self, verdicts: list[str]) -> None:
         self.verdicts = verdicts
         self.executor_sessions: list[str] = []
@@ -349,3 +351,141 @@ def test_storage_inside_worktree_is_rejected(repository: Path) -> None:
 
     assert result.machine_code == "UNSAFE_STORAGE"
     assert not (repository / "private-state").exists()
+
+
+def test_killed_role_retains_consumed_call_before_restart(repository: Path) -> None:
+    contract = _contract(repository)
+    storage = _storage(repository)
+
+    class Interrupted(BaseException):
+        pass
+
+    class KilledAdapter(FakeAdapter):
+        def execute(self, request: dict[str, Any], session_id: str) -> dict[str, Any]:
+            raise Interrupted()
+
+    with pytest.raises(Interrupted):
+        orchestrator.run(
+            contract,
+            root=repository,
+            storage=storage,
+            adapter=KilledAdapter([]),
+            gate=_passing_gate,
+        )
+    previous = storage.load(orchestrator._run_key(contract))
+    assert previous is not None
+    assert previous["executor_calls"] == 1
+    assert previous["role_pending"] == "executor"
+    resumed = FakeAdapter(["PASS"])
+    result = orchestrator.run(
+        contract, root=repository, storage=storage, adapter=resumed, gate=_passing_gate
+    )
+    assert result.machine_code == "ROLE_OUTCOME_UNKNOWN"
+    assert resumed.executor_sessions == []
+
+
+def test_quota_interruption_preserves_original_call_budget(repository: Path) -> None:
+    from tools.agent_quota_role import Interrupted
+
+    contract = _contract(repository)
+    storage = _storage(repository)
+
+    class QuotaAdapter(FakeAdapter):
+        def execute(self, request: dict[str, Any], session_id: str) -> dict[str, Any]:
+            raise Interrupted({"synthetic": True})
+
+    with pytest.raises(Interrupted):
+        orchestrator.run(
+            contract,
+            root=repository,
+            storage=storage,
+            adapter=QuotaAdapter([]),
+            gate=_passing_gate,
+        )
+    retained = storage.load(orchestrator._run_key(contract))
+    assert retained is not None and retained["terminal"] is False
+    assert retained["executor_calls"] == 1
+    assert retained["role_pending"] == "executor"
+
+
+@pytest.mark.parametrize("recovery", ["ready", "changed", "missing", "budget"])
+def test_quota_controller_resume_keeps_executor_snapshot_and_call_budget(
+    repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recovery: str,
+) -> None:
+    from tools import agent_gate
+    from tools.agent_quota_role import Interrupted
+
+    contract, storage = _contract(repository), _storage(repository)
+    gates: list[str] = []
+
+    def trusted_gate(value: Any) -> dict[str, Any]:
+        gates.append("gate")
+        with agent_gate.trusted_snapshot_session(
+            root=repository,
+            base_sha=value.base_sha,
+            allowed_paths=value.allowed_paths,
+        ) as snapshot:
+            return agent_gate.build_evidence(
+                snapshot,
+                [
+                    agent_gate.CheckResult(
+                        name, ("synthetic",), "passed", 0, 0.0, "passed", {}
+                    )
+                    for name in agent_gate.PROFILES[agent_gate.FULL_PROFILE]
+                ],
+            )
+
+    evidence = trusted_gate(contract)
+    orchestrator._assert_gate_snapshot_unchanged(repository, contract, evidence)
+    monkeypatch.setattr(orchestrator, "_production_gate", lambda root, value: evidence)
+
+    class QuotaController(FakeAdapter):
+        quota_resume_enabled = True
+
+        def review(
+            self,
+            request: dict[str, Any],
+            trusted_policy: dict[str, str],
+            session_id: str,
+        ) -> dict[str, Any]:
+            self.controller_sessions.append(session_id)
+            raise Interrupted({"synthetic": True})
+
+    first = QuotaController([])
+    with pytest.raises(Interrupted):
+        orchestrator.run(contract, root=repository, storage=storage, adapter=first)
+    if recovery == "changed":
+        (repository / "code.py").write_text("VALUE = 3\n", encoding="utf-8")
+    elif recovery in {"missing", "budget"}:
+        key = orchestrator._run_key(contract)
+        saved = storage.load(key)
+        assert saved is not None
+        if recovery == "missing":
+            saved.pop("controller_boundary")
+        else:
+            saved["controller_calls"] = contract.max_repair_iterations + 1
+        storage.save(key, saved)
+    # Fresh reconciliation can prove a controller boundary without inference.
+    assert orchestrator.controller_resume_available(
+        contract,
+        root=repository,
+        storage=storage,
+    ) is (recovery in {"ready", "budget"})
+    resumed = FakeAdapter(["PASS"])
+    resumed.quota_resume_enabled = True
+    result = orchestrator.run(
+        contract, root=repository, storage=storage, adapter=resumed
+    )
+    if recovery != "ready":
+        assert result.status == "FAIL_ESCALATE"
+        assert resumed.executor_sessions == []
+        assert resumed.controller_sessions == []
+        assert gates == ["gate"]
+        return
+    assert result.status == "PASS", result.machine_code
+    assert resumed.executor_sessions == [] and gates == ["gate"]
+    final = storage.load(orchestrator._run_key(contract))
+    assert final["executor_calls"] == 1 and final["controller_calls"] == 2
+    assert resumed.controller_sessions != first.controller_sessions

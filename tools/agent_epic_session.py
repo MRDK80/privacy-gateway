@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict
 from typing import Any
 
@@ -118,9 +119,20 @@ class Session:
         ):
             raise loop.LoopError("SESSION_CURSOR_INVALID")
 
-    def resume(self) -> dict[str, Any]:
+    def resume(
+        self,
+        *,
+        supervisor_lock: loop.RunnerLock | None = None,
+    ) -> dict[str, Any]:
         self.control.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with loop.RunnerLock.supervisor(self.control.directory):
+        if supervisor_lock is not None:
+            supervisor_lock.assert_owned(self.control.directory)
+        ownership = (
+            nullcontext(supervisor_lock)
+            if supervisor_lock is not None
+            else loop.RunnerLock.supervisor(self.control.directory)
+        )
+        with ownership:
             seed = self.seed.load()
             if seed is None or seed["schema_version"] != "3.0":
                 raise loop.PhaseBlocked("PINNED_CHECKPOINT_REQUIRED")

@@ -227,11 +227,80 @@ class FinalRuntime:
             self._children(request),
         )
 
+    def _quota_review(
+        self,
+        review: dict[str, Any],
+        policy: dict[str, str],
+        key: str,
+    ) -> dict[str, Any]:
+        from tools import agent_quota_role as transport
+        from tools.agent_quota_wait import bare_digest
+
+        if not isinstance(self.adapter, transport.CommandAdapter):
+            return self.adapter.review(review, policy, key)
+        store = workflow.StateStore(self.directory / "final-role-reservations")
+        if store.load(key) is not None:
+            raise loop.PhaseBlocked("FINAL_ROLE_OUTCOME_UNKNOWN")
+        invocation = bare_digest(
+            {
+                **review,
+                "trusted_policy": policy,
+                "session_id": key,
+            }
+        )
+        reserved = {
+            "schema_version": "1.0",
+            "invocation_digest": invocation,
+            "backend_digest": self.adapter.backend_digest,
+            "approval_digest": self.approved_digest,
+            "calls": 1,
+            "status": "RESERVED",
+            "interruption": None,
+        }
+        store.save(key, reserved)
+        try:
+            return self.adapter.review(review, policy, key)
+        except loop.QuotaPaused as error:
+            event = transport.validate_event(
+                error.interruption,
+                role="controller",
+                invocation_digest=invocation,
+                backend_digest=self.adapter.backend_digest,
+            )
+            store.save(
+                key,
+                {**reserved, "status": "INTERRUPTED", "interruption": event},
+            )
+            if self.wait_scope is None or self.wait_scope.active_stage is None:
+                raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED") from None
+            workflow.StateStore(self.directory).save(
+                "quota-final-pause",
+                {
+                    "schema_version": "1.0",
+                    "approval_digest": self.approved_digest,
+                    "reservation_key": key,
+                    "stage": self.wait_scope.active_stage,
+                    "event": event,
+                    "status": "PAUSED_RATE_LIMIT",
+                },
+            )
+            raise
+
     def _prepare(self, request: driver.Request) -> Mapping[str, Any]:
         key = hashlib.sha256(self.approved_digest.encode()).hexdigest()
         saved = self.storage.load(key)
         if saved:
             return saved
+        from tools import agent_quota_role as transport
+
+        if (
+            isinstance(self.adapter, transport.CommandAdapter)
+            and workflow.StateStore(self.directory / "final-role-reservations").load(
+                key
+            )
+            is not None
+        ):
+            raise loop.PhaseBlocked("FINAL_ROLE_OUTCOME_UNKNOWN")
         if (
             handover._git(self.root, "status", "--porcelain=v1", "-z")
             or handover._git(self.root, "rev-parse", "HEAD") != request.roadmap_sha
@@ -309,7 +378,7 @@ class FinalRuntime:
                 "task_class": "final-review",
             },
         }
-        verdict = self.adapter.review(
+        verdict = self._quota_review(
             review, workflow._load_trusted_policy(self.root, contract), key
         )
         if workflow._validate_verdict(verdict, contract, request.roadmap_sha) not in {
@@ -476,6 +545,12 @@ class FinalRuntime:
             return self.transport.reconcile(request)
 
     def resume(self) -> delivery.Result:
+        try:
+            return self._resume()
+        except loop.QuotaPaused:
+            return delivery.Result("PAUSED_RATE_LIMIT", "QUOTA_WAIT_PENDING", None)
+
+    def _resume(self) -> delivery.Result:
         pr = None
         merge = None
         for operation in (

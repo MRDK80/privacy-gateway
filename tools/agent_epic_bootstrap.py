@@ -38,6 +38,10 @@ class BootstrapTask:
             with guard.control.lock():
                 try:
                     return self._run()
+                except loop.QuotaPaused:
+                    # A bound temporary quota pause preserves recovery authority;
+                    # pending role outcomes still require read-only reconciliation.
+                    raise
                 except Exception:
                     guard.stop()
                     raise
@@ -55,6 +59,16 @@ class BootstrapTask:
             ):
                 return "UNKNOWN", None
             artifact = self.reviewed.artifacts()
+            ledger_path = self.runtime.store.directory / "delivery-ledger.json"
+            if (
+                not artifact
+                and not ledger_path.exists()
+                and not ledger_path.is_symlink()
+                and self.reviewed.controller_resume_available()
+            ):
+                # Review has no delivery effects. A retained, unchanged full gate
+                # permits controller-only continuation, never an executor replay.
+                return "NOT_APPLIED", None
             gate = artifact["gate"]
             review = artifact["review_receipt"]
             head = gate["snapshot"]["snapshot_commit"]

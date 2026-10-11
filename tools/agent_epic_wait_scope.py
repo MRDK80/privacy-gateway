@@ -52,6 +52,7 @@ class Scope:
         self.profile = profile
         self._readers: dict[str, wait.Reader] = {}
         self._contexts: set[str] = set()
+        self._context_stack: list[str] = []
         control = self.state / "launch-control.json"
         self.control = guards.private_json(control) if control.exists() else None
         self.guard()
@@ -65,7 +66,7 @@ class Scope:
         if not path.exists():
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") != "4.0":
+        if config.get("schema_version") not in {"4.0", "5.0"}:
             return None
         guards.managed_launch_guard(seed, root, read_only=read_only, allow_initial=True)
         mandate = guards.private_json(seed / "mandate.json")
@@ -104,7 +105,7 @@ class Scope:
             frames.clear(os.environ)
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") != "4.0":
+        if config.get("schema_version") not in {"4.0", "5.0"}:
             frames.clear(os.environ)
             return None
         mandate = guards.private_json(seed / "mandate.json")
@@ -304,23 +305,33 @@ class Scope:
         )
         return path.exists() or path.is_symlink()
 
+    @property
+    def active_stage(self) -> str | None:
+        return self._context_stack[-1] if self._context_stack else None
+
     @contextmanager
     def context(self, stage: str) -> Iterator[wait.Reader]:
         """Refresh local facts only at trusted callback entry, outside nested waits."""
         reader = self.reader(stage)
         if stage in self._contexts:
             reader.guard()
-            yield reader
+            self._context_stack.append(stage)
+            try:
+                yield reader
+            finally:
+                self._context_stack.pop()
             return
         previous = reader.guard
         guard, deadline = self._stage_guard(stage)
         reader.guard = guard
         reader.current_deadline = min(reader.current_deadline, deadline)
         self._contexts.add(stage)
+        self._context_stack.append(stage)
         try:
             reader.guard()
             yield reader
         finally:
+            self._context_stack.pop()
             self._contexts.remove(stage)
             reader.guard = previous
 
