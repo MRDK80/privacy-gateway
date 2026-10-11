@@ -194,7 +194,7 @@ def test_blocked_phase_has_closed_zero_exit_envelope(
         def effect(self, phase: str) -> None:
             raise loop.PhaseBlocked("CI_PENDING")
 
-    monkeypatch.setattr(cli, "build_runtime", lambda *args: Engine())
+    monkeypatch.setattr(cli, "build_runtime", lambda *args, **kwargs: Engine())
     monkeypatch.setattr(
         sys,
         "argv",
