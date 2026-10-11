@@ -129,6 +129,7 @@ roadmap-ветки; при обновлении `main` сначала обнов
 ## Запрещённые автоматические действия
 
 Без явного подтверждения владельца не выполняй merge и не закрывай issues.
+Владелец может заранее разрешить оператору task merge и закрытие дочерних задач ограниченного epic после всех gates без повторных вопросов: merge требует local gate, независимого controller и exact PR CI, закрытие — также exact post-merge CI roadmap SHA и применимой demo. Итоговый epic → main merge требует отдельного одобрения актуальных SHA и final demo. Это не runtime-мандат; scope и условия standing approval фиксируются по CONTRIBUTING.md.
 Не делай force push, не удаляй `main` или roadmap-ветки, не создавай и не
 перемещай tags, не редактируй releases, branch protection, visibility или
 настройки репозитория. Не объявляй CI или local gate успешными без первичных
