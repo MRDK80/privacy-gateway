@@ -193,3 +193,59 @@ transport itself remains read-only; it never performs role inference. Runtime
 phase/reconciliation retains existing pending-intent semantics before any
 quota resume can repeat admitted work. Synthetic structured backend tests alone
 do not prove the installed real backend supports the required interruption.
+
+## Accepted addendum: structured role backend
+
+Task #300; independent design review PASS, owner approved on 2026-10-11.
+No runtime installation or activation.
+The accepted ADR requires first-party invocation-bound quota codes. Installed
+Codex 0.157.1 exec emits only turn.failed.error.message; parsing text or HTTP
+429 cannot fulfill that contract. App Server ErrorNotification exposes the
+required structured codes and thread/turn identity.
+
+## Concrete decision
+
+For opt-in config5 only, replace the role transport with a fixed installed
+App Server role backend. Legacy config1/2/3/4 keep existing exec behavior.
+Quota-read remains a separate no-inference process with its fixed RPC allowlist.
+A role process may send only initialize/initialized, thread/start, turn/start,
+turn/interrupt and thread/archive for its own created ephemeral thread. It
+rejects server requests rather than approving tools, login or purchases.
+No raw event/error/message is persisted. Only terminal first-party error codes
+rateLimitExceeded/usageLimitExceeded with matching threadId/turnId and
+willRetry=false may emit a closed private role-interruption1.0:
+schema_version, role, invocation_digest, thread_digest, turn_digest,
+error_code, backend_digest, outcome. Outcome remains UNKNOWN for executor
+unless canonical existing receipts prove APPLIED/NOT_APPLIED. Controller is
+read-only; its interrupted call still consumes the original role allowance.
+The new envelope is not a canonical executor/controller report or receipt;
+model-authored content cannot emit it through the structured protocol path.
+
+Both roles use the existing external Bubblewrap root-read-only boundary and
+private writable scratch; executor retains only existing validated writable
+regular files. Controller retains its pinned separate policy bundle and no
+writable task paths. Isolated CODEX_HOME has no user config, plugins or hooks;
+auth is mounted read-only exactly as ADR-225 for native backend authentication;
+the operator does not read it or include it in prompts or diagnostics. Fixed trusted config disables project instruction discovery;
+unsupported versions/settings or inability to prove effective policy fail
+readiness BLOCKED. Thread sandbox/approval parameters and returned effective
+settings must match the expected existing role boundary; no fallback to full
+access outside the namespace. Thread start stays ephemeral, fresh per role,
+with original model selection and bounded exact full prompt/output schema.
+
+Reserve invocation and persist consumed role counters before inference. A
+terminal interruption pauses the current workflow without marking its report
+or gate complete. A killed/unknown call is not replayed. Resuming controller
+requires preserved validated executor snapshot/gate provenance; if unavailable,
+BLOCKED until separately authorized recovery. A fresh process never resets
+repair, time, role or output budget. This addendum does not authorize increased
+capacity, persistent model conversations or arbitrary intermediate replay.
+
+## Verification before READY
+
+Exact pinned protocol/version and sandbox regression tests; separate synthetic
+namespace write probe; structured positive/error/context classifications bound
+to actual role calls; unknown effect reconciliation; full local gate,
+independent controller and exact PR/post-merge CI/demo. Real installed host
+readiness requires separate owner-approved installation and observed durable
+wakeup proof. No public Library/pgw/schema change or production pilot.
