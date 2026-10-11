@@ -127,7 +127,8 @@ def test_wrong_owner_and_symlink_parent_are_rejected(
         install.prepare(root, sha, "example/project", alias / "candidate")
     from tools import agent_epic_runtime_cli as guards
 
-    monkeypatch.setattr(guards, "owner_uid", lambda: os.getuid() + 1)
+    expected_uid = tmp_path.stat().st_uid
+    monkeypatch.setattr(guards, "owner_uid", lambda: expected_uid + 1)
     with pytest.raises(install.InstallError, match="UNSAFE_INSTALL_DIRECTORY"):
         install.prepare(root, sha, "example/project", tmp_path / "candidate")
 
