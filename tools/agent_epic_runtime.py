@@ -48,6 +48,7 @@ class TaskPhaseRuntime:
         self.bootstrap = bootstrap
         self.demo_completion = demo_completion
         self.continuation_enabled = False
+        self.continuation_queue: Callable[[], queue.QueuePlan] | None = None
         self.recovery: Any = None
         self.github: assessment.GitHubClient = assessment.GhClient(
             read=self._github_read
@@ -281,6 +282,36 @@ class TaskPhaseRuntime:
             merge_sha=merge,
         )
 
+    def _bound_close_intent(self) -> bool:
+        """A closed issue is valid only in its exact recorded closure phase."""
+        saved = self._checkpoint()
+        if (saved["phase"], saved["pending_phase"]) not in {
+            ("DEMO", "TASK_DONE"),
+            ("TASK_DONE", "NEXT_TASK"),
+            ("NEXT_TASK", None),
+        } or saved["merge_sha"] is None:
+            return False
+        request = self._request("close_task")
+        try:
+            entry = (
+                delivery.Ledger(self.store.directory, self.store.repository_root)
+                .load()
+                .get(request.operation_id)
+            )
+        except ValueError:
+            return False
+        return (
+            entry is not None
+            and entry.get("operation") == "close_task"
+            and entry.get("status") in {"INTENT", "UNKNOWN", "APPLIED"}
+            and entry.get("request") == delivery._request_fields(request)
+            and (
+                entry.get("status") != "APPLIED"
+                or entry.get("receipt")
+                == {"task": request.task, "merge_sha": request.merge_sha}
+            )
+        )
+
     def _write(self, operation: str) -> None:
         request = self._request(operation)
         phase = "post-merge" if operation in delivery.POST_MERGE_OPERATIONS else "pr"
@@ -461,6 +492,10 @@ class TaskPhaseRuntime:
             self._write("update_epic")
         elif phase == "NEXT_TASK":
             if getattr(self, "continuation_enabled", False):
+                planning_queue = getattr(self, "continuation_queue", None)
+                if planning_queue is not None:
+                    planning_queue()
+                    return {"phase": phase}
                 from tools.agent_epic_session import structural_queue
 
                 saved = self._checkpoint()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -14,10 +14,12 @@ from tools import agent_coordinator_handover as handover
 from tools import agent_epic_delivery as delivery
 from tools import agent_epic_handover as planner
 from tools import agent_epic_loop as loop
+from tools import agent_epic_planning as admission
 from tools import agent_epic_queue as queue
 from tools import agent_orchestrate as workflow
 from tools.agent_epic_bootstrap import BootstrapTask
 from tools.agent_epic_final_runtime import FinalRuntime, digest
+from tools.agent_epic_planning_roles import PlanningRoles
 from tools.agent_epic_runtime import TaskPhaseRuntime
 from tools.agent_epic_runtime_cli import managed_launch_guard, private_json
 from tools.agent_epic_session import Session, structural_queue
@@ -100,13 +102,113 @@ class SessionRuntime:
         self._fresh_authority(iterations, at_task_start=not final)
 
     def _recipe(self, task: int) -> Mapping[str, Any]:
+        recipe = self._approved_recipe(task)
+        if recipe is not None:
+            return recipe
+        if self.config.get("schema_version") == "3.0":
+            return admission.Admission(self.state, self.root).recipe(
+                task, self.config["approved_planning_digest"]
+            )
+        raise loop.PhaseBlocked("NEXT_TASK_PLAN_REQUIRED")
+
+    def _approved_recipe(self, task: int) -> Mapping[str, Any] | None:
         current = private_json(self.state / "approved-plans.json")
         if digest(current) != self.config["approved_plans_digest"]:
             raise loop.PhaseBlocked("APPROVED_PLANS_CHANGED")
         recipe = current["tasks"].get(str(task))
+        if recipe is None:
+            return None
         if not isinstance(recipe, Mapping) or set(recipe) != {"plan", "demo_plan"}:
             raise loop.PhaseBlocked("NEXT_TASK_PLAN_REQUIRED")
         return recipe
+
+    def _planning_owner(self, mandate: Mapping[str, Any]) -> Mapping[str, Any]:
+        return admission.profile(
+            private_json(self.state / "planning-profile.json"),
+            approved=self.config["approved_planning_digest"],
+            mandate=mandate,
+        )
+
+    def _dependency_facts(
+        self, task: int, *, closed: bool = False
+    ) -> list[dict[str, Any]]:
+        """Resolve each structural blocker freshly; queue selection is no receipt."""
+        try:
+            issue = self.issues.issue(self.identity["repository"], task)
+            parent = issue.get("parent")
+            if (
+                type(issue.get("number")) is not int
+                or issue["number"] != task
+                or issue.get("state") != ("CLOSED" if closed else "OPEN")
+                or not isinstance(parent, Mapping)
+                or type(parent.get("number")) is not int
+                or parent["number"] != self.identity["epic"]
+            ):
+                raise ValueError
+            facts = queue.dependency_facts(
+                issue, repository=self.identity["repository"]
+            )
+            for fact in facts:
+                dependency = self.issues.issue(
+                    self.identity["repository"], fact["number"]
+                )
+                if (
+                    type(dependency.get("number")) is not int
+                    or dependency["number"] != fact["number"]
+                    or dependency.get("state") != fact["state"]
+                    or queue.dependency_facts(
+                        {"blockedBy": {"nodes": [dependency]}},
+                        repository=self.identity["repository"],
+                    )
+                    != [fact]
+                ):
+                    raise ValueError
+                if fact["state"] != "CLOSED":
+                    raise loop.PhaseBlocked("TASK_DEPENDENCIES_BLOCKED")
+            return facts
+        except (queue.GitHubError, KeyError, TypeError, ValueError):
+            raise loop.PhaseBlocked("TASK_DEPENDENCIES_INVALID") from None
+
+    def _confirm_admission(
+        self,
+        task: int,
+        base: str,
+        default: str,
+        iterations: int,
+        *,
+        closed_guard: Callable[[], bool] | None = None,
+    ) -> Mapping[str, Any]:
+        mandate, _, context = self._fresh_authority(iterations)
+        issue = handover.GitHubCLI().issue(mandate["repository"], task)
+        body = issue.get("body")
+        parent = issue.get("parent")
+        if (
+            issue.get("number") != task
+            or not (
+                issue.get("state") == "OPEN"
+                or (
+                    issue.get("state") == "CLOSED"
+                    and closed_guard is not None
+                    and closed_guard()
+                )
+            )
+            or not isinstance(parent, Mapping)
+            or parent.get("number") != mandate["epic"]
+            or not isinstance(body, str)
+        ):
+            raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
+        self._dependency_facts(task, closed=issue["state"] == "CLOSED")
+        if self.github.branches(mandate["repository"]).get("main") != default:
+            raise loop.PhaseBlocked("PLANNING_ADMISSION_CHANGED")
+        return admission.Admission(self.state, self.root).confirm(
+            owner=self._planning_owner(mandate),
+            mandate=mandate,
+            context=context,
+            task=task,
+            body=body,
+            base=base,
+            default=default,
+        )
 
     def task_adapter(
         self, store: loop.CheckpointStore, iterations: int
@@ -166,6 +268,69 @@ class SessionRuntime:
             return plan
 
         def authority() -> tuple[dict[str, Any], str, delivery.MandateContext]:
+            if (
+                self.config.get("schema_version") == "3.0"
+                and self._approved_recipe(saved["task"]) is None
+            ):
+                recipe = admission.Admission(self.state, self.root).recipe(
+                    saved["task"], self.config["approved_planning_digest"]
+                )
+                checked = self._confirm_admission(
+                    saved["task"],
+                    saved["base_sha"],
+                    recipe["plan"]["default_sha"],
+                    iterations,
+                    closed_guard=engine._bound_close_intent,
+                )
+                current = private_json(store.directory / "handover.json")
+                checkpoint = store.load()
+                plan = checked["plan"]
+                if (
+                    handover.handover_digest(current) != approved
+                    or checkpoint is None
+                    or any(
+                        checkpoint[key] != plan[key]
+                        for key in (
+                            "repository",
+                            "epic",
+                            "task",
+                            "base_ref",
+                            "base_sha",
+                            "head_ref",
+                            "policy_sha",
+                        )
+                    )
+                    or any(
+                        current.get(key) != plan[key]
+                        for key in (
+                            "repository",
+                            "epic",
+                            "task",
+                            "criteria_source",
+                            "acceptance_criteria",
+                            "delivery_criterion_indices",
+                            "base_ref",
+                            "base_sha",
+                            "head_ref",
+                            "causal_scope",
+                            "allowed_paths",
+                            "budgets",
+                            "task_class",
+                        )
+                    )
+                    or current.get("trusted_policy")
+                    != {
+                        "source": "pinned_policy_sha",
+                        "policy_sha": plan["policy_sha"],
+                    }
+                    or current.get("mandate_provenance")
+                    != {
+                        "schema_version": "3.0",
+                        "digest": self.config["approved_mandate_digest"],
+                        "policy_sha": plan["policy_sha"],
+                    }
+                ):
+                    raise loop.PhaseBlocked("PLANNING_ADMISSION_CHANGED")
             return self.authority(iterations)
 
         engine = TaskPhaseRuntime(
@@ -179,16 +344,78 @@ class SessionRuntime:
             approved_order=tuple(self.config["approved_order"]),
         )
         engine.continuation_enabled = True
+        if self.config.get("schema_version") == "3.0":
+            engine.continuation_queue = self._planning_queue
         engine.bootstrap = BootstrapTask(engine, reviewed, authority)
         return engine
 
     def select(self) -> queue.QueuePlan:
+        if self.config.get("schema_version") == "3.0":
+            return self._planning_queue()
         return structural_queue(
             self.issues,
             repository=self.identity["repository"],
             epic=self.identity["epic"],
             approved_order=tuple(self.config["approved_order"]),
         )
+
+    def _planning_queue(self) -> queue.QueuePlan:
+        cursor = workflow.StateStore(self.state / "session-control").load("cursor")
+        completed = cursor["completed_tasks"] if cursor is not None else []
+        iterations = self.config["task_iterations"] + len(completed)
+        mandate, _, context = self._fresh_authority(iterations, at_task_start=False)
+        owner = self._planning_owner(mandate)
+        order = list(self.config["approved_order"])
+        followups = sorted(
+            int(number) for number in owner["tasks"] if int(number) not in order
+        )
+        # Bound the entire approved follow-up set, so structural disappearance
+        # cannot refund permission to discover another ungranted issue.
+        if (
+            self.config["follow_up_issues"] + len(followups)
+            > mandate["limits"]["max_follow_up_issues"]
+        ):
+            raise loop.PhaseBlocked("MANDATE_FOLLOW_UP_LIMIT")
+        order.extend(followups)
+        parent = self.issues.issue(mandate["repository"], mandate["epic"])
+        children = parent.get("subIssues")
+        nodes = children.get("nodes") if isinstance(children, Mapping) else None
+        if parent.get("number") != mandate["epic"] or not isinstance(nodes, list):
+            raise loop.PhaseBlocked("ISSUE_MISMATCH")
+        tasks: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for node in nodes:
+            number = node.get("number") if isinstance(node, Mapping) else None
+            if type(number) is not int or number <= 0:
+                raise loop.PhaseBlocked("ISSUE_MISMATCH")
+            if number in seen:
+                continue
+            seen.add(number)
+            child = self.issues.issue(mandate["repository"], number)
+            child_parent = child.get("parent")
+            if (
+                child.get("number") != number
+                or not isinstance(child_parent, Mapping)
+                or child_parent.get("number") != mandate["epic"]
+            ):
+                raise loop.PhaseBlocked("PARENT_MISMATCH")
+            if child.get("state") == "OPEN" and (
+                number not in order
+                or str(number) not in mandate["task_grants"]
+                or (number in followups and str(number) not in owner["tasks"])
+            ):
+                raise loop.PhaseBlocked("PLANNING_TASK_NOT_APPROVED")
+            tasks.append(child)
+        result = queue.plan_queue(
+            epic=mandate["epic"], approved_order=order, tasks=tasks
+        )
+        if result.state not in {"RUN_TASK", "FINAL_GATE"}:
+            raise loop.PhaseBlocked(result.machine_code)
+        if result.state == "RUN_TASK":
+            code = delivery.mandate_lifecycle_code(mandate, context, at_task_start=True)
+            if code is not None:
+                raise loop.PhaseBlocked(code)
+        return result
 
     def prepare(
         self,
@@ -197,8 +424,10 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
-        recipe = self._recipe(task)
-        plan = copy.deepcopy(dict(recipe["plan"]))
+        recipe = self._approved_recipe(task)
+        derived = recipe is None
+        if derived and self.config.get("schema_version") != "3.0":
+            raise loop.PhaseBlocked("NEXT_TASK_PLAN_REQUIRED")
         mandate, approved, context = self.authority(iterations)
         branches = self.github.branches(mandate["repository"])
         base = branches.get(mandate["roadmap_ref"])
@@ -209,7 +438,56 @@ class SessionRuntime:
             or not isinstance(main, str)
         ):
             raise loop.PhaseBlocked("STALE_BASE")
-        plan.update(base_sha=base, default_sha=main)
+        issue = handover.GitHubCLI().issue(mandate["repository"], task)
+        body = issue.get("body")
+        if not isinstance(body, str):
+            raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
+        if derived:
+            owner = self._planning_owner(mandate)
+            dependencies = self._dependency_facts(task)
+
+            def planning_guard() -> None:
+                fresh, _, _ = self._fresh_authority(iterations)
+                if self._dependency_facts(task) != dependencies:
+                    raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
+                current_issue = handover.GitHubCLI().issue(fresh["repository"], task)
+                current_refs = self.github.branches(fresh["repository"])
+                parent = current_issue.get("parent")
+                if (
+                    current_issue.get("number") != task
+                    or current_issue.get("state") != "OPEN"
+                    or not isinstance(parent, Mapping)
+                    or parent.get("number") != fresh["epic"]
+                    or current_issue.get("body") != body
+                    or current_refs.get(fresh["roadmap_ref"]) != base
+                    or current_refs.get("main") != main
+                    or digest(self._planning_owner(fresh)) != digest(owner)
+                    or handover._repository_identity(self.root) != fresh["repository"]
+                    or handover._git(self.root, "status", "--porcelain=v1", "-z")
+                ):
+                    raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
+
+            proposal = admission.Admission(self.state, self.root).admit(
+                owner=owner,
+                mandate=mandate,
+                context=context,
+                task=task,
+                body=body,
+                base=base,
+                default=main,
+                dependencies=dependencies,
+                guard=planning_guard,
+                invoke=PlanningRoles(
+                    root=self.root,
+                    policy_root=Path(self.config["policy_root"]),
+                    policy_sha=mandate["policy_sha"],
+                ),
+            )
+            recipe = {"plan": proposal["plan"], "demo_plan": proposal["demo_plan"]}
+        assert recipe is not None
+        plan = copy.deepcopy(dict(recipe["plan"]))
+        if not derived:
+            plan.update(base_sha=base, default_sha=main)
         if (
             plan.get("schema_version") != "2.0"
             or plan.get("task") != task
@@ -217,10 +495,6 @@ class SessionRuntime:
             or plan.get("policy_sha") != mandate["policy_sha"]
         ):
             raise loop.PhaseBlocked("NEXT_TASK_PLAN_REQUIRED")
-        issue = handover.GitHubCLI().issue(mandate["repository"], task)
-        body = issue.get("body")
-        if not isinstance(body, str):
-            raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
         try:
             planner._validate_inputs(
                 mandate,
@@ -252,8 +526,7 @@ class SessionRuntime:
                 or refs.get("main") != main
                 or handover._git(self.root, "branch", "--show-current")
                 != previous["head_ref"]
-                or handover._git(self.root, "rev-parse", "HEAD")
-                != previous["head_sha"]
+                or handover._git(self.root, "rev-parse", "HEAD") != previous["head_sha"]
                 or handover._git(self.root, "status", "--porcelain=v1", "-z")
                 or handover._git(
                     self.root, "rev-parse", f"refs/heads/{mandate['roadmap_ref']}"
@@ -272,6 +545,12 @@ class SessionRuntime:
             ):
                 raise loop.PhaseBlocked("PREPARATION_IDENTITY_CHANGED")
             self._guard_mutation(iterations)
+            if derived:
+                if self._dependency_facts(task) != dependencies:
+                    raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
+                checked = self._confirm_admission(task, base, main, iterations)
+                if checked["plan"] != plan:
+                    raise loop.PhaseBlocked("PLANNING_ADMISSION_CHANGED")
 
         try:
             guard()

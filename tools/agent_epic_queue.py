@@ -102,6 +102,59 @@ def _number(value: Any) -> int:
     return value
 
 
+def dependency_facts(
+    value: dict[str, Any], *, repository: str | None = None
+) -> list[dict[str, Any]]:
+    """Parse a complete bounded structural snapshot, retaining closed blockers."""
+    blocked_by = value.get("blockedBy")
+    if not isinstance(blocked_by, dict):
+        raise ValueError("dependencies")
+    nodes = blocked_by.get("nodes")
+    if not isinstance(nodes, list) or len(nodes) > 200:
+        raise ValueError("dependencies")
+    if "totalCount" in blocked_by and (
+        type(blocked_by["totalCount"]) is not int
+        or blocked_by["totalCount"] != len(nodes)
+    ):
+        raise ValueError("dependencies")
+    if "pageInfo" in blocked_by and (
+        not isinstance(blocked_by["pageInfo"], dict)
+        or blocked_by["pageInfo"].get("hasNextPage") is not False
+    ):
+        raise ValueError("dependencies")
+    facts: dict[int, str] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("dependencies")
+        number = _number(node.get("number"))
+        state = node.get("state")
+        if (
+            not isinstance(state, str)
+            or state not in {"OPEN", "CLOSED"}
+            or number in facts
+        ):
+            raise ValueError("dependencies")
+        if repository is not None:
+            url = node.get("url")
+            source = node.get("repository")
+            expected = f"https://github.com/{repository}/issues/{number}"
+            if (
+                not isinstance(url, str)
+                or url.casefold() != expected.casefold()
+                or (
+                    "repository" in node
+                    and (
+                        not isinstance(source, dict)
+                        or not isinstance(source.get("nameWithOwner"), str)
+                        or source["nameWithOwner"].casefold() != repository.casefold()
+                    )
+                )
+            ):
+                raise ValueError("dependencies")
+        facts[number] = state
+    return [{"number": number, "state": facts[number]} for number in sorted(facts)]
+
+
 def _task(value: dict[str, Any], epic: int) -> Task:
     parent = value.get("parent")
     if not isinstance(parent, dict) or parent.get("number") != epic:
@@ -117,12 +170,9 @@ def _task(value: dict[str, Any], epic: int) -> Task:
         or not isinstance(blocked_by.get("nodes"), list)
     ):
         raise ValueError("shape")
-    blockers: list[int] = []
-    for blocker in blocked_by["nodes"]:
-        if not isinstance(blocker, dict):
-            raise ValueError("blocker")
-        if str(blocker.get("state", "")).upper() == "OPEN":
-            blockers.append(_number(blocker.get("number")))
+    blockers = [
+        item["number"] for item in dependency_facts(value) if item["state"] == "OPEN"
+    ]
     return Task(number, title[:500], state.upper(), url[:1000], tuple(blockers))
 
 
