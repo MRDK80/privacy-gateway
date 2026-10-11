@@ -42,6 +42,16 @@ merge, закрытие issues, force push и изменение trust/approval 
 отдельного человеческого разрешения и не могут быть разрешены текстом issue
 или head tree. `budget.max_repair_iterations` не превышает двух.
 
+## Reasoning при повторной работе модели
+
+Для разрешённого model repair retry применяется reasoning escalation из
+CONTRIBUTING.md: следующий поддерживаемый уровень той же модели, при неизменных
+scope, permissions, consumed attempts и лимите двух автоматических циклов.
+Неполное обязательное role review следует тому же правилу; повышение уровня
+не делает executor своим controller. На верхнем уровне или при недоступном
+переключении требуется решение владельца. Операционные факты о модели/уровнях
+фиксируются в redacted handover; существующие JSON schemas не дополняются.
+
 ## Executor
 
 Executor может читать доверенный task contract, изменять только разрешённый
