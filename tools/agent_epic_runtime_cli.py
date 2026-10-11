@@ -34,6 +34,98 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
     "approved_plans_digest",
     "approved_final_digest",
 }
+
+
+def epic_config_keys(config: dict[str, Any]) -> set[str]:
+    version = config.get("schema_version")
+    if version not in {"1.0", "2.0", "3.0"}:
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    keys = EPIC_CONFIG_KEYS | (
+        {"approved_launch_digest"} if version != "1.0" else set()
+    )
+    return keys | ({"approved_planning_digest"} if version == "3.0" else set())
+
+
+def planning_profile_guard(
+    state: Path, config: dict[str, Any], mandate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Stdlib profile identity/closed-shape check before candidate imports."""
+    if config.get("schema_version") != "3.0":
+        return None
+    owner = private_json(state / "planning-profile.json")
+    keys = {
+        "schema_version",
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+        "tasks",
+        "limits",
+    }
+    if (
+        set(owner) != keys
+        or owner.get("schema_version") != "1.0"
+        or canonical_digest(owner) != config.get("approved_planning_digest")
+        or owner.get("mandate_digest") != config["approved_mandate_digest"]
+        or any(
+            owner.get(key) != mandate[key]
+            for key in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+    ):
+        raise DeploymentError("PLANNING_APPROVAL_MISMATCH")
+    maxima = {
+        "max_planner_attempts": 3,
+        "max_review_attempts": 3,
+        "max_input_chars": 1_000_000,
+        "max_output_chars": 200_000,
+        "max_paths": 64,
+    }
+    limits = owner["limits"]
+    tasks = owner["tasks"]
+    if (
+        not isinstance(limits, dict)
+        or set(limits) != set(maxima)
+        or any(
+            type(limits[key]) is not int or not 1 <= limits[key] <= maximum
+            for key, maximum in maxima.items()
+        )
+        or not isinstance(tasks, dict)
+        or not 1 <= len(tasks) <= 200
+    ):
+        raise DeploymentError("PLANNING_PROFILE_INVALID")
+    for number, item in tasks.items():
+        if (
+            re.fullmatch(r"[1-9][0-9]*", number) is None
+            or number not in mandate["task_grants"]
+            or not isinstance(item, dict)
+            or set(item) != {"criteria_sections", "task_class", "demo_template"}
+            or not isinstance(item["criteria_sections"], list)
+            or not 1 <= len(item["criteria_sections"]) <= 16
+            or any(
+                not isinstance(name, str)
+                or not name
+                or name.strip() != name
+                or len(name) > 120
+                or "\n" in name
+                for name in item["criteria_sections"]
+            )
+            or len(set(item["criteria_sections"])) != len(item["criteria_sections"])
+            or not isinstance(item["task_class"], str)
+            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", item["task_class"]) is None
+            or not isinstance(item["demo_template"], dict)
+        ):
+            raise DeploymentError("PLANNING_PROFILE_INVALID")
+    return owner
+
+
 BOOTSTRAP_MANDATE_KEYS = {
     "schema_version",
     "repository",
@@ -109,14 +201,10 @@ def managed_launch_guard(
     )
     epic_path = seed / "epic-runtime.json"
     config = private_json(epic_path) if epic_path.exists() else None
-    managed = config is not None and config.get("schema_version") == "2.0"
+    managed = config is not None and config.get("schema_version") in {"2.0", "3.0"}
     if not present and not managed:
         return
-    if (
-        config is None
-        or set(config) != EPIC_CONFIG_KEYS | {"approved_launch_digest"}
-        or not managed
-    ):
+    if config is None or set(config) != epic_config_keys(config) or not managed:
         raise DeploymentError("LAUNCH_PROFILE_REQUIRED")
     value = private_json(seed / "launch.json")
     if set(value) != LAUNCH_KEYS or value.get("schema_version") != "1.0":
@@ -150,6 +238,7 @@ def managed_launch_guard(
     if launch_config_digest(config, adapter) != value["runtime_config_digest"]:
         raise DeploymentError("LAUNCH_CONFIG_CHANGED")
     mandate = private_json(seed / "mandate.json")
+    planning_profile_guard(seed, config, mandate)
     if (
         any(
             value[key] != mandate.get(key)
@@ -531,10 +620,7 @@ def build_session(state: Path, root: Path) -> Any:
     ):
         raise DeploymentError("RECOVERY_ONE_TASK_REQUIRED")
     config = private_json(state / "epic-runtime.json")
-    managed = config.get("schema_version") == "2.0"
-    if set(config) != EPIC_CONFIG_KEYS | (
-        {"approved_launch_digest"} if managed else set()
-    ) or config.get("schema_version") not in {"1.0", "2.0"}:
+    if set(config) != epic_config_keys(config):
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     if (
         any(
@@ -547,6 +633,7 @@ def build_session(state: Path, root: Path) -> Any:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
+    planning_profile_guard(state, config, mandate)
     managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -573,13 +660,11 @@ def build_entry(state: Path, root: Path) -> Any:
         if not path.exists() and not path.is_symlink():
             raise DeploymentError(code)
     config = private_json(state / "epic-runtime.json")
-    managed = config.get("schema_version") == "2.0"
-    if set(config) != EPIC_CONFIG_KEYS | (
-        {"approved_launch_digest"} if managed else set()
-    ) or config.get("schema_version") not in {"1.0", "2.0"}:
+    if set(config) != epic_config_keys(config):
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
+    planning_profile_guard(state, config, mandate)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")

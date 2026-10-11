@@ -25,12 +25,13 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     installed, _ = install._validate(root, installation)
     config = guards.private_json(state / "epic-runtime.json")
     if (
-        set(config) != guards.EPIC_CONFIG_KEYS | {"approved_launch_digest"}
-        or config.get("schema_version") != "2.0"
+        config.get("schema_version") not in {"2.0", "3.0"}
+        or set(config) != guards.epic_config_keys(config)
     ):
         raise guards.DeploymentError("LAUNCH_PROFILE_REQUIRED")
     mandate = guards.private_json(state / "mandate.json")
     guards.bootstrap_authority(config, mandate, epic=True)
+    guards.planning_profile_guard(state, config, mandate)
     if (
         installed["repository"] != mandate["repository"]
         or installed["policy_sha"] != mandate["policy_sha"]
