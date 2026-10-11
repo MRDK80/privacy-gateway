@@ -340,7 +340,7 @@ def readiness(
             else keys | ({"approved_recovery_digest"} if recovery else set())
         )
         if set(config) != expected or config.get("schema_version") not in (
-            {"1.0", "2.0", "3.0", "4.0"} if epic else {"1.0", "2.0"}
+            {"1.0", "2.0", "3.0", "4.0", "5.0"} if epic else {"1.0", "2.0"}
         ):
             raise InstallError("RUNTIME_CONFIG_INVALID")
         if (
@@ -373,6 +373,11 @@ def readiness(
         if epic:
             guards.planning_profile_guard(state, config, mandate)
             guards.wait_profile_guard(state, config, mandate)
+            guards.quota_profile_guard(state, config, mandate)
+            if config.get("schema_version") == "5.0":
+                guards.quota_deployment_guard(
+                    state, root, config, mandate, adapter.epic_command,
+                )
             guards.managed_launch_guard(state, root, read_only=True, allow_initial=True)
         if (
             mandate["repository"] != value["repository"]

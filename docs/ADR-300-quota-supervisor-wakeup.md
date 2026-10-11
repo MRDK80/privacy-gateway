@@ -1,0 +1,319 @@
+# ADR-300: quota observation and bounded persistent supervisor wakeup
+
+Status: accepted. Independent design review PASS; owner approved implementation
+on 2026-10-11. Installation, activation and main merge remain separate decisions.
+Task #300, epic #294. No installation, activation or mandate is granted here.
+
+## Decision
+
+Opt-in epic config 5.0 retains config4 planning/wait bindings and adds
+approved_quota_digest. Config1/2/3/4 keep their existing closed shapes. A closed
+owner-approved quota profile1.0 binds repository/epic/roadmap/policy/mandate,
+owner, exact existing wait profile digest, a metered limit_id, a pinned absolute
+Codex executable and finite polling/lifecycle limits. A profile cannot create
+an action grant or change repair/task budgets.
+
+The quota source uses a bounded no-shell stdio App Server transport with fixed
+initialize/initialized and account/rateLimits/read messages only. It cannot
+call inference, login/logout, refresh, purchases/reset or owner notification.
+It parses capped structured responses in memory; no raw output/account/credit
+fields are persisted. Prefer rateLimitsByLimitId for the pinned bucket, with
+strict compatible legacy selection; missing or ambiguous selected quota is
+UNKNOWN, never free. A nullable secondary window is accepted only alongside a
+valid identified primary window. Validate both finite usedPercent windows and
+reset timestamps; unknown reset schedules a bounded fresh read. Elapsed reset
+time is no proof of quota recovery. Only structured rateLimitExceeded or
+usageLimitExceeded interruptions can enter quota pause; context/output/task
+or repair budgets and unclassified errors retain their separate outcomes.
+
+A new closed private quota-wait record1.0 retains original identity, stage,
+start/deadline/last-seen, selected exhausted windows/reset hints, poll attempts,
+next_check, and interrupted operation identity. It uses owner-only bounded
+storage outside worktrees and reserve-before-read. Reuse original phase budget;
+restart/config drift never extends the deadline or refunds an attempt. Frame,
+mandate expiry/revocation, launch/control and active checkpoint guards apply.
+Unknown clocks, unsupported source, malformed quota and exhausted finite limits
+stop fail closed. Existing checkpoint and ledger schemas remain unchanged;
+existing PAUSED_RATE_LIMIT pause/resume functions are integrated rather than
+claimed as sufficient on their own.
+
+Persistent wakeup is a separately installed POSIX host adapter, initially
+systemd user service/timer with fixed trusted supervisor entry and state,
+no shell, bounded deadlines and no model/issue-derived command. A separately
+owner-approved installation candidate binds exact service bytes and closed timer template, policy/config,
+state and a finite original lifecycle. Units contain no credentials/payload.
+Installation is an explicit owner action; design approval and normal task
+merge do not authorize it. No daemon/bootstrap/host settings change occurs as
+part of normal readiness or resume. Unsupported hosts or an unverified waker
+return readiness BLOCKED. No cron or chat prompt is substituted as proof.
+
+On wake the fixed trusted entry reacquires existing nonblocking single-runner
+ownership, rereads quota and validates original authority/live identities.
+Pending executor/delivery outcomes reconcile read-only first. UNKNOWN stays
+blocked; APPLIED avoids replay; NOT_APPLIED permits only an already-authorized
+bounded attempt. Controller/final interruptions use the same lifecycle and
+retain their phase and consumed budgets. Stop/revoke/expiry cancel future
+work; leftover scheduled wake cannot create authority. A new launch requires
+its own separately approved configuration. Windows remains unsupported.
+
+Readiness requires exact source and waker bindings, existing installed unit
+verification and a separately observed synthetic end-to-end probe that survives
+the originating process/turn and a supervisor restart, with exactly one runner
+and preserved budget. Running foreground sleep, future timestamps or successful
+unit creation are insufficient. Synthetic fixture/probe results are recorded
+as synthetic and never promoted to real owner receipts. Real installation and
+activation remain separate owner decisions.
+
+## Validation and boundaries
+
+Regression-first for unknown quota, both exhausted windows and unknown reset;
+quota interruptions in RUN_TASK/controller/final; bounded polling, restart,
+stop/revoke/expiry, drift, competing/duplicate wake and pending effect handling.
+Test installed frozen entry with real child boundaries and isolated synthetic
+persistent host probes where available; otherwise verify honest readiness
+BLOCKED. Full gate, independent controller, exact PR/post-merge CI and exact
+merge-tree demo remain separate. No public product contracts, dependency or
+release changes, #131 resume, main merge, budget reset or wider authority.
+
+Official source: https://learn.chatgpt.com/docs/app-server
+(account/rateLimits/read and multi-bucket/window fields). Installed CLI protocol
+schema currently exposes quota reads but no scheduling RPC; systemd support and
+actual durable wake must be probed, not inferred from binary availability.
+
+## Closed design contracts
+
+All records reject unknown fields, booleans in numeric fields, malformed SHA256,
+unsafe paths, symlink/hardlink/private-mode violations and foreign ownership.
+Repository/ref/owner identity reuse the existing validators. UTC values are
+finite integer Unix seconds. Schema versions are literal strings.
+
+Quota profile1.0 fields are exactly schema_version, repository, epic,
+roadmap_ref, policy_sha, mandate_digest, owner_identity, wait_profile_digest,
+limit_id, source, limits, wakeup.
+- source has exactly executable, executable_sha256, version_digest,
+  request_timeout_seconds (1..120). executable is an absolute owner-approved
+  regular Codex CLI path; no PATH resolution or commands from source data.
+  version_digest pins capped structured version identity rather than raw text.
+- limit_id is 1..128 ASCII letters/digits/underscore/hyphen; no guessed bucket.
+- limits has exactly poll_seconds (1..300), max_polls (1..512),
+  max_wait_seconds (1..86400), max_wakeups (1..512); max_wakeups >= max_polls.
+- wakeup has exactly backend (literal systemd_user), supervisor_sha256 and
+  host_probe_digest (SHA256 or null). Null/unverified probe cannot yield READY.
+
+Quota-wait1.0 fields are exactly schema_version, identity, stage,
+original_wait_digest, started_at, deadline_at, last_seen_at, attempts,
+status, exhausted_windows, resets_at, next_check_at, interrupted, wakeup.
+identity binds exactly repository, epic, policy_sha, mandate_digest,
+quota_profile_digest, wait_profile_digest, runtime_config_digest, limit_id,
+source_digest. stage is the source-defined #299 stage grammar. The original
+#299 record is created/validated first: original_wait_digest pins its immutable
+identity/start/deadline tuple, not a mutable full-record digest. Quota deadline
+is the minimum of its original deadline, frame deadline, mandate lifecycle,
+applicable recovery expiry and started_at+max_wait_seconds; restart never
+increases it. Quota polls retain their separate finite count without refunding
+or resetting #299 reads, CI polls, task or repair counters.
+status is READY/RESERVED/WAITING/FAILED. A RESERVED quota read after interruption
+is unclassified and fails closed; a read does not authorize any effect.
+exhausted_windows is a duplicate-free subset of primary/secondary; resets_at
+is integer or null. WAITING requires next_check_at <= original deadline.
+interrupted is null or exactly checkpoint_identity_digest, phase,
+operation_digest, outcome (PENDING/APPLIED/NOT_APPLIED/UNKNOWN). Binding comes
+from the existing trusted checkpoint/ledger, never stdout; facts are freshly
+reconciled and this record cannot substitute for their canonical receipts.
+wakeup is null or exactly candidate_digest, arm_id, attempts, status,
+next_check_at, unit_digest; unit_digest binds exact generated timer bytes. arm_id is a SHA256 bound to original identity and poll ordinal;
+status is RESERVED/ARMED/FIRED/CANCELLED/UNKNOWN. UNKNOWN cannot auto-reinstall
+or overwrite an existing binding. Last-seen rollback closes the wait.
+
+Installation candidate1.0 fields are exactly schema_version, repository,
+epic, policy_sha, state_digest, runtime_config_digest, quota_profile_digest,
+source_digest, supervisor_sha256, host_probe_digest, issued_at, expires_at,
+unit_prefix, service_sha256, timer_template_sha256, candidate_digest. candidate_digest
+hashes the other fields; unit_prefix is fixed pgw-quota- plus the first 32 hex
+characters of the full state/config binding. Full binding is retained and
+collisions rejected. expires_at cannot exceed existing approved lifecycle;
+service bytes and the closed timer template/fixed argv are generated from trusted pinned configuration.
+Owner approval is separate and pins this exact candidate digest. Unit names,
+source/entry bytes, state location and host probe cannot change under it.
+
+## Finite one-shot wake ownership
+
+The timer is a one-shot absolute UTC trigger, not a repeating timer. It may
+be armed only before next_check_at <= original quota deadline. Its service
+runs the fixed trusted wake entry once; after firing no subsequent trigger
+exists. Further WAITING creates a new ordinal/arm within the same original
+finite lifecycle and consumes a wake attempt before the bounded arm effect.
+No wake may arm a future trigger after deadline. Stale/duplicate callbacks
+validate full binding and ordinal, acquire existing runner lock and do no
+phase/effect work. A timer left after expiry can at most fire its already
+bound one-shot: it cannot rearm or renew authority.
+
+Installation and each arm use the existing canonical operation ledger style:
+reserve before effect, bounded exact read-only systemd reconciliation, then
+APPLIED/NOT_APPLIED/UNKNOWN. Existing units/state are preserved; conflicting
+bytes, foreign names/links or unknown partial install stop without overwrite,
+delete or blind retry. NOT_APPLIED permits only the already-approved bounded
+attempt. Installation is separate from quota polling and never inferred from
+an approval to implement the design.
+
+Owner stop/revoke cancels the owned pending one-shot through the narrow pinned
+host adapter and verifies inactive/no-future-trigger state read-only; expiry
+blocks new arm and cancels any still-pending owned trigger. If host access
+fails, cancellation is UNKNOWN and readiness BLOCKED; do not claim permanent
+inactivity. No candidate can alter unrelated units, enable linger, bootstrap
+daemons or change host settings. Required host durability is verified by the
+separate synthetic process/turn-exit and supervisor-restart probe. A binary,
+running foreground child or retained timestamp does not satisfy the probe.
+
+The installed service uses fixed approved entry/state argv. Installation has no
+active timer. Each arm creates a uniquely named one-shot timer under the
+approved prefix plus its full arm_id, using the pinned closed timer template
+with only validated next_check_at and service identity substituted. Its exact
+unit digest is saved before creation and verified during reconciliation;
+existing conflicting arm units are never rewritten. No arbitrary property or
+command substitution is allowed. The installation candidate pins service bytes
+and template bytes, not a future timestamp-dependent timer hash. Finite arm
+allowance belongs to the separately owner-approved quota/installation policy.
+
+Host-probe record binds source executable/version, trusted wake entry, service
+and timer-template digests, host backend identity and observed process-exit/
+restart results. It does not include the enclosing quota profile/config digest,
+avoiding circular hash binding. Readiness separately validates final exact
+config/profile/candidate bindings and installed bytes; a generic host probe is
+never an installation approval or an operation receipt.
+
+Structured interruption must come from the pinned role backend's first-party
+error event, bound to the active executor/controller/final invocation. Existing
+codex_adapter redacted stderr token matching is diagnostic only and cannot
+trigger automatic quota pause. Opt-in role integration must propagate a closed
+redacted invocation-bound classification from the supported structured backend;
+if that backend cannot expose the positive code, readiness is BLOCKED for
+quota interruption rather than fabricating structured evidence. The quota-read
+transport itself remains read-only; it never performs role inference. Runtime
+phase/reconciliation retains existing pending-intent semantics before any
+quota resume can repeat admitted work. Synthetic structured backend tests alone
+do not prove the installed real backend supports the required interruption.
+
+## Accepted addendum: structured role backend
+
+Task #300; independent design review PASS, owner approved on 2026-10-11.
+No runtime installation or activation.
+The accepted ADR requires first-party invocation-bound quota codes. Installed
+Codex 0.157.1 exec emits only turn.failed.error.message; parsing text or HTTP
+429 cannot fulfill that contract. App Server ErrorNotification exposes the
+required structured codes and thread/turn identity.
+
+## Concrete decision
+
+For opt-in config5 only, replace the role transport with a fixed installed
+App Server role backend. Legacy config1/2/3/4 keep existing exec behavior.
+Quota-read remains a separate no-inference process with its fixed RPC allowlist.
+A role process may send only initialize/initialized, thread/start, turn/start,
+turn/interrupt and thread/archive for its own created ephemeral thread. It
+rejects server requests rather than approving tools, login or purchases.
+No raw event/error/message is persisted. Only terminal first-party error codes
+rateLimitExceeded/usageLimitExceeded with matching threadId/turnId and
+willRetry=false may emit a closed private role-interruption1.0:
+schema_version, role, invocation_digest, thread_digest, turn_digest,
+error_code, backend_digest, outcome. Outcome remains UNKNOWN for executor
+unless canonical existing receipts prove APPLIED/NOT_APPLIED. Controller is
+read-only; its interrupted call still consumes the original role allowance.
+The new envelope is not a canonical executor/controller report or receipt;
+model-authored content cannot emit it through the structured protocol path.
+
+Both roles use the existing external Bubblewrap root-read-only boundary and
+private writable scratch; executor retains only existing validated writable
+regular files. Controller retains its pinned separate policy bundle and no
+writable task paths. Isolated CODEX_HOME has no user config, plugins or hooks;
+auth is mounted read-only exactly as ADR-225 for native backend authentication;
+the operator does not read it or include it in prompts or diagnostics. Fixed trusted config disables project instruction discovery;
+unsupported versions/settings or inability to prove effective policy fail
+readiness BLOCKED. Thread sandbox/approval parameters and returned effective
+settings must match the expected existing role boundary; no fallback to full
+access outside the namespace. Thread start stays ephemeral, fresh per role,
+with original model selection and bounded exact full prompt/output schema.
+
+Reserve invocation and persist consumed role counters before inference. A
+terminal interruption pauses the current workflow without marking its report
+or gate complete. A killed/unknown call is not replayed. Resuming controller
+requires preserved validated executor snapshot/gate provenance; if unavailable,
+BLOCKED until separately authorized recovery. A fresh process never resets
+repair, time, role or output budget. This addendum does not authorize increased
+capacity, persistent model conversations or arbitrary intermediate replay.
+
+## Verification before READY
+
+Exact pinned protocol/version and sandbox regression tests; separate synthetic
+namespace write probe; structured positive/error/context classifications bound
+to actual role calls; unknown effect reconciliation; full local gate,
+independent controller and exact PR/post-merge CI/demo. Real installed host
+readiness requires separate owner-approved installation and observed durable
+wakeup proof. No public Library/pgw/schema change or production pilot.
+
+### Derived implementation bindings
+
+The fixed role transport accepts the supported native App Server's returned
+approval policy, sandbox, cwd and instruction-source list before sending the
+first turn. It rejects server approval requests and foreign thread/turn events.
+The native version and executable bytes remain owner-pinned. The quota-read
+connection sends only initialize, initialized and account/rateLimits/read;
+role inference is a separate connection and reservation.
+
+Before a controller call, an opt-in bounded workflow retains the exact contract,
+head and passing full gate in its private reservation. A fresh controller-only
+continuation checks current policy, scope and unchanged gate snapshot, preserves
+original start and consumed calls, and charges its next controller call before
+launch. It does not repeat executor work or infer delivery success. Bootstrap
+can classify this boundary as NOT_APPLIED only while reviewed delivery artifacts
+and the delivery ledger are absent. Any delivery intent keeps canonical ledger
+reconciliation and UNKNOWN handling. Legacy orphaned calls remain blocked.
+
+Final role reservations retain one original call, with no repair allowance.
+A verified quota interruption saves a separate closed private final pause bound
+to the owner approval, reservation key, active FINAL/RECONCILE stage and event.
+The supervisor polls and arms a wake within that stage's original finite wait.
+Once quota is free, an exhausted final role allowance returns
+FINAL_ROLE_BUDGET_EXHAUSTED; quota recovery never refunds it or authorizes a new
+final review. Any pending final delivery ledger is handled fail closed rather
+than discarded as a read-only interruption.
+
+Readiness executes a fixed stdlib namespace probe over temporary synthetic
+files, never candidate Python. Both role namespaces must deny protected writes;
+only executor may write the single bound allowed file, and scratch remains
+writable. Unsupported namespace behavior returns QUOTA_NAMESPACE_UNSUPPORTED.
+The proof is specific to filesystem permissions and does not substitute for the
+separately owner-pinned persistent host wake proof.
+
+The host proof has a closed internal shape: schema_version, kind, backend,
+host_digest, source_digest, supervisor_sha256, service_sha256,
+timer_template_sha256, origin_exit_digest, restart_digest, runner_count,
+budget_before_digest, budget_after_digest, observed_at and probe_digest.
+runner_count is exactly one, retained original budget digests must match, and
+origin/restart observations must be distinct. kind=synthetic is always refused
+by real readiness. A schema-valid observation without the exact approved digest
+and current installation/source/host bindings cannot yield READY.
+
+An existing arm is reconciled through its exact installed unit bytes, loaded
+fragment and active state without replaying start. The timestamp is checked
+again immediately before start after bounded host reads. A wake arriving before
+its origin releases the supervisor lock waits with fresh authority guards only
+within its invocation deadline, then rechecks original stage budgets before any
+effect. This wait grants no new quota or role attempts. Cancellation persists
+its own reservation and reconciles an uncertain stop read-only; an inactive
+owned timer proves completion without another stop call.
+
+Exact callback attribution implements the accepted arm/ordinal binding with a
+fixed owner-pinned systemd service template. The only template substitution is
+`%i` passed as `--wake-arm-id` to the fixed trusted entry and state argv. The
+instance is exactly a lowercase 64-hex saved arm id; it cannot select an executable,
+state path or property. Under canonical RunnerLock the callback verifies the
+current saved arm, ordinal, candidate and exact host receipt before consuming it.
+Stale and duplicate instances perform no quota poll or phase effect. Changed
+service/template digests require a fresh exact candidate installation approval;
+this clarification grants no installation or activation authority.
+
+Controller continuation requires a retained validated terminal quota interruption
+matching the consumed role invocation/backend, in addition to the preserved gate
+boundary. A reservation without that receipt remains an unknown orphan. Source
+version and quota reads use the minimum persisted quota/stage/lifecycle deadline
+both as a process timeout and as a periodic cancellation guard.

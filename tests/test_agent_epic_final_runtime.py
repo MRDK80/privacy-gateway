@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tools import agent_epic_final_delivery as driver
@@ -122,3 +123,125 @@ def test_post_merge_requires_actual_main_checks_and_no_reopened_child(
         engine, "_facts", lambda _: (request.roadmap_sha, "c" * 40, [275])
     )
     assert engine.gate(request).machine_code == "OPEN_REQUIRED_TASKS"
+
+
+def test_final_quota_retains_reserved_role_and_blocks_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    from typing import cast
+
+    from tools import agent_epic_loop as loop
+    from tools import agent_quota_role as transport
+    from tools.agent_quota_wait import bare_digest
+
+    engine, _request = build(tmp_path, monkeypatch)
+    adapter = transport.CommandAdapter(
+        ["synthetic-executor"],
+        ["synthetic-controller"],
+        root=engine.root,
+        timeout_seconds=1,
+        output_limit=1000,
+        backend_digest="a" * 64,
+        guard=lambda: None,
+    )
+    engine.adapter = adapter
+    engine.wait_scope = cast(Any, SimpleNamespace(active_stage="FINAL:FINAL_GATE"))
+    calls: list[str] = []
+
+    def quota_review(
+        request: dict[str, Any],
+        policy: dict[str, str],
+        session: str,
+    ) -> dict[str, Any]:
+        calls.append(session)
+        event = {
+            "schema_version": "1.0",
+            "role": "controller",
+            "invocation_digest": bare_digest(
+                {
+                    **request,
+                    "trusted_policy": policy,
+                    "session_id": session,
+                }
+            ),
+            "thread_digest": "b" * 64,
+            "turn_digest": "c" * 64,
+            "error_code": "rateLimitExceeded",
+            "backend_digest": "a" * 64,
+            "outcome": "UNKNOWN",
+        }
+        raise loop.QuotaPaused(
+            {
+                "exhausted_windows": ["primary"],
+                "resets_at": 2000,
+                "next_check_at": 1300,
+            },
+            interruption=event,
+        )
+
+    monkeypatch.setattr(adapter, "review", quota_review)
+    with pytest.raises(loop.QuotaPaused):
+        engine._quota_review({"synthetic": True}, {}, "d" * 64)
+    with pytest.raises(loop.PhaseBlocked, match="FINAL_ROLE_OUTCOME_UNKNOWN"):
+        engine._quota_review({"synthetic": True}, {}, "d" * 64)
+    assert len(calls) == 1
+    saved = engine.storage.__class__(engine.directory).load("quota-final-pause")
+    assert saved is not None and saved["stage"] == "FINAL:FINAL_GATE"
+    assert saved["status"] == "PAUSED_RATE_LIMIT"
+
+
+def test_final_resume_reports_durable_quota_pause_without_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import agent_epic_loop as loop
+
+    engine, _request = build(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def paused() -> Any:
+        calls.append("call")
+        raise loop.QuotaPaused(
+            {
+                "exhausted_windows": ["primary"],
+                "resets_at": 2000,
+                "next_check_at": 1300,
+            }
+        )
+
+    monkeypatch.setattr(engine, "_resume", paused, raising=False)
+    result = engine.resume()
+    assert result.status == "PAUSED_RATE_LIMIT"
+    assert calls == ["call"]
+
+
+def test_consumed_final_review_blocks_before_repeating_local_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import hashlib
+
+    from tools import agent_coordinator_handover as handover
+    from tools import agent_epic_loop as loop
+    from tools import agent_quota_role as transport
+
+    engine, request = build(tmp_path, monkeypatch)
+    engine.adapter = transport.CommandAdapter(
+        ["synthetic-executor"],
+        ["synthetic-controller"],
+        root=engine.root,
+        timeout_seconds=1,
+        output_limit=1000,
+        backend_digest="a" * 64,
+        guard=lambda: None,
+    )
+    key = hashlib.sha256(engine.approved_digest.encode()).hexdigest()
+    engine.storage.__class__(engine.directory / "final-role-reservations").save(
+        key,
+        {"status": "RESERVED"},
+    )
+    monkeypatch.setattr(handover, "_git", lambda *args: pytest.fail("no repeated gate"))
+    with pytest.raises(loop.PhaseBlocked, match="FINAL_ROLE_OUTCOME_UNKNOWN"):
+        FinalRuntime._prepare(engine, request)

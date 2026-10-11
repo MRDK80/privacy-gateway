@@ -12,6 +12,8 @@ WINDOWS = ("primary", "secondary")
 
 
 def _exhausted(snapshot: Mapping[str, Any]) -> tuple[list[str], int | None, bool]:
+    if not isinstance(snapshot.get("primary"), Mapping):
+        raise loop.LoopError("RATE_LIMIT_SNAPSHOT_INVALID")
     exhausted: list[str] = []
     resets: list[int] = []
     unknown_reset = False
@@ -23,11 +25,9 @@ def _exhausted(snapshot: Mapping[str, Any]) -> tuple[list[str], int | None, bool
             raise loop.LoopError("RATE_LIMIT_SNAPSHOT_INVALID")
         used = window.get("usedPercent")
         reset = window.get("resetsAt")
-        if not isinstance(used, int) or isinstance(used, bool):
+        if type(used) is not int or not 0 <= used <= 100:
             raise loop.LoopError("RATE_LIMIT_SNAPSHOT_INVALID")
-        if reset is not None and (
-            not isinstance(reset, int) or isinstance(reset, bool)
-        ):
+        if reset is not None and (type(reset) is not int or reset < 0):
             raise loop.LoopError("RATE_LIMIT_SNAPSHOT_INVALID")
         if used >= 100:
             exhausted.append(name)

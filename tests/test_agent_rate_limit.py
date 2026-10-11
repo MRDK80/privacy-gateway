@@ -148,3 +148,61 @@ def test_non_quota_errors_never_pause(tmp_path: Path, error: str) -> None:
     )
     assert result.machine_code == "NOT_RATE_LIMIT_ERROR"
     assert store.load() is None
+
+
+@pytest.mark.parametrize(
+    "snapshot",
+    [{}, {"primary": None}, {"secondary": {"usedPercent": 0, "resetsAt": 2000}}],
+)
+def test_unknown_quota_cannot_resume(
+    tmp_path: Path, snapshot: dict[str, object]
+) -> None:
+    value = _checkpoint()
+    store = _store(tmp_path)
+    rate_limit.pause(
+        value,
+        live=_live(value),
+        store=store,
+        snapshot={"primary": {"usedPercent": 100, "resetsAt": 1100}},
+        error_code="rateLimitExceeded",
+        now=1000,
+    )
+    expected = store.load()
+    assert expected is not None
+    result = rate_limit.resume(
+        expected, live=_live(value), store=store, snapshot=snapshot, now=1200
+    )
+    assert result.status == "ESCALATE"
+    assert result.machine_code == "RATE_LIMIT_SNAPSHOT_INVALID"
+    assert store.load()["status"] == "PAUSED_RATE_LIMIT"  # type: ignore[index]
+
+
+def test_effect_quota_pause_retains_pending_phase_under_runner_lock(
+    tmp_path: Path,
+) -> None:
+    value = _checkpoint()
+    store = _store(tmp_path)
+    store.save(value)
+
+    def effect() -> dict[str, object]:
+        raise loop.QuotaPaused(
+            {
+                "exhausted_windows": ["primary"],
+                "resets_at": 2000,
+                "next_check_at": 1300,
+            }
+        )
+
+    result = loop.advance(
+        value,
+        live=_live(value),
+        store=store,
+        target_phase="PR_CI",
+        effect=effect,
+        reconcile=lambda phase: ("NOT_APPLIED", None),
+    )
+    assert result.status == "PAUSED_RATE_LIMIT"
+    saved = store.load()
+    assert saved is not None
+    assert saved["phase"] == "RUN_TASK" and saved["pending_phase"] == "PR_CI"
+    assert saved["completed_phases"] == ["RUN_TASK"]

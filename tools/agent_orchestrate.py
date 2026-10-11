@@ -211,9 +211,7 @@ def _safe_ref(root: Path, value: str) -> bool:
     return bool(value) and not value.startswith("-")
 
 
-def _validate_delivery_indices(
-    criteria: Sequence[str], indices: Sequence[int]
-) -> None:
+def _validate_delivery_indices(criteria: Sequence[str], indices: Sequence[int]) -> None:
     if not indices:
         return
     if (
@@ -1145,8 +1143,7 @@ def _gate_repair_feedback(gate_result: Any) -> dict[str, Any]:
     checks = redacted.get("checks")
     return {
         "source": "gate",
-        "machine_code": _safe_identifier(redacted.get("machine_code"))
-        or "GATE_FAILED",
+        "machine_code": _safe_identifier(redacted.get("machine_code")) or "GATE_FAILED",
         "checks": [
             {
                 "name": check["name"],
@@ -1322,6 +1319,69 @@ def public_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _quota_receipt_valid(
+    saved: dict[str, Any], backend_digest: str | None = None
+) -> bool:
+    from tools import agent_orchestrate as quota_workflow
+    from tools.agent_quota_role import validate_event
+
+    event = saved.get("quota_interruption")
+    try:
+        validate_event(
+            event,
+            role=saved["role_pending"],
+            invocation_digest=saved["invocation_digest"],
+            backend_digest=backend_digest
+            if backend_digest is not None
+            else saved["quota_backend_digest"],
+        )
+        return saved.get("machine_code") == "ROLE_QUOTA_INTERRUPTED"
+    except (quota_workflow.OrchestrationError, KeyError, TypeError):
+        return False
+
+
+def controller_resume_available(
+    contract: TaskContract,
+    *,
+    root: Path,
+    storage: StateStore,
+) -> bool:
+    """Prove the completed gate boundary before another read-only review."""
+    try:
+        saved = storage.load(_run_key(contract))
+        if saved is None or saved.get("terminal") is not False:
+            return False
+        boundary = saved.get("controller_boundary")
+        if (
+            saved.get("role_pending") != "controller"
+            or not _quota_receipt_valid(saved)
+            or not isinstance(boundary, dict)
+            or set(boundary) != {"schema_version", "contract", "head_sha", "gate"}
+            or boundary["schema_version"] != "1.0"
+            or boundary["contract"]
+            != json.loads(json.dumps(_contract_fields(contract)))
+            or boundary["head_sha"] != _head_sha(root, contract)
+            or not isinstance(boundary["gate"], dict)
+            or not agent_gate.gate_evidence_is_passing(boundary["gate"])
+            or any(
+                type(saved.get(key)) is not int
+                or not 1 <= saved[key] <= contract.max_repair_iterations + 1
+                for key in ("executor_calls", "controller_calls")
+            )
+            or not isinstance(saved.get("started"), (int, float))
+            or isinstance(saved["started"], bool)
+            or not 0 <= time.time() - saved["started"] < contract.max_minutes * 60
+        ):
+            return False
+        _assert_private_artifacts_safe(root)
+        _assert_scope(_changed_files(root, contract), contract)
+        _load_trusted_policy(root, contract)
+        _assert_gate_snapshot_unchanged(root, contract, boundary["gate"])
+        return True
+    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def run(
     contract: TaskContract,
     *,
@@ -1333,6 +1393,9 @@ def run(
     usage: Usage = Usage(),
 ) -> RunResult:
     """Run or safely resume the bounded executor/gate/controller loop."""
+    from tools.agent_epic_loop import QuotaPaused
+    from tools.agent_quota_role import Interrupted as QuotaInterrupted
+
     repair_feedback: dict[str, Any] | None = None
     try:
         storage.directory.resolve().relative_to(root.resolve())
@@ -1378,9 +1441,7 @@ def run(
         if (
             machine_code != "EXTERNAL_GATE_PENDING"
             and status in {"PASS", "PASS_WITH_NOTES", "FAIL_ESCALATE"}
-        ) and (
-            not final_verdicts or final_verdicts[-1] != status
-        ):
+        ) and (not final_verdicts or final_verdicts[-1] != status):
             final_verdicts.append(status)
         final_failures = list(failures)
         evidence_state["total_seconds"] = round(max(0.0, time.time() - started), 3)
@@ -1428,7 +1489,67 @@ def run(
         )
         return result
 
-    if previous and repairs > 0:
+    controller_boundary: dict[str, Any] | None = None
+    resume_controller = False
+    quota_enabled = getattr(adapter, "quota_resume_enabled", False) is True
+
+    def reserve_role(role: str, payload: dict[str, Any]) -> None:
+        # Persist consumption before the provider starts. An orphaned call is
+        # not proof of completion and cannot be refunded on process restart.
+        storage.save(
+            run_key,
+            {
+                "run_id": run_id,
+                "started": started,
+                "repair_iterations": repairs,
+                "terminal": False,
+                "status": "running",
+                "machine_code": "ROLE_RESERVED",
+                "executor_calls": executor_calls,
+                "controller_calls": controller_calls,
+                "findings": findings,
+                "verdicts": verdicts,
+                "failures": failures,
+                "role_pending": role,
+                "controller_boundary": controller_boundary
+                if role == "controller"
+                else None,
+                "invocation_digest": hashlib.sha256(
+                    json.dumps(
+                        {k: v for k, v in payload.items() if k != "contract_object"},
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                    ).encode()
+                ).hexdigest(),
+            },
+        )
+
+    if previous and previous.get("role_pending") is not None:
+        boundary = previous.get("controller_boundary")
+        if (
+            not quota_enabled
+            or gate is not None
+            or previous.get("role_pending") != "controller"
+            or not isinstance(getattr(adapter, "backend_digest", None), str)
+            or not _quota_receipt_valid(
+                previous, getattr(adapter, "backend_digest", None)
+            )
+            or not isinstance(boundary, dict)
+            or set(boundary) != {"schema_version", "contract", "head_sha", "gate"}
+            or boundary.get("schema_version") != "1.0"
+            or boundary.get("contract")
+            != json.loads(json.dumps(_contract_fields(contract)))
+            or not isinstance(boundary.get("gate"), dict)
+            or not agent_gate.gate_evidence_is_passing(boundary["gate"])
+        ):
+            return finish("FAIL_ESCALATE", "ROLE_OUTCOME_UNKNOWN")
+        controller_boundary = boundary
+        resume_controller = True
+    if max(executor_calls, controller_calls) > contract.max_repair_iterations + 1:
+        return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
+
+    if previous and repairs > 0 and not resume_controller:
         # Public state deliberately excludes model-derived feedback. A resumed
         # repair cannot safely reconstruct it from that state (#219).
         return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
@@ -1445,115 +1566,141 @@ def run(
         while True:
             if time.time() - started > contract.max_minutes * 60:
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
-            executor_session = uuid.uuid4().hex
-            executor_calls += 1
-            executor_started = time.perf_counter()
-            executor_request: dict[str, Any] = {
-                "contract": _contract_fields(contract),
-                "contract_object": contract,
-                "head_sha": head_sha,
-                "repair_iteration": repairs,
-            }
-            if contract.delivery_criterion_indices:
-                delivery = set(contract.delivery_criterion_indices)
-                executor_request["review_criteria"] = [
-                    item
-                    for index, item in enumerate(contract.acceptance_criteria, 1)
-                    if index not in delivery
-                ]
-                executor_request["pending_delivery_criteria"] = [
-                    item
-                    for index, item in enumerate(contract.acceptance_criteria, 1)
-                    if index in delivery
-                ]
-            if repair_feedback is not None:
-                executor_request["repair_feedback"] = repair_feedback
-            report = adapter.execute(executor_request, executor_session)
-            _validate_report(report, contract, head_sha)
-            evidence_state["executor_seconds"] = round(
-                max(0.0, time.perf_counter() - executor_started), 3
-            )
-            if _head_sha(root, contract) != head_sha:
-                return finish("FAIL_ESCALATE", "UNAUTHORIZED_HEAD_CHANGE")
-            _assert_private_artifacts_safe(root)
-            paths = _changed_files(root, contract)
-            _assert_scope(paths, contract)
-            gate_started = time.perf_counter()
-            gate_result = gate_runner(contract)
-            evidence_state["gate_seconds"] = round(
-                max(0.0, time.perf_counter() - gate_started), 3
-            )
-            _record_gate_evidence(evidence_state, gate_result)
-            gate_passed = (
-                agent_gate.gate_evidence_is_passing(gate_result)
-                if production_gate
-                else gate_result.get("status") == "passed"
-            )
-            if not gate_passed:
-                gate_code = (
-                    str(gate_result.get("machine_code", "GATE_FAILED"))
+            if resume_controller:
+                assert controller_boundary is not None
+                if controller_boundary["head_sha"] != head_sha:
+                    return finish("FAIL_ESCALATE", "UNAUTHORIZED_HEAD_CHANGE")
+                gate_result = controller_boundary["gate"]
+                resume_controller = False
+            else:
+                executor_session = uuid.uuid4().hex
+                executor_calls += 1
+                if executor_calls > contract.max_repair_iterations + 1:
+                    return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
+                executor_started = time.perf_counter()
+                executor_request: dict[str, Any] = {
+                    "contract": _contract_fields(contract),
+                    "contract_object": contract,
+                    "head_sha": head_sha,
+                    "repair_iteration": repairs,
+                }
+                if contract.delivery_criterion_indices:
+                    delivery = set(contract.delivery_criterion_indices)
+                    executor_request["review_criteria"] = [
+                        item
+                        for index, item in enumerate(contract.acceptance_criteria, 1)
+                        if index not in delivery
+                    ]
+                    executor_request["pending_delivery_criteria"] = [
+                        item
+                        for index, item in enumerate(contract.acceptance_criteria, 1)
+                        if index in delivery
+                    ]
+                if repair_feedback is not None:
+                    executor_request["repair_feedback"] = repair_feedback
+                reserve_role(
+                    "executor",
+                    {**executor_request, "session_id": executor_session},
+                )
+                report = adapter.execute(executor_request, executor_session)
+                _validate_report(report, contract, head_sha)
+                evidence_state["executor_seconds"] = round(
+                    max(0.0, time.perf_counter() - executor_started), 3
+                )
+                if _head_sha(root, contract) != head_sha:
+                    return finish("FAIL_ESCALATE", "UNAUTHORIZED_HEAD_CHANGE")
+                _assert_private_artifacts_safe(root)
+                paths = _changed_files(root, contract)
+                _assert_scope(paths, contract)
+                gate_started = time.perf_counter()
+                gate_result = gate_runner(contract)
+                evidence_state["gate_seconds"] = round(
+                    max(0.0, time.perf_counter() - gate_started), 3
+                )
+                _record_gate_evidence(evidence_state, gate_result)
+                gate_passed = (
+                    agent_gate.gate_evidence_is_passing(gate_result)
                     if production_gate
-                    else "GATE_FAILED"
+                    else gate_result.get("status") == "passed"
                 )
-                failures.append(gate_code)
-                if repairs >= contract.max_repair_iterations:
-                    return finish("FAIL_ESCALATE", gate_code)
-                repair_feedback = _gate_repair_feedback(gate_result)
-                repairs += 1
-                storage.save(
-                    run_key,
-                    {
-                        "run_id": run_id,
-                        "started": started,
-                        "repair_iterations": repairs,
-                        "terminal": False,
-                        "status": "running",
-                        "machine_code": gate_code,
-                        "executor_calls": executor_calls,
-                        "controller_calls": controller_calls,
-                        "findings": findings,
-                        "verdicts": verdicts,
-                        "failures": failures,
-                    },
-                )
-                continue
+                if not gate_passed:
+                    gate_code = (
+                        str(gate_result.get("machine_code", "GATE_FAILED"))
+                        if production_gate
+                        else "GATE_FAILED"
+                    )
+                    failures.append(gate_code)
+                    if repairs >= contract.max_repair_iterations:
+                        return finish("FAIL_ESCALATE", gate_code)
+                    repair_feedback = _gate_repair_feedback(gate_result)
+                    repairs += 1
+                    storage.save(
+                        run_key,
+                        {
+                            "run_id": run_id,
+                            "started": started,
+                            "repair_iterations": repairs,
+                            "terminal": False,
+                            "status": "running",
+                            "machine_code": gate_code,
+                            "executor_calls": executor_calls,
+                            "controller_calls": controller_calls,
+                            "findings": findings,
+                            "verdicts": verdicts,
+                            "failures": failures,
+                        },
+                    )
+                    continue
             if production_gate:
                 _assert_gate_snapshot_unchanged(root, contract, gate_result)
                 evidence_state["tree_unchanged"] = True
                 _record_gate_evidence(evidence_state, gate_result)
+            if (
+                quota_enabled
+                and production_gate
+                and (controller_boundary is not None or report["status"] == "completed")
+            ):
+                controller_boundary = {
+                    "schema_version": "1.0",
+                    "contract": _contract_fields(contract),
+                    "head_sha": head_sha,
+                    "gate": gate_result,
+                }
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
             controller_calls += 1
+            if controller_calls > contract.max_repair_iterations + 1:
+                return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
             controller_started = time.perf_counter()
             review_request: dict[str, Any] = {
+                "issue": contract.issue,
+                "acceptance_criteria": list(contract.acceptance_criteria),
+                "contract": {
                     "issue": contract.issue,
+                    "epic": contract.epic,
                     "acceptance_criteria": list(contract.acceptance_criteria),
-                    "contract": {
-                        "issue": contract.issue,
-                        "epic": contract.epic,
-                        "acceptance_criteria": list(contract.acceptance_criteria),
-                        "base_ref": contract.base_ref,
-                        "base_sha": contract.base_sha,
-                        "head_ref": contract.head_ref,
-                        "allowed_paths": list(contract.allowed_paths),
-                        "permissions": asdict(contract.permissions),
-                        "max_repair_iterations": contract.max_repair_iterations,
-                        "remaining_repair_iterations": contract.max_repair_iterations
-                        - repairs,
-                        "max_minutes": contract.max_minutes,
-                        "task_class": contract.task_class,
-                    },
-                    "diff": diff,
-                    "gate_evidence": gate_result,
-                    "reviewed_state": {
-                        "snapshot_commit": gate_result.get("snapshot", {}).get(
-                            "snapshot_commit"
-                        )
-                    },
+                    "base_ref": contract.base_ref,
                     "base_sha": contract.base_sha,
-                    "head_sha": head_sha,
-                    "repair_iteration": repairs,
-                }
+                    "head_ref": contract.head_ref,
+                    "allowed_paths": list(contract.allowed_paths),
+                    "permissions": asdict(contract.permissions),
+                    "max_repair_iterations": contract.max_repair_iterations,
+                    "remaining_repair_iterations": contract.max_repair_iterations
+                    - repairs,
+                    "max_minutes": contract.max_minutes,
+                    "task_class": contract.task_class,
+                },
+                "diff": diff,
+                "gate_evidence": gate_result,
+                "reviewed_state": {
+                    "snapshot_commit": gate_result.get("snapshot", {}).get(
+                        "snapshot_commit"
+                    )
+                },
+                "base_sha": contract.base_sha,
+                "head_sha": head_sha,
+                "repair_iteration": repairs,
+            }
             if contract.delivery_criterion_indices:
                 delivery = set(contract.delivery_criterion_indices)
                 review_request["review_criteria"] = [
@@ -1571,6 +1718,14 @@ def run(
                 )
             if contract.policy_sha is not None:
                 review_request["contract"]["policy_sha"] = contract.policy_sha
+            reserve_role(
+                "controller",
+                {
+                    **review_request,
+                    "session_id": controller_session,
+                    "trusted_policy": trusted_policy,
+                },
+            )
             verdict_payload = adapter.review(
                 review_request, trusted_policy, controller_session
             )
@@ -1605,6 +1760,36 @@ def run(
                     "failures": failures,
                 },
             )
+    except (QuotaInterrupted, QuotaPaused) as error:
+        from tools import agent_orchestrate as quota_workflow
+        from tools.agent_quota_role import validate_event
+
+        reserved = storage.load(run_key)
+        if reserved is not None and quota_enabled:
+            backend_digest = getattr(adapter, "backend_digest", None)
+            if not isinstance(backend_digest, str):
+                return finish("FAIL_ESCALATE", "ROLE_INTERRUPTION_INVALID")
+            try:
+                event = validate_event(
+                    error.event
+                    if isinstance(error, QuotaInterrupted)
+                    else error.interruption,
+                    role=reserved["role_pending"],
+                    invocation_digest=reserved["invocation_digest"],
+                    backend_digest=backend_digest,
+                )
+            except (quota_workflow.OrchestrationError, KeyError, TypeError):
+                return finish("FAIL_ESCALATE", "ROLE_INTERRUPTION_INVALID")
+            storage.save(
+                run_key,
+                {
+                    **reserved,
+                    "quota_interruption": event,
+                    "quota_backend_digest": event["backend_digest"],
+                    "machine_code": "ROLE_QUOTA_INTERRUPTED",
+                },
+            )
+        raise
     except OrchestrationError as error:
         return finish("FAIL_ESCALATE", error.machine_code)
     except Exception:

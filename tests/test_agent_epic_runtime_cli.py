@@ -240,3 +240,95 @@ def test_unknown_reconciliation_does_not_emit_private_diagnostics(
     )
     assert cli.main() == 0
     assert json.loads(capsys.readouterr().out) == {"state": "UNKNOWN", "receipt": None}
+
+
+@pytest.mark.parametrize(
+    "command,extra",
+    [
+        ("quota_install", []),
+        ("quota_prepare", ["--approved-wakeup-digest", "a" * 64]),
+        ("quota_wake", ["--approved-wakeup-digest", "a" * 64]),
+    ],
+)
+def test_quota_install_approval_cannot_apply_to_another_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    extra: list[str],
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runtime.py",
+            command,
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--repository-root",
+            str(tmp_path / "repo"),
+            *extra,
+        ],
+    )
+    monkeypatch.setattr(
+        cli, "build_entry", lambda *args: pytest.fail("no candidate imports")
+    )
+    with pytest.raises(SystemExit) as result:
+        cli.main()
+    assert result.value.code == 2
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Private POSIX state")
+@pytest.mark.parametrize("conflict", [False, True])
+def test_quota_prepare_is_inactive_and_preserves_existing_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    conflict: bool,
+) -> None:
+    from tools import agent_orchestrate as workflow
+    from tools import agent_quota_supervisor as quota
+    from tools import agent_quota_wakeup as wake
+
+    root, state = tmp_path / "repo", tmp_path / "state"
+    root.mkdir(mode=0o700)
+    state.mkdir(mode=0o700)
+    workflow.StateStore(state).save("epic-runtime", {"schema_version": "5.0"})
+    value = {"candidate_digest": "a" * 64}
+    previous = {"candidate_digest": "b" * 64}
+    if conflict:
+        workflow.StateStore(state).save("quota-wakeup-candidate", previous)
+    checked: list[str] = []
+    monkeypatch.setattr(cli, "build_entry", lambda *args: checked.append("policy"))
+    monkeypatch.setattr(
+        cli, "managed_launch_guard", lambda *args, **kwargs: checked.append("launch")
+    )
+    monkeypatch.setattr(quota, "prepare", lambda *args: (value, b"synthetic-service"))
+    monkeypatch.setattr(
+        wake.SystemdUser,
+        "install",
+        lambda *args, **kwargs: pytest.fail("no host installation"),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runtime.py",
+            "quota_prepare",
+            "--state-dir",
+            str(state),
+            "--repository-root",
+            str(root),
+        ],
+    )
+    result = cli.main()
+    output = json.loads(capsys.readouterr().out)
+    assert checked == ["policy", "launch"]
+    assert workflow.StateStore(state).load("quota-wakeup-candidate") == (
+        previous if conflict else value
+    )
+    if conflict:
+        assert output["status"] == "BLOCKED"
+        assert output["machine_code"] == "QUOTA_WAKE_CANDIDATE_EXISTS"
+    else:
+        assert result == 0 and output["status"] == "PREPARED"
+    assert not list(state.glob("*.timer"))

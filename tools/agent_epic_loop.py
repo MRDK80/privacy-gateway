@@ -81,6 +81,24 @@ class PhaseBlocked(Exception):
         self.machine_code = machine_code
 
 
+class QuotaPaused(Exception):
+    """Trusted transport quota plus a freshly verified exhausted snapshot."""
+
+    def __init__(
+        self, pause: Mapping[str, Any], *,
+        interruption: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__("RATE_LIMIT_PAUSED")
+        self.interruption = dict(interruption) if interruption is not None else None
+        if not _valid_rate_limit_pause(pause, "PAUSED_RATE_LIMIT"):
+            raise LoopError("RATE_LIMIT_SNAPSHOT_INVALID")
+        self.pause = {
+            "exhausted_windows": list(pause["exhausted_windows"]),
+            "resets_at": pause["resets_at"],
+            "next_check_at": pause["next_check_at"],
+        }
+
+
 @dataclass(frozen=True)
 class AdvanceResult:
     status: str
@@ -797,6 +815,37 @@ class RunnerLock:
             raise LoopError("LOCK_FAILED")
         return self._stream.fileno()
 
+    def assert_owned(self, directory: Path) -> None:
+        """Reuse a real held supervisor lock; an object or open file is insufficient."""
+        if (
+            os.name == "nt" or self._stream is None
+            or self.directory != directory.resolve()
+        ):
+            raise LoopError("LOCK_FAILED")
+        try:
+            descriptor = os.fstat(self._stream.fileno())
+            path = self.directory / "epic-loop.lock"
+            canonical = path.lstat()
+            if (
+                not stat.S_ISREG(canonical.st_mode) or canonical.st_nlink != 1
+                or stat.S_IMODE(canonical.st_mode) != 0o600
+                or canonical.st_uid != getattr(os, "getuid", lambda: -1)()
+                or (descriptor.st_dev, descriptor.st_ino)
+                != (canonical.st_dev, canonical.st_ino)
+            ):
+                raise LoopError("LOCK_FAILED")
+            with path.open("a+b") as probe:
+                try:
+                    self._lock(probe)
+                except BlockingIOError:
+                    pass
+                else:
+                    self._unlock(probe)
+                    raise LoopError("LOCK_FAILED")
+            self._lock(self._stream)
+        except OSError:
+            raise LoopError("LOCK_FAILED") from None
+
     @classmethod
     def supervisor(cls, directory: Path) -> RunnerLock:
         marker = os.environ.pop(SUPERVISOR_LOCK_FD_ENV, None)
@@ -1102,6 +1151,12 @@ def advance(
             store.save(pending)
             try:
                 receipt = effect()
+            except QuotaPaused as error:
+                paused = dict(pending)
+                paused["status"] = "PAUSED_RATE_LIMIT"
+                paused["rate_limit_pause"] = error.pause
+                store.save(paused)
+                return _result("PAUSED_RATE_LIMIT", "RATE_LIMIT_PAUSED", paused, store)
             except PhaseBlocked as error:
                 blocked = dict(pending)
                 blocked["pending_phase"] = None

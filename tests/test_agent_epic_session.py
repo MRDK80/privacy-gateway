@@ -223,3 +223,25 @@ def test_inherited_lock_remains_parent_owned_and_is_not_forwarded_to_effects(
         with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
             session.resume()
     assert session.resume()["machine_code"] == "ALREADY_COMPLETED"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX quota supervisor")
+def test_verified_outer_supervisor_lock_is_reused_without_nested_lock(
+    tmp_path: Path,
+) -> None:
+    session, calls = build(tmp_path)
+    session.control.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with loop.RunnerLock(session.control.directory) as owned:
+        result = session.resume(supervisor_lock=owned)
+        with pytest.raises(loop.LoopError):
+            with loop.RunnerLock(session.control.directory):
+                pytest.fail("outer lock must remain owned")
+    assert result["status"] == "ROADMAP_DONE" and calls.count("final") == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX quota supervisor")
+def test_unheld_supervisor_object_cannot_bypass_lock(tmp_path: Path) -> None:
+    session, calls = build(tmp_path)
+    with pytest.raises(loop.LoopError, match="LOCK_FAILED"):
+        session.resume(supervisor_lock=loop.RunnerLock(session.control.directory))
+    assert calls == []

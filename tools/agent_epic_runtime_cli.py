@@ -12,9 +12,12 @@ import hashlib
 import json
 import os
 import re
+import selectors
+import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -39,21 +42,22 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
 
 def epic_config_keys(config: dict[str, Any]) -> set[str]:
     version = config.get("schema_version")
-    if version not in {"1.0", "2.0", "3.0", "4.0"}:
+    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     keys = EPIC_CONFIG_KEYS | (
         {"approved_launch_digest"} if version != "1.0" else set()
     )
     return (
         keys
-        | ({"approved_planning_digest"} if version in {"3.0", "4.0"} else set())
-        | ({"approved_wait_digest"} if version == "4.0" else set())
+        | ({"approved_planning_digest"} if version in {"3.0", "4.0", "5.0"} else set())
+        | ({"approved_wait_digest"} if version in {"4.0", "5.0"} else set())
+        | ({"approved_quota_digest"} if version == "5.0" else set())
     )
 
 
 def planning_enabled(config: Mapping[str, Any]) -> bool:
     return config.get("schema_version") == "3.0" or (
-        config.get("schema_version") == "4.0"
+        config.get("schema_version") in {"4.0", "5.0"}
         and config.get("approved_planning_digest") is not None
     )
 
@@ -62,7 +66,7 @@ def wait_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Validate the closed owner profile before importing candidate code."""
-    if config.get("schema_version") != "4.0":
+    if config.get("schema_version") not in {"4.0", "5.0"}:
         return None
     path = state / "wait-profile.json"
     owner = private_json(path)
@@ -120,6 +124,153 @@ def wait_profile_guard(
         )
     ):
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    return owner
+
+
+QUOTA_PROFILE_KEYS = {
+    "schema_version",
+    "repository",
+    "epic",
+    "roadmap_ref",
+    "policy_sha",
+    "mandate_digest",
+    "owner_identity",
+    "wait_profile_digest",
+    "limit_id",
+    "source",
+    "limits",
+    "wakeup",
+}
+QUOTA_PROFILE_LIMITS = {
+    "poll_seconds": 300,
+    "max_polls": 512,
+    "max_wait_seconds": 86400,
+    "max_wakeups": 512,
+}
+
+
+def quota_profile_document(value: Any) -> dict[str, Any]:
+    """Validate closed opt-in policy without source execution or host effects."""
+    if (
+        not isinstance(value, dict)
+        or set(value) != QUOTA_PROFILE_KEYS
+        or value["schema_version"] != "1.0"
+    ):
+        raise DeploymentError("QUOTA_PROFILE_INVALID")
+    if (
+        not isinstance(value["repository"], str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value["repository"]) is None
+        or type(value["epic"]) is not int
+        or value["epic"] <= 0
+        or not isinstance(value["roadmap_ref"], str)
+        or re.fullmatch(r"roadmap/[1-9][0-9]*-[A-Za-z0-9_.-]+", value["roadmap_ref"])
+        is None
+        or not value["roadmap_ref"].startswith(f"roadmap/{value['epic']}-")
+        or not isinstance(value["owner_identity"], str)
+        or not value["owner_identity"]
+        or not isinstance(value["policy_sha"], str)
+        or re.fullmatch(r"[0-9a-f]{40}", value["policy_sha"]) is None
+        or not isinstance(value["limit_id"], str)
+        or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value["limit_id"]) is None
+    ):
+        raise DeploymentError("QUOTA_PROFILE_INVALID")
+    for key in ("mandate_digest", "wait_profile_digest"):
+        if (
+            not isinstance(value[key], str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value[key]) is None
+        ):
+            raise DeploymentError("QUOTA_PROFILE_INVALID")
+    source, bounds, wake = value["source"], value["limits"], value["wakeup"]
+    if (
+        not isinstance(source, dict)
+        or set(source)
+        != {
+            "executable",
+            "executable_sha256",
+            "version_digest",
+            "request_timeout_seconds",
+        }
+        or not isinstance(source["executable"], str)
+        or not source["executable"].startswith("/")
+        or any(c in source["executable"] for c in "\r\n\x00")
+        or type(source["request_timeout_seconds"]) is not int
+        or not 1 <= source["request_timeout_seconds"] <= 120
+        or any(
+            not isinstance(source[k], str)
+            or re.fullmatch(r"[0-9a-f]{64}", source[k]) is None
+            for k in ("executable_sha256", "version_digest")
+        )
+    ):
+        raise DeploymentError("QUOTA_PROFILE_INVALID")
+    if (
+        not isinstance(bounds, dict)
+        or set(bounds) != set(QUOTA_PROFILE_LIMITS)
+        or any(
+            type(bounds[k]) is not int or not 1 <= bounds[k] <= maximum
+            for k, maximum in QUOTA_PROFILE_LIMITS.items()
+        )
+        or bounds["max_wakeups"] < bounds["max_polls"]
+    ):
+        raise DeploymentError("QUOTA_PROFILE_INVALID")
+    if (
+        not isinstance(wake, dict)
+        or set(wake) != {"backend", "supervisor_sha256", "host_probe_digest"}
+        or wake["backend"] != "systemd_user"
+        or not isinstance(wake["supervisor_sha256"], str)
+        or re.fullmatch(r"[0-9a-f]{64}", wake["supervisor_sha256"]) is None
+        or (
+            wake["host_probe_digest"] is not None
+            and (
+                not isinstance(wake["host_probe_digest"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", wake["host_probe_digest"]) is None
+            )
+        )
+    ):
+        raise DeploymentError("QUOTA_PROFILE_INVALID")
+    return value
+
+
+def quota_profile_guard(
+    state: Path, config: dict[str, Any], mandate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Bind the opt-in quota document before importing the pinned runtime."""
+    if config.get("schema_version") != "5.0":
+        return None
+    owner = quota_profile_document(private_json(state / "quota-profile.json"))
+    expected = {
+        "schema_version",
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+        "wait_profile_digest",
+        "limit_id",
+        "source",
+        "limits",
+        "wakeup",
+    }
+    if (
+        set(owner) != expected
+        or owner.get("schema_version") != "1.0"
+        or canonical_digest(owner) != config.get("approved_quota_digest")
+        or owner.get("mandate_digest") != config.get("approved_mandate_digest")
+        or owner.get("wait_profile_digest") != config.get("approved_wait_digest")
+        or any(
+            owner.get(k) != mandate.get(k)
+            for k in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+    ):
+        raise DeploymentError("QUOTA_APPROVAL_MISMATCH")
+    if (state / "quota-profile.json").stat().st_nlink != 1:
+        raise DeploymentError("UNSAFE_RUNTIME_CONFIG")
     return owner
 
 
@@ -224,6 +375,342 @@ class DeploymentError(Exception):
     """A bounded code, never a private path or transport diagnostic."""
 
 
+QUOTA_PROBE_KEYS = {
+    "schema_version",
+    "kind",
+    "backend",
+    "host_digest",
+    "source_digest",
+    "supervisor_sha256",
+    "service_sha256",
+    "timer_template_sha256",
+    "origin_exit_digest",
+    "restart_digest",
+    "runner_count",
+    "budget_before_digest",
+    "budget_after_digest",
+    "observed_at",
+    "probe_digest",
+}
+
+
+def quota_probe_document(value: Any) -> dict[str, Any]:
+    """Stdlib-only proof checks; never import candidate Python during readiness."""
+    if (
+        not isinstance(value, dict)
+        or set(value) != QUOTA_PROBE_KEYS
+        or value["schema_version"] != "1.0"
+        or not isinstance(value["kind"], str)
+        or value["kind"] not in {"synthetic", "host"}
+        or value["backend"] != "systemd_user"
+        or type(value["runner_count"]) is not int
+        or value["runner_count"] != 1
+        or type(value["observed_at"]) is not int
+        or not 0 <= value["observed_at"] <= 253402300799
+    ):
+        raise DeploymentError("QUOTA_WAKE_PROBE_INVALID")
+    for key in QUOTA_PROBE_KEYS - {
+        "schema_version",
+        "kind",
+        "backend",
+        "runner_count",
+        "observed_at",
+    }:
+        if (
+            not isinstance(value[key], str)
+            or re.fullmatch(r"[0-9a-f]{64}", value[key]) is None
+        ):
+            raise DeploymentError("QUOTA_WAKE_PROBE_INVALID")
+    if (
+        value["origin_exit_digest"] == value["restart_digest"]
+        or value["budget_before_digest"] != value["budget_after_digest"]
+        or value["probe_digest"]
+        != canonical_digest(
+            {key: item for key, item in value.items() if key != "probe_digest"}
+        ).removeprefix("sha256:")
+    ):
+        raise DeploymentError("QUOTA_WAKE_PROBE_INVALID")
+    return dict(value)
+
+
+def _quota_read(command: list[str]) -> bytes:
+    """Fixed trusted no-input native commands, capped before capture can grow."""
+    if os.name != "posix":
+        raise DeploymentError("QUOTA_SOURCE_UNSUPPORTED")
+    try:
+        child = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError:
+        raise DeploymentError("QUOTA_READINESS_SOURCE_UNKNOWN") from None
+    assert child.stdout is not None
+    deadline, data = time.monotonic() + 5, bytearray()
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            while time.monotonic() < deadline:
+                if not selector.select(min(0.1, max(0, deadline - time.monotonic()))):
+                    continue
+                chunk = os.read(child.stdout.fileno(), min(8192, 65537 - len(data)))
+                if not chunk:
+                    if child.wait(timeout=max(0.001, deadline - time.monotonic())) != 0:
+                        raise DeploymentError("QUOTA_READINESS_SOURCE_UNKNOWN")
+                    return bytes(data)
+                data.extend(chunk)
+                if len(data) > 65536:
+                    raise DeploymentError("QUOTA_READINESS_OUTPUT_LIMIT")
+        raise DeploymentError("QUOTA_READINESS_TIMEOUT")
+    except (OSError, subprocess.TimeoutExpired):
+        raise DeploymentError("QUOTA_READINESS_SOURCE_UNKNOWN") from None
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=5)
+        child.stdout.close()
+
+
+def _quota_namespace_probe(state: Path, executable: str) -> None:
+    """Execute only fixed stdlib write attempts in temporary synthetic files."""
+    binary = shutil.which("bwrap") if sys.platform == "linux" else None
+    if binary is None:
+        raise DeploymentError("QUOTA_NAMESPACE_UNSUPPORTED")
+    program = """import errno,json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+def write(path):
+    try:
+        path.write_text('probe')
+        return True
+    except OSError as error:
+        if error.errno not in {errno.EROFS,errno.EACCES,errno.EPERM}:
+            raise
+        return False
+print(json.dumps({'allowed':write(root/'allowed'),
+    'protected':write(root/'protected'),
+    'scratch':write(root/'scratch'/'marker')}))
+"""
+    try:
+        with tempfile.TemporaryDirectory(prefix="quota-namespace-", dir=state) as name:
+            directory = Path(name)
+            scratch = directory / "scratch"
+            scratch.mkdir(mode=0o700)
+            for role in ("executor", "controller"):
+                for filename in ("allowed", "protected"):
+                    (directory / filename).write_bytes(b"synthetic")
+                    (directory / filename).chmod(0o600)
+                argv = [
+                    binary,
+                    "--die-with-parent",
+                    "--unshare-pid",
+                    "--ro-bind",
+                    "/",
+                    "/",
+                    "--proc",
+                    "/proc",
+                    "--dev",
+                    "/dev",
+                    "--bind",
+                    str(scratch),
+                    str(scratch),
+                ]
+                if role == "executor":
+                    argv += [
+                        "--bind",
+                        str(directory / "allowed"),
+                        str(directory / "allowed"),
+                    ]
+                argv += ["--", executable, "-I", "-c", program, str(directory)]
+                result = json.loads(_quota_read(argv))
+                if (
+                    result
+                    != {
+                        "allowed": role == "executor",
+                        "protected": False,
+                        "scratch": True,
+                    }
+                    or (directory / "protected").read_bytes() != b"synthetic"
+                ):
+                    raise DeploymentError("QUOTA_NAMESPACE_UNSUPPORTED")
+    except (OSError, ValueError, DeploymentError):
+        raise DeploymentError("QUOTA_NAMESPACE_UNSUPPORTED") from None
+
+
+def quota_deployment_guard(
+    state: Path,
+    root: Path,
+    config: dict[str, Any],
+    mandate: dict[str, Any],
+    command: tuple[str, ...] | None,
+) -> None:
+    """Readiness reads only pinned bytes/native metadata, never candidate Python."""
+    if config.get("schema_version") != "5.0":
+        return
+    owner = quota_profile_guard(state, config, mandate)
+    assert owner is not None
+    wakeup = owner.get("wakeup")
+    if not isinstance(wakeup, dict) or wakeup.get("host_probe_digest") is None:
+        raise DeploymentError("QUOTA_WAKE_PROBE_REQUIRED")
+    proof = quota_probe_document(private_json(state / "quota-host-probe.json"))
+    if proof["kind"] != "host":
+        raise DeploymentError("QUOTA_WAKE_PROBE_SYNTHETIC")
+    if proof["probe_digest"] != wakeup["host_probe_digest"]:
+        raise DeploymentError("QUOTA_WAKE_PROBE_BINDING_CHANGED")
+    if (
+        command is None
+        or len(command) != 7
+        or command[2:]
+        != (
+            "epic_resume",
+            "--state-dir",
+            str(state),
+            "--repository-root",
+            str(root.resolve()),
+        )
+    ):
+        raise DeploymentError("QUOTA_WAKE_BINDING_CHANGED")
+    supervisor_hash = hashlib.sha256(Path(command[1]).read_bytes()).hexdigest()
+    if supervisor_hash != wakeup.get("supervisor_sha256"):
+        raise DeploymentError("QUOTA_WAKE_BINDING_CHANGED")
+    source = owner.get("source")
+    if (
+        not isinstance(source, dict)
+        or set(source)
+        != {
+            "executable",
+            "executable_sha256",
+            "version_digest",
+            "request_timeout_seconds",
+        }
+        or not isinstance(source["executable"], str)
+    ):
+        raise DeploymentError("QUOTA_SOURCE_INVALID")
+    path = Path(source["executable"])
+    info = path.lstat()
+    if (
+        not path.is_absolute()
+        or not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_mode & 0o022
+        or any(p.is_symlink() for p in path.parents)
+        or hashlib.sha256(path.read_bytes()).hexdigest() != source["executable_sha256"]
+    ):
+        raise DeploymentError("QUOTA_SOURCE_CHANGED")
+    version = _quota_read([str(path), "--version"]).strip()
+    if (
+        version != b"codex-cli 0.157.1"
+        or hashlib.sha256(version).hexdigest() != source["version_digest"]
+    ):
+        raise DeploymentError("QUOTA_ROLE_SOURCE_UNSUPPORTED")
+    value = private_json(state / "quota-wakeup-candidate.json")
+    template = (
+        "[Unit]\nDescription=Privacy Gateway finite quota wake\n[Timer]\n"
+        "OnCalendar=@{at}\nPersistent=true\nAccuracySec=1s\nUnit={service}\n"
+    )
+    argv = [*command[:2], "quota_wake", *command[3:]]
+    if any(any(c in arg for c in "\x00\r\n%") for arg in argv):
+        raise DeploymentError("QUOTA_WAKE_COMMAND_INVALID")
+    quoted = ['"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"' for arg in argv]
+    service = (
+        "[Unit]\nDescription=Privacy Gateway bounded quota supervisor\n"
+        "[Service]\nType=oneshot\nExecStart="
+        + " ".join(quoted)
+        + ' "--wake-arm-id" "%i"\n'
+    ).encode()
+    bindings = {
+        "schema_version": "1.0",
+        "repository": mandate["repository"],
+        "epic": mandate["epic"],
+        "policy_sha": mandate["policy_sha"],
+        "state_digest": canonical_digest(str(state.resolve())).removeprefix("sha256:"),
+        "runtime_config_digest": launch_config_digest(
+            config,
+            private_json(state / "runtime-adapter.json"),
+        ).removeprefix("sha256:"),
+        "quota_profile_digest": canonical_digest(owner).removeprefix("sha256:"),
+        "source_digest": canonical_digest(source).removeprefix("sha256:"),
+        "supervisor_sha256": supervisor_hash,
+        "host_probe_digest": proof["probe_digest"],
+        "issued_at": config["started_at"],
+        "expires_at": min(
+            mandate["expires_at"],
+            config["started_at"] + mandate["limits"]["max_duration_seconds"],
+        ),
+        "service_sha256": hashlib.sha256(service).hexdigest(),
+        "timer_template_sha256": hashlib.sha256(template.encode()).hexdigest(),
+    }
+    bindings["unit_prefix"] = (
+        "pgw-quota-"
+        + canonical_digest(
+            {key: bindings[key] for key in ("state_digest", "runtime_config_digest")}
+        ).removeprefix("sha256:")[:32]
+    )
+    bindings["candidate_digest"] = canonical_digest(bindings).removeprefix("sha256:")
+    if (
+        value != bindings
+        or not bindings["issued_at"] <= int(time.time()) < bindings["expires_at"]
+    ):
+        raise DeploymentError("QUOTA_WAKE_BINDING_CHANGED")
+    units = secure_directory(Path.home() / ".config" / "systemd" / "user", root)
+    prefix = ["/usr/bin/systemctl", "--user", "show"]
+    paths = _quota_read([*prefix, "--property=UnitPath", "--value"]).decode().split()
+    if str(units) not in paths:
+        raise DeploymentError("QUOTA_WAKE_UNIT_PATH_UNSUPPORTED")
+    name = str(bindings["unit_prefix"]) + "@.service"
+    unit = units / name
+    unit_info = unit.lstat()
+    if (
+        not stat.S_ISREG(unit_info.st_mode)
+        or unit_info.st_nlink != 1
+        or unit_info.st_uid != units.stat().st_uid
+        or unit_info.st_mode & 0o077
+        or unit_info.st_size > 65536
+        or unit.read_bytes() != service
+        or private_json(state / "quota-install.json")
+        != {"candidate": value, "status": "APPLIED"}
+    ):
+        raise DeploymentError("QUOTA_WAKE_NOT_INSTALLED")
+    for key, expected in {
+        "FragmentPath": str(unit),
+        "DropInPaths": "",
+        "NeedDaemonReload": "no",
+        "LoadState": "loaded",
+    }.items():
+        if (
+            _quota_read([*prefix, name, "--property=" + key, "--value"])
+            .decode()
+            .strip()
+            != expected
+        ):
+            raise DeploymentError("QUOTA_WAKE_UNIT_BINDING_CHANGED")
+    manager = _quota_read([*prefix, "--property=Version", "--value"]).strip()
+    if not manager or len(manager) > 128 or not manager.isascii():
+        raise DeploymentError("QUOTA_WAKE_HOST_UNKNOWN")
+    host = canonical_digest(
+        {
+            "backend": "systemd_user",
+            "uid": units.stat().st_uid,
+            "units_digest": canonical_digest(str(units)).removeprefix("sha256:"),
+            "manager_version_digest": hashlib.sha256(manager).hexdigest(),
+        }
+    ).removeprefix("sha256:")
+    if any(
+        proof[key] != expected
+        for key, expected in {
+            "host_digest": host,
+            "source_digest": bindings["source_digest"],
+            "supervisor_sha256": supervisor_hash,
+            "service_sha256": bindings["service_sha256"],
+            "timer_template_sha256": bindings["timer_template_sha256"],
+        }.items()
+    ):
+        raise DeploymentError("QUOTA_WAKE_PROBE_BINDING_CHANGED")
+    _quota_namespace_probe(state, command[0])
+
+
 LAUNCH_KEYS = {
     "schema_version",
     "repository",
@@ -282,6 +769,7 @@ def managed_launch_guard(
         "2.0",
         "3.0",
         "4.0",
+        "5.0",
     }
     if not present and not managed:
         return
@@ -321,6 +809,7 @@ def managed_launch_guard(
     mandate = private_json(seed / "mandate.json")
     planning_profile_guard(seed, config, mandate)
     wait_profile_guard(seed, config, mandate)
+    quota_profile_guard(seed, config, mandate)
     if (
         any(
             value[key] != mandate.get(key)
@@ -697,7 +1186,7 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     return engine
 
 
-def build_session(state: Path, root: Path) -> Any:
+def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
     state = secure_directory(state, root)
     if (state / "bootstrap-recovery.json").exists() or (
         (state / "runtime-task.json").exists()
@@ -720,6 +1209,7 @@ def build_session(state: Path, root: Path) -> Any:
     bootstrap_authority(config, mandate, epic=True)
     planning_profile_guard(state, config, mandate)
     wait_profile_guard(state, config, mandate)
+    quota_profile_guard(state, config, mandate)
     managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -730,10 +1220,14 @@ def build_session(state: Path, root: Path) -> Any:
         raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(policy))
+    from tools.agent_quota_supervisor import readiness as quota_readiness
+
+    quota_readiness(state, root, config)
     from tools.agent_epic_session_runtime import SessionRuntime
     from tools.agent_epic_wait_scope import Scope
 
-    return SessionRuntime(state, root, config, wait_scope=Scope.inherited(state, root))
+    scope = Scope.for_root(state, root) if wake else Scope.inherited(state, root)
+    return SessionRuntime(state, root, config, wait_scope=scope)
 
 
 def build_entry(state: Path, root: Path) -> Any:
@@ -753,6 +1247,7 @@ def build_entry(state: Path, root: Path) -> Any:
     bootstrap_authority(config, mandate, epic=True)
     planning_profile_guard(state, config, mandate)
     wait_profile_guard(state, config, mandate)
+    quota_profile_guard(state, config, mandate)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
@@ -767,12 +1262,46 @@ def build_entry(state: Path, root: Path) -> Any:
     return agent_epic_entry
 
 
+def build_quota_cleanup(state: Path, root: Path) -> Any:
+    """Verify pinned bytes for narrow cleanup without granting expired work."""
+    state = secure_directory(state, root)
+    config = private_json(state / "epic-runtime.json")
+    if config.get("schema_version") != "5.0" or set(config) != epic_config_keys(config):
+        raise DeploymentError("QUOTA_PROFILE_REQUIRED")
+    managed_launch_guard(state, root, read_only=True)
+    mandate = private_json(state / "mandate.json")
+    policy = Path(config["policy_root"])
+    verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
+    existing = sys.modules.get("tools")
+    if existing is not None and not Path(
+        existing.__file__ or ""
+    ).resolve().is_relative_to(policy.resolve()):
+        raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(policy))
+    from tools import agent_quota_supervisor
+
+    return agent_quota_supervisor
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("live", "effect", "reconcile", "epic_resume", "entry")
+        "command",
+        choices=(
+            "live",
+            "effect",
+            "reconcile",
+            "epic_resume",
+            "quota_wake",
+            "quota_prepare",
+            "quota_install",
+            "entry",
+        ),
     )
+    parser.add_argument("--wake-arm-id")
     parser.add_argument("--phase")
+    parser.add_argument("--approved-wakeup-digest")
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument(
@@ -785,6 +1314,14 @@ def main() -> int:
     parser.add_argument("--installation", type=Path)
     parser.add_argument("--background", action="store_true")
     args = parser.parse_args()
+    if (
+        args.command == "quota_wake"
+        and (
+            not isinstance(args.wake_arm_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", args.wake_arm_id) is None
+        )
+    ) or (args.command != "quota_wake" and args.wake_arm_id is not None):
+        parser.error("exact wake arm instance required only for quota_wake")
     if args.command != "entry" and any(
         (
             args.action,
@@ -796,7 +1333,91 @@ def main() -> int:
         )
     ):
         parser.error("entry options require entry command")
+    if args.approved_wakeup_digest is not None and args.command != "quota_install":
+        parser.error("wakeup approval requires quota_install")
+    if args.command == "quota_install" and args.approved_wakeup_digest is None:
+        parser.error("quota_install requires exact owner-approved wakeup digest")
     try:
+        if args.command in {"quota_prepare", "quota_install"}:
+            state = secure_directory(args.state_dir, args.repository_root)
+            root = args.repository_root
+            build_entry(state, root)  # Verify the frozen policy before any imports.
+            config = private_json(state / "epic-runtime.json")
+            managed_launch_guard(
+                state,
+                root,
+                read_only=args.command == "quota_prepare",
+                allow_initial=True,
+            )
+            from tools import agent_orchestrate as workflow
+            from tools import agent_quota_probe as probe
+            from tools.agent_quota_supervisor import prepare
+            from tools.agent_quota_wakeup import SystemdUser
+
+            value, service = prepare(state, root, config)
+            path = state / "quota-wakeup-candidate.json"
+            if path.exists() or path.is_symlink():
+                if private_json(path) != value:
+                    raise DeploymentError("QUOTA_WAKE_CANDIDATE_EXISTS")
+            elif args.command == "quota_prepare":
+                workflow.StateStore(state).save("quota-wakeup-candidate", value)
+            else:
+                raise DeploymentError("QUOTA_WAKE_CANDIDATE_REQUIRED")
+            status = "PREPARED"
+            if args.command == "quota_install":
+                if args.approved_wakeup_digest != value["candidate_digest"]:
+                    raise DeploymentError("QUOTA_WAKE_APPROVAL_REQUIRED")
+
+                def guard() -> None:
+                    managed_launch_guard(state, root, allow_initial=True)
+                    current, _service = prepare(
+                        state,
+                        root,
+                        private_json(state / "epic-runtime.json"),
+                    )
+                    if current != value:
+                        raise DeploymentError("QUOTA_WAKE_BINDING_CHANGED")
+
+                host = SystemdUser(
+                    state,
+                    root,
+                    Path.home() / ".config" / "systemd" / "user",
+                    guard=guard,
+                    now=lambda: int(time.time()),
+                )
+                probe.require_host(
+                    private_json(state / "quota-host-probe.json"),
+                    expected_digest=value["host_probe_digest"],
+                    bindings={
+                        "host_digest": host.host_digest(),
+                        **{
+                            key: value[key]
+                            for key in (
+                                "source_digest",
+                                "supervisor_sha256",
+                                "service_sha256",
+                                "timer_template_sha256",
+                            )
+                        },
+                    },
+                )
+                host.install(
+                    value,
+                    service,
+                    approved_digest=args.approved_wakeup_digest,
+                )
+                status = "INSTALLED"
+            print(
+                json.dumps(
+                    {
+                        "schema_version": "1.0",
+                        "status": status,
+                        "candidate_digest": value["candidate_digest"],
+                    },
+                    sort_keys=True,
+                )
+            )
+            return 0
         if args.command == "entry":
             result = build_entry(args.state_dir, args.repository_root).execute(
                 args.action,
@@ -810,8 +1431,51 @@ def main() -> int:
             )
             print(json.dumps(result, sort_keys=True))
             return 0
-        if args.command == "epic_resume":
-            result = build_session(args.state_dir, args.repository_root).resume()
+        if args.command in {"epic_resume", "quota_wake"}:
+            if args.command == "quota_wake":
+                cleanup = build_quota_cleanup(args.state_dir, args.repository_root)
+                config = private_json(args.state_dir / "epic-runtime.json")
+                mandate = private_json(args.state_dir / "mandate.json")
+                control = private_json(args.state_dir / "launch-control.json")
+                stopped = (
+                    control["state"] != "RUNNING" or mandate.get("revoked") is True
+                )
+                expired = time.time() >= min(
+                    mandate["expires_at"],
+                    config["started_at"] + mandate["limits"]["max_duration_seconds"],
+                )
+                if stopped or expired:
+                    cancelled = cleanup.cancel_owned(
+                        args.state_dir,
+                        args.repository_root,
+                    )
+                    print(
+                        json.dumps(
+                            {
+                                "schema_version": "1.0",
+                                "status": "BLOCKED",
+                                "machine_code": "QUOTA_WAKE_AUTHORITY_STOPPED",
+                                "result": cancelled,
+                            },
+                            sort_keys=True,
+                        )
+                    )
+                    return 0
+            session = build_session(
+                args.state_dir,
+                args.repository_root,
+                wake=args.command == "quota_wake",
+            )
+            if session.config.get("schema_version") == "5.0":
+                from tools.agent_quota_supervisor import run as quota_run
+
+                result = quota_run(
+                    session,
+                    wake=args.command == "quota_wake",
+                    wake_arm_id=args.wake_arm_id,
+                )
+            else:
+                result = session.resume()
             status = result.get("status")
             if status not in {
                 "ROADMAP_DONE",
@@ -863,11 +1527,22 @@ def main() -> int:
             or re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) is None
         ):
             code = "RUNTIME_PHASE_FAILED"
-        if args.command in {"epic_resume", "entry"}:
+        if args.command in {
+            "epic_resume",
+            "quota_wake",
+            "quota_prepare",
+            "quota_install",
+            "entry",
+        }:
             value = {
                 "schema_version": "1.0",
                 "status": "BLOCKED"
-                if type(error).__name__ in {"PhaseBlocked", "DeploymentError"}
+                if type(error).__name__
+                in {
+                    "PhaseBlocked",
+                    "QuotaError",
+                    "DeploymentError",
+                }
                 else "ESCALATE",
                 "machine_code": code,
                 "result": None,

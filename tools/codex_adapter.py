@@ -412,6 +412,10 @@ def _run_codex(
     timeout: int,
     allowed_paths: Sequence[Path] = (),
     scratch_path: Path | None = None,
+    app_server: bool = False,
+    invocation: str | None = None,
+    backend_digest: str | None = None,
+    guard: Any = None,
 ) -> None:
     argv = [
         *command,
@@ -444,8 +448,10 @@ def _run_codex(
     if model is not None:
         argv += ["-m", model]
     argv.append("-")
-    if role == "executor":
-        if scratch_path is None or not allowed_paths:
+    if app_server:
+        argv = [*command, "app-server", "--strict-config"]
+    if role == "executor" or app_server:
+        if scratch_path is None or (role == "executor" and not allowed_paths):
             raise AdapterError("INVALID_REQUEST")
         bubblewrap = shutil.which("bwrap")
         if bubblewrap is None:
@@ -479,10 +485,30 @@ def _run_codex(
             sandbox_argv.extend(("--ro-bind", str(auth_source), str(auth_target)))
         for path in allowed_paths:
             sandbox_argv.extend(("--bind", str(path), str(path)))
+        if role == "controller":
+            sandbox_argv.extend(("--ro-bind", str(workdir), str(workdir)))
         argv = [*sandbox_argv, "--", *argv]
         environment = dict(os.environ, CODEX_HOME=str(runtime_home))
     else:
         environment = None
+    if app_server:
+        if (
+            invocation is None
+            or backend_digest is None
+            or guard is None
+            or environment is None
+        ):
+            raise AdapterError("INVALID_REQUEST")
+        from tools import agent_role_app_server as roles
+
+        payload = roles.run(
+            argv, role=role, workdir=workdir, prompt=prompt,
+            schema=json.loads(schema_path.read_text()), model=model, timeout=timeout,
+            output_limit=DEFAULT_OUTPUT_LIMIT, invocation=invocation,
+            backend_digest=backend_digest, environment=environment, guard=guard,
+        )
+        output_path.write_text(json.dumps(payload), encoding="utf-8")
+        return
     try:
         completed = subprocess.run(
             argv,
@@ -760,7 +786,43 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
     root = args.root.resolve()
     executor_paths = _executor_paths(root, request) if args.role == "executor" else ()
     schema = load_schema(args.schema_dir / ROLE_SCHEMAS[args.role])
-    _assert_version(args.codex_command, root)
+    quota_owner: dict[str, Any] | None = None
+    quota_guard: Any = None
+    if getattr(args, "quota_profile", None) is not None:
+        from tools import agent_epic_runtime_cli as runtime_guards
+        from tools import agent_quota as quota
+        from tools.agent_quota_source import _pinned
+        quota_owner = quota.profile(runtime_guards.private_json(args.quota_profile))
+        if runtime_guards.canonical_digest(quota_owner) != args.approved_quota_digest:
+            raise AdapterError("INVALID_REQUEST")
+        approved_owner = dict(quota_owner)
+
+        def quota_guard() -> None:
+            fresh = runtime_guards.private_json(args.quota_profile)
+            if fresh != approved_owner:
+                raise AdapterError("INVALID_REQUEST")
+            runtime_guards.managed_launch_guard(args.quota_profile.parent, root)
+            _pinned(approved_owner["source"])
+        quota_guard()
+        args.codex_command = [quota_owner["source"]["executable"]]
+    if quota_owner is None:
+        _assert_version(args.codex_command, root)
+    else:
+        import hashlib
+
+        from tools.agent_quota_process import run as bounded_run
+        from tools.agent_quota_wait import bare_digest
+
+        version = bounded_run(
+            [args.codex_command[0], "--version"], timeout=5, cap=4096,
+            guard=quota_guard,
+        )
+        if (
+            version.returncode != 0
+            or hashlib.sha256(version.stdout.strip()).hexdigest()
+            != quota_owner["source"]["version_digest"]
+        ):
+            raise AdapterError("INVALID_REQUEST")
 
     with tempfile.TemporaryDirectory(prefix="pgw-codex-") as scratch:
         scratch_path = Path(scratch)
@@ -787,6 +849,15 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             timeout=args.timeout,
             allowed_paths=executor_paths,
             scratch_path=scratch_path,
+            **(
+                {
+                    "app_server": True,
+                    "invocation": bare_digest(request),
+                    "backend_digest": bare_digest(quota_owner["source"]),
+                    "guard": quota_guard,
+                }
+                if quota_owner is not None else {}
+            ),
         )
         payload = _read_payload(output_path, args.output_limit)
 
@@ -808,6 +879,8 @@ def _parser() -> argparse.ArgumentParser:
         default=["codex"],
         help='JSON array invoking the Codex CLI, e.g. ["codex"]',
     )
+    parser.add_argument("--quota-profile", type=Path)
+    parser.add_argument("--approved-quota-digest")
     parser.add_argument("--model", default=None)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--input-limit", type=int, default=DEFAULT_INPUT_LIMIT)
@@ -819,8 +892,18 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    from tools.agent_role_app_server import QuotaInterrupted, RoleError
+
     try:
         payload = adapt(args)
+    except QuotaInterrupted as error:
+        sys.stdout.write(
+            json.dumps({"role_interruption": error.event}, sort_keys=True) + "\n"
+        )
+        return 20
+    except RoleError as error:
+        print(error.machine_code, file=sys.stderr)
+        return 20
     except (AdapterError, SchemaError) as error:
         machine_code = getattr(error, "machine_code", "SCHEMA_ERROR")
         print(str(machine_code), file=sys.stderr)
