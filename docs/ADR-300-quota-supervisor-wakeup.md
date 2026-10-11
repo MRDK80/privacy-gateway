@@ -1,6 +1,7 @@
 # ADR-300: quota observation and bounded persistent supervisor wakeup
 
-Status: design candidate, awaiting independent review and owner decision.
+Status: accepted. Independent design review PASS; owner approved implementation
+on 2026-10-11. Installation, activation and main merge remain separate decisions.
 Task #300, epic #294. No installation, activation or mandate is granted here.
 
 ## Decision
