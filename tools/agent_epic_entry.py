@@ -24,14 +24,14 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     state = guards.secure_directory(state, root)
     installed, _ = install._validate(root, installation)
     config = guards.private_json(state / "epic-runtime.json")
-    if (
-        config.get("schema_version") not in {"2.0", "3.0"}
-        or set(config) != guards.epic_config_keys(config)
-    ):
+    if config.get("schema_version") not in {"2.0", "3.0", "4.0"} or set(
+        config
+    ) != guards.epic_config_keys(config):
         raise guards.DeploymentError("LAUNCH_PROFILE_REQUIRED")
     mandate = guards.private_json(state / "mandate.json")
     guards.bootstrap_authority(config, mandate, epic=True)
     guards.planning_profile_guard(state, config, mandate)
+    guards.wait_profile_guard(state, config, mandate)
     if (
         installed["repository"] != mandate["repository"]
         or installed["policy_sha"] != mandate["policy_sha"]
@@ -184,8 +184,16 @@ def discover(
             "PRIVATE_RUN_MISSING" if not matches else "PRIVATE_RUN_AMBIGUOUS"
         )
     state = guards.secure_directory(Path(matches[0]["state_directory"]), root)
-    client = github or branch.GitHubCLI()
-    source = issues or queue.GhClient()
+    from tools.agent_epic_wait_scope import Scope
+
+    budget = Scope.for_root(state, root, read_only=True)
+    read = None
+    if budget is not None:
+        if budget.mandate["repository"] != repository or budget.mandate["epic"] != epic:
+            raise guards.DeploymentError("ISSUE_MISMATCH")
+        read = budget.reader("DISCOVERY").command
+    client = github or branch.GitHubCLI(read=read)
+    source = issues or queue.GhClient(read=read)
     try:
         repo = client.repository(repository)
         refs = client.branches(repository)

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -17,6 +18,7 @@ from tools import agent_epic_queue as queue
 from tools import agent_github_read as reads
 from tools.agent_coordinator_handover import _repository_identity
 from tools.agent_epic_transport import GhTaskTransport
+from tools.agent_epic_wait_scope import Scope
 
 Authority = Callable[[], tuple[Mapping[str, object], str, delivery.MandateContext]]
 Bootstrap = Callable[[], Mapping[str, object]]
@@ -39,8 +41,12 @@ class TaskPhaseRuntime:
         approved_order: tuple[int, ...],
         bootstrap: Bootstrap | None = None,
         demo_completion: Callable[[], Mapping[str, Any]] | None = None,
+        wait_scope: Scope | None = None,
     ) -> None:
         self.store = store
+        self.wait_scope = wait_scope
+        self._reconciling = False
+        self._read_stage: str | None = None
         self.authority = authority
         self.artifacts = artifacts
         self.demo_plan = demo_plan
@@ -62,7 +68,53 @@ class TaskPhaseRuntime:
         )
         self._merge: str | None = None
 
+    def _wait_reader(self) -> Any:
+        assert self.wait_scope is not None
+        saved = self._checkpoint()
+        phase = saved["pending_phase"] or saved["phase"]
+        stage = self._read_stage or (
+            f"RECONCILE:{saved['task']}:{phase}"
+            if self._reconciling
+            else f"TASK:{saved['task']}:{phase}"
+        )
+        return self.wait_scope.reader(stage)
+
+    @contextmanager
+    def _stage(
+        self, phase: str | None = None, *, reconcile: bool = False
+    ) -> Iterator[None]:
+        previous, reconciling = self._read_stage, self._reconciling
+        if previous is None or reconcile:
+            saved = self._checkpoint()
+            task_stage = (
+                f"TASK:{saved['task']}:"
+                f"{phase or saved['pending_phase'] or saved['phase']}"
+            )
+            self._read_stage = (
+                f"{'RECONCILE' if reconcile else 'TASK'}:{saved['task']}:"
+                f"{phase or saved['pending_phase'] or saved['phase']}"
+            )
+            if (
+                reconcile
+                and phase in {"PR_CI", "POST_MERGE"}
+                and self.wait_scope is not None
+                and self.wait_scope.recorded(task_stage)
+            ):
+                self._read_stage = task_stage
+        self._reconciling = reconciling or reconcile
+        try:
+            if self.wait_scope is not None:
+                assert self._read_stage is not None
+                with self.wait_scope.context(self._read_stage):
+                    yield
+            else:
+                yield
+        finally:
+            self._read_stage, self._reconciling = previous, reconciling
+
     def _github_read(self, argv: Sequence[str]) -> str:
+        if self.wait_scope is not None:
+            return str(self._wait_reader().command(argv))
         # Baseline is local and immutable for this one request/retry sequence.
         saved = self._checkpoint()
         identity = {key: saved[key] for key in loop.IDENTITY_KEYS}
@@ -150,7 +202,8 @@ class TaskPhaseRuntime:
 
     def live(self) -> Mapping[str, Any]:
         try:
-            return self._live()
+            with self._stage():
+                return self._live()
         except (
             assessment.GitHubError,
             queue.GitHubError,
@@ -221,6 +274,25 @@ class TaskPhaseRuntime:
         return self._merge
 
     def _assess(self, phase: str) -> dict[str, Any]:
+        if self.wait_scope is None:
+            result = self._assess_once(phase)
+        else:
+            saved = self._checkpoint()
+            result = dict(
+                self._wait_reader().poll_ci(
+                    {
+                        "phase": phase,
+                        **{key: saved[key] for key in loop.IDENTITY_KEYS},
+                        "merge_sha": self._merge if phase == "post-merge" else None,
+                    },
+                    lambda: self._assess_once(phase),
+                )
+            )
+        if result["status"] != "pass":
+            raise loop.PhaseBlocked(result["machine_code"])
+        return result
+
+    def _assess_once(self, phase: str) -> dict[str, Any]:
         saved = self._checkpoint()
         artifact = self.artifacts()
         gate = artifact.get("gate")
@@ -252,8 +324,6 @@ class TaskPhaseRuntime:
             gate,
             self.github,
         )
-        if result.status != "pass":
-            raise loop.PhaseBlocked(result.machine_code)
         return asdict(result)
 
     def _request(self, operation: str) -> delivery.Request:
@@ -467,6 +537,10 @@ class TaskPhaseRuntime:
         return result
 
     def effect(self, phase: str) -> Mapping[str, object]:
+        with self._stage(phase):
+            return self._effect(phase)
+
+    def _effect(self, phase: str) -> Mapping[str, object]:
         from tools import agent_epic_recovery as recovery
 
         if recovery.present(self.store.directory):
@@ -531,6 +605,10 @@ class TaskPhaseRuntime:
         return {"phase": phase}
 
     def reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]:
+        with self._stage(phase, reconcile=True):
+            return self._reconcile(phase)
+
+    def _reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]:
         self._checkpoint(phase)
         if phase == "MERGE":
             state, receipt = self.transport.reconcile(self._request("merge_task_pr"))

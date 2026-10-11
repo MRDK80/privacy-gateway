@@ -93,6 +93,40 @@ def _category(stderr: object) -> str:
     return "unknown"
 
 
+def attempt(
+    argv: Sequence[str],
+    *,
+    run: Callable[..., Any],
+    timeout: float = 120,
+    on_complete: Callable[[], None] | None = None,
+) -> str:
+    """One eligible complete command; classification never includes validation."""
+    if not read_only(argv) or not 0 < timeout <= 120:
+        raise ReadFailure
+    try:
+        try:
+            result = run(
+                list(argv), capture_output=True, text=True, check=False, timeout=timeout
+            )
+        finally:
+            if on_complete is not None:
+                on_complete()
+    except subprocess.TimeoutExpired:
+        raise ReadFailure("timeout") from None
+    except OSError as error:
+        category = (
+            "network"
+            if error.errno in {errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTUNREACH}
+            else "unknown"
+        )
+        raise ReadFailure(category) from None
+    if result.returncode != 0:
+        raise ReadFailure(_category(result.stderr))
+    if not isinstance(result.stdout, str) or len(result.stdout) > 1_000_000:
+        raise ReadFailure
+    return result.stdout
+
+
 class Reader:
     def __init__(
         self,
@@ -110,36 +144,20 @@ class Reader:
     def command(self, argv: Sequence[str]) -> str:
         if not read_only(argv):
             raise ReadFailure
-        for attempt in range(len(DELAYS) + 1):
-            category = "unknown"
+        for index in range(len(DELAYS) + 1):
+            completed_at = 0.0
+
+            def complete() -> None:
+                nonlocal completed_at
+                completed_at = self.monotonic()
+
             try:
-                result = self.run(
-                    list(argv), capture_output=True, text=True, check=False, timeout=120
-                )
-            except subprocess.TimeoutExpired:
-                completed_at = self.monotonic()
-                category = "timeout"
-            except OSError as error:
-                completed_at = self.monotonic()
-                if error.errno in {
-                    errno.ENETDOWN,
-                    errno.ENETUNREACH,
-                    errno.EHOSTUNREACH,
-                }:
-                    category = "network"
-            else:
-                completed_at = self.monotonic()
-                if result.returncode == 0:
-                    if (
-                        not isinstance(result.stdout, str)
-                        or len(result.stdout) > 1_000_000
-                    ):
-                        raise ReadFailure
-                    return result.stdout
-                category = _category(result.stderr)
-            if category == "unknown" or attempt == len(DELAYS):
+                return attempt(argv, run=self.run, on_complete=complete)
+            except ReadFailure as error:
+                category = error.category
+            if category == "unknown" or index == len(DELAYS):
                 raise ReadFailure(category) from None
-            deadline = completed_at + DELAYS[attempt]
+            deadline = completed_at + DELAYS[index]
             while True:
                 self.guard()
                 remaining = deadline - self.monotonic()

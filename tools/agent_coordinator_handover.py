@@ -89,7 +89,31 @@ class GitHubClient(Protocol):
 class GitHubCLI:
     """Read only the task facts required to prove criteria provenance."""
 
+    def __init__(self, *, read: Callable[[Sequence[str]], str] | None = None) -> None:
+        self.read = read
+
     def issue(self, repository: str, number: int) -> Mapping[str, Any]:
+        if self.read is not None:
+            try:
+                value = json.loads(
+                    self.read(
+                        (
+                            "gh",
+                            "issue",
+                            "view",
+                            str(number),
+                            "--repo",
+                            repository,
+                            "--json",
+                            "number,state,parent,body",
+                        )
+                    )
+                )
+            except ValueError as error:
+                raise HandoverError("GITHUB_ERROR") from error
+            if not isinstance(value, Mapping):
+                raise HandoverError("GITHUB_ERROR")
+            return cast(Mapping[str, Any], value)
         try:
             completed = subprocess.run(
                 [

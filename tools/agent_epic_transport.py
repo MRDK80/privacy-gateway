@@ -180,6 +180,10 @@ class GhTaskTransport:
         return result.stdout
 
     def json(self, argv: Sequence[str]) -> Any:
+        from tools.agent_github_read import read_only
+
+        if self.read is not None and read_only(argv):
+            return self.read_json(argv)
         try:
             return json.loads(self.command(argv))
         except ValueError as error:
