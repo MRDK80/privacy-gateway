@@ -50,7 +50,18 @@ def setup(
         if "--property=UnitPath" in argv:
             return subprocess.CompletedProcess(argv, 0, str(units).encode())
         if "--property=FragmentPath" in argv:
-            return subprocess.CompletedProcess(argv, 0, str(units / argv[3]).encode())
+            return subprocess.CompletedProcess(
+                argv,
+                0,
+                str(
+                    units
+                    / (
+                        argv[3].split("@", 1)[0] + "@.service"
+                        if "@" in argv[3]
+                        else argv[3]
+                    )
+                ).encode(),
+            )
         if "--property=DropInPaths" in argv:
             return subprocess.CompletedProcess(argv, 0, b"")
         if "--property=NeedDaemonReload" in argv:
@@ -90,7 +101,7 @@ def test_single_shot_arm_is_bound_and_not_replayed(tmp_path: Path) -> None:
 
 def test_conflicting_units_are_never_overwritten(tmp_path: Path) -> None:
     adapter, candidate, service, calls = setup(tmp_path)
-    path = adapter.units / (candidate["unit_prefix"] + ".service")
+    path = adapter.units / (candidate["unit_prefix"] + "@.service")
     path.write_bytes(b"conflict")
     path.chmod(0o600)
     with pytest.raises(QuotaError, match="QUOTA_WAKE_INSTALL_CONFLICT"):

@@ -92,6 +92,8 @@ def readiness(state: Path, root: Path, config: dict[str, Any]) -> None:
 class Supervisor:
     """Resume only an already-paused exact phase; never replay unknown effects."""
 
+    wake_arm_id: str | None = None
+
     def __init__(
         self,
         session: Any,
@@ -266,7 +268,7 @@ class Supervisor:
             )
             unit = TIMER_TEMPLATE.format(
                 at=fresh["next_check_at"],
-                service=self.candidate["unit_prefix"] + ".service",
+                service=self.candidate["unit_prefix"] + "@" + arm_id + ".service",
             ).encode()
             fresh["wakeup"] = {
                 "candidate_digest": self.candidate["candidate_digest"],
@@ -289,6 +291,38 @@ class Supervisor:
             "status": "PAUSED_RATE_LIMIT",
             "machine_code": "QUOTA_WAKE_ARMED",
         }
+
+    def _consume_wake(self, current: QuotaWait) -> None:
+        arm_id = getattr(self, "wake_arm_id", None)
+        if arm_id is None:
+            return
+        with current.reader._locked():
+            fresh = current._load()
+            arm = fresh["wakeup"]
+            if (
+                not isinstance(arm_id, str)
+                or len(arm_id) != 64
+                or any(c not in "0123456789abcdef" for c in arm_id)
+                or arm is None
+                or arm["arm_id"] != arm_id
+                or arm["status"] != "ARMED"
+                or arm["candidate_digest"] != self.candidate["candidate_digest"]
+                or arm_id
+                != bare_digest(
+                    {
+                        "identity": current.identity,
+                        "original": fresh["original_wait_digest"],
+                        "ordinal": arm["attempts"],
+                    }
+                )
+                or fresh["status"] != "WAITING"
+                or self.now() < arm["next_check_at"]
+            ):
+                raise quota.QuotaError("QUOTA_WAKE_STALE")
+            self.host.verify_callback(self.candidate, arm)
+            current._check(fresh)
+            arm["status"] = "FIRED"
+            current._save(fresh)
 
     def resume_final(self) -> dict[str, Any]:
         from tools import agent_orchestrate as workflow
@@ -359,11 +393,13 @@ class Supervisor:
                 now=self.now,
                 guard=self._binding,
             )
+            self._consume_wake(current)
             value = current.poll(
                 lambda: self.read(
                     self.owner["source"],
                     self.owner["limit_id"],
-                    guard=self._binding,
+                    guard=current.read_guard,
+                    timeout_seconds=current.read_timeout(),
                 )
             )
             if value["status"] == "WAITING":
@@ -401,6 +437,7 @@ class Supervisor:
                 now=self.now,
                 guard=self._binding,
             )
+            self._consume_wake(current)
             interrupted = self._interrupted(store, saved)
             with reader._locked():
                 fresh = current._load()
@@ -415,7 +452,10 @@ class Supervisor:
 
             def read() -> dict[str, Any]:
                 snapshot = self.read(
-                    self.owner["source"], self.owner["limit_id"], guard=self._binding
+                    self.owner["source"],
+                    self.owner["limit_id"],
+                    guard=current.read_guard,
+                    timeout_seconds=current.read_timeout(),
                 )
                 observed.update(snapshot)
                 return snapshot
@@ -567,7 +607,7 @@ def wake_lock(
         owned.__exit__()
 
 
-def run(session: Any, *, wake: bool) -> dict[str, Any]:
+def run(session: Any, *, wake: bool, wake_arm_id: str | None = None) -> dict[str, Any]:
     """The original entry and persistent callback share one verified supervisor lock."""
     from tools import agent_epic_entry as entry
 
@@ -575,6 +615,8 @@ def run(session: Any, *, wake: bool) -> dict[str, Any]:
         if wake:
             raise quota.QuotaError("QUOTA_PROFILE_REQUIRED")
         return dict(session.resume())
+    if wake and wake_arm_id is None:
+        raise quota.QuotaError("QUOTA_WAKE_STALE")
     control = session.state / "session-control"
     control.mkdir(mode=0o700, parents=True, exist_ok=True)
     ownership = (
@@ -643,6 +685,7 @@ def run(session: Any, *, wake: bool) -> dict[str, Any]:
             return dict(facts)
 
         supervisor = Supervisor(session, host=host, reconcile=reconcile, live=live)
+        supervisor.wake_arm_id = wake_arm_id if wake else None
         cursor = guards.private_json(cursor_path) if cursor_path.exists() else None
         if cursor is not None and cursor.get("mode") == "FINAL":
             return supervisor.resume_final()

@@ -301,3 +301,19 @@ within its invocation deadline, then rechecks original stage budgets before any
 effect. This wait grants no new quota or role attempts. Cancellation persists
 its own reservation and reconciles an uncertain stop read-only; an inactive
 owned timer proves completion without another stop call.
+
+Exact callback attribution implements the accepted arm/ordinal binding with a
+fixed owner-pinned systemd service template. The only template substitution is
+`%i` passed as `--wake-arm-id` to the fixed trusted entry and state argv. The
+instance is exactly a lowercase 64-hex saved arm id; it cannot select an executable,
+state path or property. Under canonical RunnerLock the callback verifies the
+current saved arm, ordinal, candidate and exact host receipt before consuming it.
+Stale and duplicate instances perform no quota poll or phase effect. Changed
+service/template digests require a fresh exact candidate installation approval;
+this clarification grants no installation or activation authority.
+
+Controller continuation requires a retained validated terminal quota interruption
+matching the consumed role invocation/backend, in addition to the preserved gate
+boundary. A reservation without that receipt remains an unknown orphan. Source
+version and quota reads use the minimum persisted quota/stage/lifecycle deadline
+both as a process timeout and as a periodic cancellation guard.

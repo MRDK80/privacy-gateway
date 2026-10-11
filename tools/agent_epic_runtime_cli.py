@@ -616,7 +616,9 @@ def quota_deployment_guard(
     quoted = ['"' + arg.replace("\\", "\\\\").replace('"', '\\"') + '"' for arg in argv]
     service = (
         "[Unit]\nDescription=Privacy Gateway bounded quota supervisor\n"
-        "[Service]\nType=oneshot\nExecStart=" + " ".join(quoted) + "\n"
+        "[Service]\nType=oneshot\nExecStart="
+        + " ".join(quoted)
+        + ' "--wake-arm-id" "%i"\n'
     ).encode()
     bindings = {
         "schema_version": "1.0",
@@ -657,7 +659,7 @@ def quota_deployment_guard(
     paths = _quota_read([*prefix, "--property=UnitPath", "--value"]).decode().split()
     if str(units) not in paths:
         raise DeploymentError("QUOTA_WAKE_UNIT_PATH_UNSUPPORTED")
-    name = str(bindings["unit_prefix"]) + ".service"
+    name = str(bindings["unit_prefix"]) + "@.service"
     unit = units / name
     unit_info = unit.lstat()
     if (
@@ -1297,6 +1299,7 @@ def main() -> int:
             "entry",
         ),
     )
+    parser.add_argument("--wake-arm-id")
     parser.add_argument("--phase")
     parser.add_argument("--approved-wakeup-digest")
     parser.add_argument("--state-dir", type=Path, required=True)
@@ -1311,6 +1314,14 @@ def main() -> int:
     parser.add_argument("--installation", type=Path)
     parser.add_argument("--background", action="store_true")
     args = parser.parse_args()
+    if (
+        args.command == "quota_wake"
+        and (
+            not isinstance(args.wake_arm_id, str)
+            or re.fullmatch(r"[0-9a-f]{64}", args.wake_arm_id) is None
+        )
+    ) or (args.command != "quota_wake" and args.wake_arm_id is not None):
+        parser.error("exact wake arm instance required only for quota_wake")
     if args.command != "entry" and any(
         (
             args.action,
@@ -1458,7 +1469,11 @@ def main() -> int:
             if session.config.get("schema_version") == "5.0":
                 from tools.agent_quota_supervisor import run as quota_run
 
-                result = quota_run(session, wake=args.command == "quota_wake")
+                result = quota_run(
+                    session,
+                    wake=args.command == "quota_wake",
+                    wake_arm_id=args.wake_arm_id,
+                )
             else:
                 result = session.resume()
             status = result.get("status")

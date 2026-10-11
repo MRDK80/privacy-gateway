@@ -39,18 +39,29 @@ def _pinned(source: dict[str, Any]) -> Path:
 
 
 def read(
-    source: dict[str, Any], limit_id: str, *, guard: Callable[[], None]
+    source: dict[str, Any],
+    limit_id: str,
+    *,
+    guard: Callable[[], None],
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """Request exactly one quota snapshot and reap the ephemeral source child."""
     if os.name != "posix":
         raise QuotaError("QUOTA_SOURCE_UNSUPPORTED")
     path = _pinned(source)
     guard()
-    deadline = time.monotonic() + source["request_timeout_seconds"]
+    timeout = (
+        min(source["request_timeout_seconds"], timeout_seconds)
+        if timeout_seconds is not None
+        else source["request_timeout_seconds"]
+    )
+    if timeout <= 0:
+        raise QuotaError("QUOTA_DEADLINE_EXCEEDED")
+    deadline = time.monotonic() + timeout
     try:
         version = bounded_run(
             [str(path), "--version"],
-            timeout=min(5, source["request_timeout_seconds"]),
+            timeout=min(5, timeout),
             cap=4096,
             guard=guard,
         )

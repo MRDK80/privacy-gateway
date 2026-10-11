@@ -185,7 +185,8 @@ def codex_role_adapter(
                         lambda: source.read(
                             owner_profile["source"],
                             owner_profile["limit_id"],
-                            guard=guard,
+                            guard=current.read_guard,
+                            timeout_seconds=current.read_timeout(),
                         )
                     )
             except (quota.QuotaError, loop.LoopError):
@@ -302,6 +303,7 @@ class ReviewedWorkflow:
         contract = validated.contract
 
         class CaptureAdapter:
+            backend_digest = getattr(delegate, "backend_digest", None)
             quota_resume_enabled = (
                 getattr(delegate, "quota_resume_enabled", False) is True
             )

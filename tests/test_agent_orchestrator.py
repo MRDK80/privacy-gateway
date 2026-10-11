@@ -117,6 +117,7 @@ def _verdict(request: dict[str, Any], value: str) -> dict[str, Any]:
 
 class FakeAdapter:
     quota_resume_enabled = False
+    backend_digest = "c" * 64
 
     def __init__(self, verdicts: list[str]) -> None:
         self.verdicts = verdicts
@@ -408,7 +409,9 @@ def test_quota_interruption_preserves_original_call_budget(repository: Path) -> 
     assert retained["role_pending"] == "executor"
 
 
-@pytest.mark.parametrize("recovery", ["ready", "changed", "missing", "budget"])
+@pytest.mark.parametrize(
+    "recovery", ["ready", "changed", "missing", "budget", "orphan", "mismatch"]
+)
 def test_quota_controller_resume_keeps_executor_snapshot_and_call_budget(
     repository: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -441,8 +444,12 @@ def test_quota_controller_resume_keeps_executor_snapshot_and_call_budget(
     orchestrator._assert_gate_snapshot_unchanged(repository, contract, evidence)
     monkeypatch.setattr(orchestrator, "_production_gate", lambda root, value: evidence)
 
+    class ControllerKilled(BaseException):
+        pass
+
     class QuotaController(FakeAdapter):
         quota_resume_enabled = True
+        backend_digest = "c" * 64
 
         def review(
             self,
@@ -451,18 +458,46 @@ def test_quota_controller_resume_keeps_executor_snapshot_and_call_budget(
             session_id: str,
         ) -> dict[str, Any]:
             self.controller_sessions.append(session_id)
-            raise Interrupted({"synthetic": True})
+            if recovery == "orphan":
+                raise ControllerKilled()
+            raise Interrupted(
+                {
+                    "schema_version": "1.0",
+                    "role": "controller",
+                    "invocation_digest": orchestrator.hashlib.sha256(
+                        orchestrator.json.dumps(
+                            {
+                                **request,
+                                "session_id": session_id,
+                                "trusted_policy": trusted_policy,
+                            },
+                            sort_keys=True,
+                            separators=(",", ":"),
+                            ensure_ascii=False,
+                        ).encode()
+                    ).hexdigest(),
+                    "thread_digest": "a" * 64,
+                    "turn_digest": "b" * 64,
+                    "error_code": "usageLimitExceeded",
+                    "backend_digest": "c" * 64,
+                    "outcome": "UNKNOWN",
+                }
+            )
 
     first = QuotaController([])
-    with pytest.raises(Interrupted):
+    with pytest.raises(ControllerKilled if recovery == "orphan" else Interrupted):
         orchestrator.run(contract, root=repository, storage=storage, adapter=first)
     if recovery == "changed":
         (repository / "code.py").write_text("VALUE = 3\n", encoding="utf-8")
-    elif recovery in {"missing", "budget"}:
+    elif recovery in {"missing", "budget", "orphan", "mismatch"}:
         key = orchestrator._run_key(contract)
         saved = storage.load(key)
         assert saved is not None
-        if recovery == "missing":
+        if recovery == "orphan":
+            saved.pop("quota_interruption", None)
+        elif recovery == "mismatch":
+            saved["quota_interruption"]["invocation_digest"] = "d" * 64
+        elif recovery == "missing":
             saved.pop("controller_boundary")
         else:
             saved["controller_calls"] = contract.max_repair_iterations + 1
@@ -475,6 +510,7 @@ def test_quota_controller_resume_keeps_executor_snapshot_and_call_budget(
     ) is (recovery in {"ready", "budget"})
     resumed = FakeAdapter(["PASS"])
     resumed.quota_resume_enabled = True
+    resumed.backend_digest = "c" * 64
     result = orchestrator.run(
         contract, root=repository, storage=storage, adapter=resumed
     )

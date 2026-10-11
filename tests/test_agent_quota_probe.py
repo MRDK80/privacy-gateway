@@ -146,7 +146,7 @@ service=(units/sys.argv[4]).read_bytes()
 assert hashlib.sha256(service).hexdigest()==sys.argv[5]
 argv=shlex.split(next(line[10:] for line in service.decode().splitlines()
     if line.startswith('ExecStart=')))
-assert argv==expected
+assert argv==expected+["--wake-arm-id", "%i"]
 expires=time.monotonic()+5
 while not done.exists():
     if time.monotonic()>=expires: raise SystemExit(2)
@@ -154,6 +154,10 @@ while not done.exists():
 timers=list(units.glob('*.timer')); assert len(timers)==1
 text=timers[0].read_text(); assert 'OnCalendar=@1010\n' in text
 assert 'Persistent=true\n' in text and 'OnUnitActiveSec' not in text
+service_unit=next(line[5:] for line in text.splitlines() if line.startswith("Unit="))
+instance=service_unit.split("@",1)[1].removesuffix(".service")
+assert instance=="c"*64
+argv[-1]=instance
 result=subprocess.run(argv,capture_output=True,text=True,timeout=3,check=True)
 print(result.stdout.strip())
 """
@@ -165,7 +169,7 @@ print(result.stdout.strip())
             str(host.units),
             str(done),
             json.dumps(callback_argv),
-            value["unit_prefix"] + ".service",
+            value["unit_prefix"] + "@.service",
             value["service_sha256"],
         ],
         stdout=subprocess.PIPE,

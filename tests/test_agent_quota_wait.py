@@ -197,3 +197,72 @@ def test_malformed_state_enum_is_a_closed_error(tmp_path: Path, field: str) -> N
         }
     with pytest.raises(QuotaError, match="QUOTA_STATE_INVALID"):
         current._validate(value)
+
+
+@pytest.mark.parametrize("stage", ["version", "app-server"])
+def test_persisted_short_deadline_reaps_source_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    import hashlib
+    import time
+
+    from tools import agent_quota_source as source
+
+    clock = [1000]
+    reader, owner, identity = setup(tmp_path, clock)
+    marker = tmp_path / "child.pid"
+    executable = tmp_path / "slow-source"
+    executable.write_text(
+        "#!/usr/bin/python3\nimport os,sys,time\n"
+        f"if sys.argv[1] == {('--version' if stage == 'version' else stage)!r}:\n"
+        f"    open({str(marker)!r}, 'w').write(str(os.getpid()))\n"
+        "    time.sleep(10)\n"
+        "else:\n    print('synthetic-version', flush=True)\n"
+    )
+    executable.chmod(0o700)
+    owner["source"].update(
+        executable=str(executable),
+        executable_sha256=hashlib.sha256(executable.read_bytes()).hexdigest(),
+        version_digest=hashlib.sha256(b"synthetic-version").hexdigest(),
+        request_timeout_seconds=10,
+    )
+    identity.update(
+        source_digest=bare_digest(owner["source"]),
+        quota_profile_digest=bare_digest(owner),
+    )
+    current = QuotaWait(
+        reader,
+        owner,
+        identity,
+        runtime_deadline=clock[0] + 100,
+        now=lambda: clock[0],
+        guard=lambda: None,
+    )
+    retained = current._load()
+    retained["deadline_at"] = clock[0] + 1
+    current._save(retained)
+    original_check = current._check
+
+    def advancing(value: dict[str, Any]) -> int:
+        if marker.exists():
+            clock[0] += 1
+        return original_check(value)
+
+    monkeypatch.setattr(current, "_check", advancing)
+    started = time.monotonic()
+    with pytest.raises(QuotaError, match="QUOTA_DEADLINE_EXCEEDED"):
+        current.poll(
+            lambda: source.read(
+                owner["source"],
+                "codex",
+                guard=current.read_guard,
+                timeout_seconds=current.read_timeout(),
+            )
+        )
+    assert time.monotonic() - started < 2
+    pid = int(marker.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+    final = current._load()
+    assert final["attempts"] == 1 and final["status"] == "FAILED"
+    assert final["deadline_at"] == retained["deadline_at"]

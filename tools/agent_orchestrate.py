@@ -1319,6 +1319,27 @@ def public_evidence(state: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _quota_receipt_valid(
+    saved: dict[str, Any], backend_digest: str | None = None
+) -> bool:
+    from tools import agent_orchestrate as quota_workflow
+    from tools.agent_quota_role import validate_event
+
+    event = saved.get("quota_interruption")
+    try:
+        validate_event(
+            event,
+            role=saved["role_pending"],
+            invocation_digest=saved["invocation_digest"],
+            backend_digest=backend_digest
+            if backend_digest is not None
+            else saved["quota_backend_digest"],
+        )
+        return saved.get("machine_code") == "ROLE_QUOTA_INTERRUPTED"
+    except (quota_workflow.OrchestrationError, KeyError, TypeError):
+        return False
+
+
 def controller_resume_available(
     contract: TaskContract,
     *,
@@ -1333,6 +1354,7 @@ def controller_resume_available(
         boundary = saved.get("controller_boundary")
         if (
             saved.get("role_pending") != "controller"
+            or not _quota_receipt_valid(saved)
             or not isinstance(boundary, dict)
             or set(boundary) != {"schema_version", "contract", "head_sha", "gate"}
             or boundary["schema_version"] != "1.0"
@@ -1509,6 +1531,10 @@ def run(
             not quota_enabled
             or gate is not None
             or previous.get("role_pending") != "controller"
+            or not isinstance(getattr(adapter, "backend_digest", None), str)
+            or not _quota_receipt_valid(
+                previous, getattr(adapter, "backend_digest", None)
+            )
             or not isinstance(boundary, dict)
             or set(boundary) != {"schema_version", "contract", "head_sha", "gate"}
             or boundary.get("schema_version") != "1.0"
@@ -1734,9 +1760,35 @@ def run(
                     "failures": failures,
                 },
             )
-    except (QuotaInterrupted, QuotaPaused):
-        # The reservation remains nonterminal and consumed. A quota signal is
-        # not a controller verdict or proof that workspace effects did not run.
+    except (QuotaInterrupted, QuotaPaused) as error:
+        from tools import agent_orchestrate as quota_workflow
+        from tools.agent_quota_role import validate_event
+
+        reserved = storage.load(run_key)
+        if reserved is not None and quota_enabled:
+            backend_digest = getattr(adapter, "backend_digest", None)
+            if not isinstance(backend_digest, str):
+                return finish("FAIL_ESCALATE", "ROLE_INTERRUPTION_INVALID")
+            try:
+                event = validate_event(
+                    error.event
+                    if isinstance(error, QuotaInterrupted)
+                    else error.interruption,
+                    role=reserved["role_pending"],
+                    invocation_digest=reserved["invocation_digest"],
+                    backend_digest=backend_digest,
+                )
+            except (quota_workflow.OrchestrationError, KeyError, TypeError):
+                return finish("FAIL_ESCALATE", "ROLE_INTERRUPTION_INVALID")
+            storage.save(
+                run_key,
+                {
+                    **reserved,
+                    "quota_interruption": event,
+                    "quota_backend_digest": event["backend_digest"],
+                    "machine_code": "ROLE_QUOTA_INTERRUPTED",
+                },
+            )
         raise
     except OrchestrationError as error:
         return finish("FAIL_ESCALATE", error.machine_code)

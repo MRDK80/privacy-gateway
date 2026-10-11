@@ -147,7 +147,7 @@ def test_exact_frozen_metadata_checks_do_not_execute_candidate(
         "quota-install": {"candidate": value, "status": "APPLIED"},
     }.items():
         private(state / (name + ".json"), document)
-    unit = units / (value["unit_prefix"] + ".service")
+    unit = units / (value["unit_prefix"] + "@.service")
     unit.write_bytes(service)
     unit.chmod(0o600)
     monkeypatch.setattr(guards, "quota_profile_guard", lambda *args: owner)

@@ -230,6 +230,15 @@ class QuotaWait:
         value["last_seen_at"] = now
         return now
 
+    def read_guard(self) -> None:
+        """Cancel a live source against its original persisted finite deadline."""
+        self._check(self._load())
+
+    def read_timeout(self) -> float:
+        value = self._load()
+        now = self._check(value)
+        return float(value["deadline_at"] - now)
+
     def poll(self, read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
         with self.reader._locked():
             value = self._load()

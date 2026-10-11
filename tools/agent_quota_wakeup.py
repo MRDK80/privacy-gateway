@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from tools import agent_orchestrate as workflow
-from tools.agent_epic_runtime_cli import private_json, secure_directory
+from tools.agent_epic_runtime_cli import DeploymentError, private_json, secure_directory
 from tools.agent_quota import QuotaError
 from tools.agent_quota_wait import bare_digest
 
@@ -58,7 +58,7 @@ def service_bytes(command: Sequence[str]) -> bytes:
         "[Service]\nType=oneshot\n"
         + "ExecStart="
         + " ".join(_arg(v) for v in command)
-        + "\n"
+        + ' "--wake-arm-id" "%i"\n'
     ).encode()
 
 
@@ -207,9 +207,11 @@ class SystemdUser:
         if str(self.units) not in paths:
             raise QuotaError("QUOTA_WAKE_UNIT_PATH_UNSUPPORTED")
 
-    def _loaded(self, name: str, *, cancellation: bool = False) -> None:
+    def _loaded(
+        self, name: str, *, cancellation: bool = False, fragment: str | None = None
+    ) -> None:
         expected = {
-            "FragmentPath": str(self.units / name),
+            "FragmentPath": str(self.units / (fragment or name)),
             "DropInPaths": "",
             "NeedDaemonReload": "no",
             "LoadState": "loaded",
@@ -225,7 +227,8 @@ class SystemdUser:
     def _bytes(self, name: str) -> bytes | None:
         if (
             re.fullmatch(
-                r"pgw-quota-[0-9a-f]{32}(?:-[0-9a-f]{64})?\.(?:service|timer)", name
+                r"pgw-quota-[0-9a-f]{32}(?:@(?:[0-9a-f]{64})?\.service|-[0-9a-f]{64}\.timer)",
+                name,
             )
             is None
         ):
@@ -276,7 +279,7 @@ class SystemdUser:
             or hashlib.sha256(service).hexdigest() != value["service_sha256"]
         ):
             raise QuotaError("QUOTA_WAKE_APPROVAL_REQUIRED")
-        name = value["unit_prefix"] + ".service"
+        name = value["unit_prefix"] + "@.service"
         path = self.state / "quota-install.json"
         if path.exists() or path.is_symlink():
             # An existing installation is reconciled read-only, never installed twice.
@@ -309,7 +312,7 @@ class SystemdUser:
         value = validate(value)
         self._lifecycle(value)
         saved = private_json(self.state / "quota-install.json")
-        data = self._bytes(value["unit_prefix"] + ".service")
+        data = self._bytes(value["unit_prefix"] + "@.service")
         if (
             saved != {"candidate": value, "status": "APPLIED"}
             or data is None
@@ -317,7 +320,7 @@ class SystemdUser:
         ):
             raise QuotaError("QUOTA_WAKE_NOT_INSTALLED")
         self._manager_path()
-        self._loaded(value["unit_prefix"] + ".service")
+        self._loaded(value["unit_prefix"] + "@.service")
 
     def arm(
         self, value: dict[str, Any], arm_id: str, at: int, *, deadline: int
@@ -331,7 +334,7 @@ class SystemdUser:
             raise QuotaError("QUOTA_WAKE_DEADLINE_INVALID")
         name = value["unit_prefix"] + "-" + arm_id + ".timer"
         data = TIMER_TEMPLATE.format(
-            at=at, service=value["unit_prefix"] + ".service"
+            at=at, service=value["unit_prefix"] + "@" + arm_id + ".service"
         ).encode()
         key = "quota-arm-" + arm_id
         record = {
@@ -372,6 +375,35 @@ class SystemdUser:
         record["status"] = "ARMED"
         workflow.StateStore(self.state).save(key, record)
         return record
+
+    def verify_callback(self, value: dict[str, Any], arm: dict[str, Any]) -> None:
+        self.verify(value)
+        arm_id = arm["arm_id"]
+        if re.fullmatch(r"[0-9a-f]{64}", arm_id) is None:
+            raise QuotaError("QUOTA_WAKE_STALE")
+        name = value["unit_prefix"] + "-" + arm_id + ".timer"
+        service = value["unit_prefix"] + "@" + arm_id + ".service"
+        data = TIMER_TEMPLATE.format(at=arm["next_check_at"], service=service).encode()
+        expected = {
+            k: arm[k]
+            for k in ("candidate_digest", "arm_id", "next_check_at", "unit_digest")
+        }
+        try:
+            receipt = private_json(self.state / ("quota-arm-" + arm_id + ".json"))
+        except DeploymentError:
+            raise QuotaError("QUOTA_WAKE_ARM_UNKNOWN") from None
+        if (
+            receipt != {**expected, "status": "ARMED"}
+            or self._bytes(name) != data
+            or hashlib.sha256(data).hexdigest() != arm["unit_digest"]
+        ):
+            raise QuotaError("QUOTA_WAKE_ARM_UNKNOWN")
+        self._loaded(name)
+        self._loaded(service, fragment=value["unit_prefix"] + "@.service")
+        if self._host(
+            ["show", service, "--property=ActiveState", "--value"]
+        ).strip() not in {"activating", "active"}:
+            raise QuotaError("QUOTA_WAKE_ARM_UNKNOWN")
 
     def cancel(self, value: dict[str, Any], arm_id: str, expected_digest: str) -> None:
         # Cancellation may be necessary after expiry; it cannot mint new work.

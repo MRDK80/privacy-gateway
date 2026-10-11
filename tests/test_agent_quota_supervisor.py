@@ -248,11 +248,67 @@ def test_stop_cancels_owned_arms_across_task_waits(
     )
     workflow.StateStore(host.state).save("quota-wakeup-candidate", candidate)
     monkeypatch.setattr(guards, "quota_profile_guard", lambda *args: owner)
-    monkeypatch.setattr(
-        guards, "managed_launch_guard", lambda *args, **kwargs: None
-    )
+    monkeypatch.setattr(guards, "managed_launch_guard", lambda *args, **kwargs: None)
     monkeypatch.setattr(supervisor, "prepare", lambda *args: (candidate, service))
     monkeypatch.setattr(supervisor, "SystemdUser", lambda *args, **kwargs: host)
     result = supervisor.cancel_owned(host.state, host.root)
     assert result["status"] == "CANCELLED"
     assert len([call for call in calls if "stop" in call]) == 3
+
+
+@pytest.mark.parametrize(
+    "callback", ["correct", "stale", "duplicate", "invalid", "host_unknown"]
+)
+def test_callback_consumes_only_exact_current_arm(
+    tmp_path: Path,
+    callback: str,
+) -> None:
+    from tools import agent_epic_loop as loop
+    from tools.agent_quota import QuotaError
+
+    clock = [1000]
+    reader, owner, identity = setup(tmp_path, clock)
+    host_dir = tmp_path / "host"
+    host_dir.mkdir(mode=0o700)
+    host, candidate, service, _ = host_setup(host_dir)
+    host.install(candidate, service, approved_digest=candidate["candidate_digest"])
+    current = QuotaWait(
+        reader,
+        owner,
+        identity,
+        runtime_deadline=1100,
+        now=lambda: clock[0],
+        guard=lambda: None,
+    )
+    current.poll(
+        lambda: {"primary": {"usedPercent": 100, "resetsAt": None}, "secondary": None}
+    )
+    engine = supervisor.Supervisor.__new__(supervisor.Supervisor)
+    engine.owner, engine.candidate, engine.host = owner, candidate, host
+    engine.now = lambda: clock[0]
+    engine._arm(current)
+    old = current._load()["wakeup"]
+    # A later pause installs a different ordinal; an old callback cannot consume it.
+    if callback == "stale":
+        value = current._load()
+        value["wakeup"]["status"] = "FIRED"
+        current._save(value)
+        engine._arm(current)
+    engine.wake_arm_id = old["arm_id"] if callback != "invalid" else "INVALID"
+    if callback == "duplicate":
+        value = current._load()
+        value["wakeup"]["status"] = "FIRED"
+        current._save(value)
+    if callback == "host_unknown":
+        (host.state / ("quota-arm-" + old["arm_id"] + ".json")).unlink()
+    clock[0] = 1010
+    before = current._load()
+    with loop.RunnerLock.supervisor(tmp_path / "control"):
+        if callback == "correct":
+            engine._consume_wake(current)
+            assert current._load()["wakeup"]["status"] == "FIRED"
+        else:
+            with pytest.raises(QuotaError):
+                engine._consume_wake(current)
+            assert current._load() == before
+    assert current._load()["attempts"] == 1
