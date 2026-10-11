@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,19 +39,95 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
 
 def epic_config_keys(config: dict[str, Any]) -> set[str]:
     version = config.get("schema_version")
-    if version not in {"1.0", "2.0", "3.0"}:
+    if version not in {"1.0", "2.0", "3.0", "4.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     keys = EPIC_CONFIG_KEYS | (
         {"approved_launch_digest"} if version != "1.0" else set()
     )
-    return keys | ({"approved_planning_digest"} if version == "3.0" else set())
+    return (
+        keys
+        | ({"approved_planning_digest"} if version in {"3.0", "4.0"} else set())
+        | ({"approved_wait_digest"} if version == "4.0" else set())
+    )
+
+
+def planning_enabled(config: Mapping[str, Any]) -> bool:
+    return config.get("schema_version") == "3.0" or (
+        config.get("schema_version") == "4.0"
+        and config.get("approved_planning_digest") is not None
+    )
+
+
+def wait_profile_guard(
+    state: Path, config: dict[str, Any], mandate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Validate the closed owner profile before importing candidate code."""
+    if config.get("schema_version") != "4.0":
+        return None
+    path = state / "wait-profile.json"
+    owner = private_json(path)
+    if path.stat().st_nlink != 1:
+        raise DeploymentError("UNSAFE_RUNTIME_CONFIG")
+    keys = {
+        "schema_version",
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+        "limits",
+    }
+    if (
+        set(owner) != keys
+        or owner.get("schema_version") != "1.0"
+        or canonical_digest(owner) != config.get("approved_wait_digest")
+        or owner.get("mandate_digest") != config.get("approved_mandate_digest")
+        or any(
+            owner.get(key) != mandate.get(key)
+            for key in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+    ):
+        raise DeploymentError("WAIT_APPROVAL_MISMATCH")
+    maxima = {
+        "max_phase_seconds": 86400,
+        "max_read_attempts": 11,
+        "max_ci_polls": 11,
+        "max_read_commands": 512,
+    }
+    limits = owner["limits"]
+    if (
+        not isinstance(limits, dict)
+        or set(limits) != set(maxima)
+        or any(
+            type(limits[key]) is not int or not 1 <= limits[key] <= maximum
+            for key, maximum in maxima.items()
+        )
+    ):
+        raise DeploymentError("WAIT_PROFILE_INVALID")
+    if "approved_planning_digest" not in config or (
+        config["approved_planning_digest"] is not None
+        and (
+            not isinstance(config["approved_planning_digest"], str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", config["approved_planning_digest"])
+            is None
+        )
+    ):
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    return owner
 
 
 def planning_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Stdlib profile identity/closed-shape check before candidate imports."""
-    if config.get("schema_version") != "3.0":
+    if not planning_enabled(config):
         return None
     owner = private_json(state / "planning-profile.json")
     keys = {
@@ -201,7 +278,11 @@ def managed_launch_guard(
     )
     epic_path = seed / "epic-runtime.json"
     config = private_json(epic_path) if epic_path.exists() else None
-    managed = config is not None and config.get("schema_version") in {"2.0", "3.0"}
+    managed = config is not None and config.get("schema_version") in {
+        "2.0",
+        "3.0",
+        "4.0",
+    }
     if not present and not managed:
         return
     if config is None or set(config) != epic_config_keys(config) or not managed:
@@ -239,6 +320,7 @@ def managed_launch_guard(
         raise DeploymentError("LAUNCH_CONFIG_CHANGED")
     mandate = private_json(seed / "mandate.json")
     planning_profile_guard(seed, config, mandate)
+    wait_profile_guard(seed, config, mandate)
     if (
         any(
             value[key] != mandate.get(key)
@@ -590,6 +672,8 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
             policy_root=policy, root=root, policy_sha=current["policy_sha"]
         ),
     )
+    from tools.agent_epic_wait_scope import Scope
+
     engine = TaskPhaseRuntime(
         store=loop.CheckpointStore(state, root),
         authority=authority,
@@ -597,6 +681,7 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
         demo_plan=lambda: private_json(state / "demo-plan.json"),
         demo_completion=lambda: private_json(state / "demo-completion.json"),
         approved_order=tuple(config["approved_order"]),
+        wait_scope=Scope.inherited(state, root, read_only=read_only),
     )
     engine.bootstrap = BootstrapTask(engine, reviewed, authority)
     if recovery_profile:
@@ -634,6 +719,7 @@ def build_session(state: Path, root: Path) -> Any:
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
     planning_profile_guard(state, config, mandate)
+    wait_profile_guard(state, config, mandate)
     managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -645,8 +731,9 @@ def build_session(state: Path, root: Path) -> Any:
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(policy))
     from tools.agent_epic_session_runtime import SessionRuntime
+    from tools.agent_epic_wait_scope import Scope
 
-    return SessionRuntime(state, root, config)
+    return SessionRuntime(state, root, config, wait_scope=Scope.inherited(state, root))
 
 
 def build_entry(state: Path, root: Path) -> Any:
@@ -665,6 +752,7 @@ def build_entry(state: Path, root: Path) -> Any:
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
     planning_profile_guard(state, config, mandate)
+    wait_profile_guard(state, config, mandate)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
@@ -745,7 +833,9 @@ def main() -> int:
             )
             return 0
         engine = build_runtime(
-            args.state_dir, args.repository_root, read_only=args.command == "reconcile"
+            args.state_dir,
+            args.repository_root,
+            read_only=args.command in {"live", "reconcile"},
         )
         if args.command == "live":
             value = dict(engine.live())

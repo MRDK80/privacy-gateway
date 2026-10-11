@@ -153,6 +153,7 @@ class CommandRuntimeAdapter:
         self.state_directory = state_directory
         self._merge_sha: str | None = None
         self.supervisor_lock: RunnerLock | None = None
+        self.wait_scope: Any = None
 
     @staticmethod
     def _secure_ancestry(directory: Path, owner: int) -> None:
@@ -412,20 +413,41 @@ class CommandRuntimeAdapter:
             # still comes from pinned policy and the fresh runtime guards.
             child_environment = dict(os.environ)
             child_environment.pop(SUPERVISOR_LOCK_FD_ENV, None)
+            from tools import agent_epic_wait_frame as frames
+            from tools.agent_epic_wait_scope import Scope
+
+            frames.clear(child_environment)
             inherited_fds: tuple[int, ...] = ()
             if self.supervisor_lock is not None and command == self.epic_command:
                 descriptor = self.supervisor_lock.descriptor()
                 inherited_fds = (descriptor,)
                 child_environment[SUPERVISOR_LOCK_FD_ENV] = str(descriptor)
-            process = subprocess.Popen(
-                contained_command,
-                cwd=self.root,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
-                pass_fds=inherited_fds,
-                env=child_environment,
-            )
+            budget = self.wait_scope
+            if budget is None and self.state_directory is not None:
+                budget = Scope.for_root(
+                    self.state_directory,
+                    self.root,
+                    read_only=command == self.live_command
+                    or command in self.reconcile_commands.values(),
+                )
+            budget_fd = None
+            if budget is not None:
+                frame, budget_fd = budget.child(command, self.timeout_seconds)
+                inherited_fds += (budget_fd,)
+                child_environment.update(frames.environment(frame, budget_fd))
+            try:
+                process = subprocess.Popen(
+                    contained_command,
+                    cwd=self.root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    start_new_session=True,
+                    pass_fds=inherited_fds,
+                    env=child_environment,
+                )
+            finally:
+                if budget_fd is not None:
+                    os.close(budget_fd)
             if process.stdout is None or process.stderr is None:
                 raise LoopError("RUNTIME_ADAPTER_FAILED")
             threads = (

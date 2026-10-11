@@ -5,7 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from tools import agent_gate
 from tools import agent_orchestrate as workflow
 from tools import agent_verified_lessons as lessons
 from tools.agent_epic_final_transport import GhFinalTransport
+from tools.agent_epic_wait_scope import Scope
 
 APPROVAL_FIELDS = {
     "schema_version",
@@ -58,7 +60,12 @@ class FinalRuntime:
         approved_digest: str,
         lesson: Callable[[], Mapping[str, Any]],
         adapter: workflow.AgentAdapter,
+        wait_scope: Scope | None = None,
     ) -> None:
+        self.wait_scope = wait_scope
+        self._wait_phase = "FINAL_GATE"
+        self._reconciling = False
+        self._latest_checks: Sequence[Mapping[str, Any]] = ()
         self.root = root
         self.directory = directory
         self.authority = authority
@@ -66,15 +73,56 @@ class FinalRuntime:
         self.approved_digest = approved_digest
         self.lesson = lesson
         self.adapter = adapter
-        self.github = checks.GhClient()
-        self.issues = queue.GhClient()
+        read = self._github_read if wait_scope is not None else None
+        self.github = checks.GhClient(read=read)
+        self.issues = queue.GhClient(read=read)
         self.transport = GhFinalTransport(
             root,
             reporting=lambda: self._prepare(self._request("create_roadmap_pr")),
             before_write=self._before_transport_write,
+            read=read,
         )
         self.storage = workflow.StateStore(directory / "final-artifacts")
         self.ledger = delivery.Ledger(directory / "final-ledger", root)
+
+    def _wait_reader(self) -> Any:
+        assert self.wait_scope is not None
+        prefix = "RECONCILE:FINAL" if self._reconciling else "FINAL"
+        return self.wait_scope.reader(f"{prefix}:{self._wait_phase}")
+
+    def _github_read(self, argv: Sequence[str]) -> str:
+        return str(self._wait_reader().command(argv))
+
+    @contextmanager
+    def _stage(
+        self, request: driver.Request, *, reconcile: bool = False
+    ) -> Iterator[None]:
+        phase, reconciling = self._wait_phase, self._reconciling
+        self._wait_phase = (
+            "POST_MERGE"
+            if request.operation in driver.POST_MERGE
+            else "PR_CI"
+            if request.operation == "merge_roadmap_pr"
+            else "FINAL_GATE"
+        )
+        self._reconciling = reconciling or reconcile
+        try:
+            if self.wait_scope is not None:
+                prefix = "RECONCILE:FINAL" if self._reconciling else "FINAL"
+                with self.wait_scope.context(f"{prefix}:{self._wait_phase}"):
+                    yield
+            else:
+                yield
+        finally:
+            self._wait_phase, self._reconciling = phase, reconciling
+
+    def _ci_checks(self, repository: str, identity: str | int) -> Any:
+        self._latest_checks = (
+            self.github.commit_checks(repository, identity)
+            if isinstance(identity, str)
+            else self.github.pr_checks(repository, identity)
+        )
+        return self._latest_checks
 
     def _owner(self) -> Mapping[str, Any]:
         value = self.approval()
@@ -281,6 +329,58 @@ class FinalRuntime:
         return saved
 
     def gate(self, request: driver.Request) -> final.FinalGate:
+        if self.wait_scope is None:
+            return self._gate_once(request)
+        with self._stage(request):
+            return self._gate_wait(request)
+
+    def _gate_wait(self, request: driver.Request) -> final.FinalGate:
+
+        def assess() -> Mapping[str, Any]:
+            self._latest_checks = ()
+            result = self._gate_once(request)
+            if result.machine_code in {
+                "ROADMAP_PR_CI_FAILED",
+                "MAIN_POST_MERGE_CI_FAILED",
+            }:
+                latest: Sequence[Mapping[str, Any]] = self._latest_checks
+                names = [item.get("name") for item in latest]
+                states = {item.get("state") for item in latest}
+                pending = {
+                    "EXPECTED",
+                    "IN_PROGRESS",
+                    "PENDING",
+                    "QUEUED",
+                    "REQUESTED",
+                    "WAITING",
+                }
+                if (
+                    len(names) == len(set(names))
+                    and set(names) == set(checks.REQUIRED_CHECKS)
+                    and states <= pending | {"SUCCESS"}
+                    and states & pending
+                ):
+                    return {**asdict(result), "machine_code": "CI_PENDING"}
+            return asdict(result)
+
+        value = self._wait_reader().poll_ci(
+            {
+                "repository": request.repository,
+                "epic": request.epic,
+                "roadmap_sha": request.roadmap_sha,
+                "main_sha": request.main_sha,
+                "merge_sha": request.merge_sha,
+                "pr": request.pr,
+            },
+            assess,
+        )
+        return final.FinalGate(
+            str(value["status"]),
+            str(value["machine_code"]),
+            str(value["roadmap_status"]),
+        )
+
+    def _gate_once(self, request: driver.Request) -> final.FinalGate:
         try:
             owner = self._owner()
             if any(
@@ -312,9 +412,7 @@ class FinalRuntime:
                     merge_sha=request.merge_sha or "",
                     live_main_sha=main,
                     pr_state=str(info.get("state")),
-                    checks=self.github.commit_checks(
-                        request.repository, request.merge_sha or ""
-                    ),
+                    checks=self._ci_checks(request.repository, request.merge_sha or ""),
                 )
             if main != request.main_sha:
                 raise loop.PhaseBlocked("MAIN_CHANGED")
@@ -352,7 +450,7 @@ class FinalRuntime:
                     pr_head_sha=str(info.get("headRefOid")),
                     base_ref=str(info.get("baseRefName")),
                     state=str(info.get("state")),
-                    checks=self.github.pr_checks(request.repository, request.pr or 0),
+                    checks=self._ci_checks(request.repository, request.pr or 0),
                 )
             return ready
         except loop.PhaseBlocked as error:
@@ -373,6 +471,10 @@ class FinalRuntime:
         ):
             raise delivery.OutcomeUnknown
 
+    def _reconcile_transport(self, request: driver.Request) -> Any:
+        with self._stage(request, reconcile=True):
+            return self.transport.reconcile(request)
+
     def resume(self) -> delivery.Result:
         pr = None
         merge = None
@@ -383,14 +485,15 @@ class FinalRuntime:
             "update_epic",
         ):
             request = self._request(operation, pr=pr, merge=merge)
-            result = driver.deliver(
-                request,
-                authority=self.authority,
-                gate=self.gate,
-                ledger=self.ledger,
-                effect=self.transport.effect,
-                reconcile=self.transport.reconcile,
-            )
+            with self._stage(request):
+                result = driver.deliver(
+                    request,
+                    authority=self.authority,
+                    gate=self.gate,
+                    ledger=self.ledger,
+                    effect=self.transport.effect,
+                    reconcile=self._reconcile_transport,
+                )
             if result.status not in {"APPLIED", "NO_OP"}:
                 return result
             if operation == "create_roadmap_pr":

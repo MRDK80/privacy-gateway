@@ -25,3 +25,28 @@ This task establishes durable foreground wait continuation, not cross-turn sched
 ## Verification and limitations
 
 Regression-first synthetic fake-time tests cover initial+bounded attempts, elapsed request duration, deadline clamp/clock rollback, saved waits/restart, unclassified reservation crash, auth/schema/identity refusal, stop/pause/revoke/expiry, CI_PENDING vs any terminal failure, all named clients, Git exclusions, UNKNOWN writes with no duplicate effects, output bounds and zero unauthorized effects. Full local gate, independent controller, exact PR/post-merge CI and exact-tree synthetic demo separate. No public Library/pgw contracts, existing checkpoint/ledger/mandate/runtime-adapter schemas, release/dependency/workflow changes. New closed private records and config4 are internal opt-in. Atomic visibility does not imply crash durability, cross-file transaction or exactly-once delivery.
+
+## Owner-approved corrective clarification
+
+On 2026-10-11 the owner approved one bounded corrective cycle for four
+independent-controller findings. Read-only discovery/live/reconciliation may
+observe an existing PAUSED or STOPPED latch without changing it; active/effect
+contexts still require RUNNING, and every existing wait cancels on control
+state/generation change. The mode comes from the trusted fixed caller/command,
+not a profile or model input. STOPPED remains terminal for effects.
+
+Stage contexts are scoped to the actual saved task/cursor/phase or successor
+preparation and restored after callbacks. Restart routes the same work to the
+same stage and retained budget. Task-local checkpoint/policy and applicable
+recovery generation/approval/expiry are checked locally before another read
+and during waiting; a network-bearing admission callback is not a wait guard.
+
+An unclassified RESERVED CI poll never resumes automatically merely because
+another stage request is WAITING. A positively classified transient read within
+the currently reserved trusted read-only poll saves CI WAITING and the read's
+WAITING state/due time together in the existing closed wait record before
+sleeping. Restart of this established WAITING path consumes a new bounded poll
+attempt. An interruption before the assessor's own read remains unknown.
+Counters are never reset or refunded. No fields, schemas, effect permissions,
+runtime installation/activation or final main approval are added by this
+clarification.

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import copy
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from tools import agent_epic_handover as planner
 from tools import agent_epic_loop as loop
 from tools import agent_epic_planning as admission
 from tools import agent_epic_queue as queue
+from tools import agent_epic_runtime_cli as guards
 from tools import agent_orchestrate as workflow
 from tools.agent_epic_bootstrap import BootstrapTask
 from tools.agent_epic_final_runtime import FinalRuntime, digest
@@ -23,14 +25,25 @@ from tools.agent_epic_planning_roles import PlanningRoles
 from tools.agent_epic_runtime import TaskPhaseRuntime
 from tools.agent_epic_runtime_cli import managed_launch_guard, private_json
 from tools.agent_epic_session import Session, structural_queue
+from tools.agent_epic_wait_scope import Scope
 from tools.agent_epic_workflow import ReviewedWorkflow, codex_role_adapter
 
 
 class SessionRuntime:
-    def __init__(self, state: Path, root: Path, config: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        state: Path,
+        root: Path,
+        config: Mapping[str, Any],
+        *,
+        wait_scope: Scope | None = None,
+    ) -> None:
         self.state = state
         self.root = root
         self.config = config
+        self.wait_scope = wait_scope
+        if config.get("schema_version") == "4.0" and wait_scope is None:
+            raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED")
         self.store = loop.CheckpointStore(state, root)
         self.plans = private_json(state / "approved-plans.json")
         if (
@@ -46,8 +59,67 @@ class SessionRuntime:
             for key in ("repository", "epic", "roadmap_ref", "policy_sha")
         }
         self.maximum = mandate["limits"]["max_task_iterations"]
-        self.issues = queue.GhClient()
-        self.github: branch.GitHubClient = branch.GitHubCLI()
+        self._read_stage: str | None = None
+        read = self._github_read if self.wait_scope is not None else None
+        self.issues = queue.GhClient(read=read)
+        self.github: branch.GitHubClient = branch.GitHubCLI(read=read)
+
+    def _provenance_client(self) -> handover.GitHubCLI:
+        if getattr(self, "wait_scope", None) is None:
+            return handover.GitHubCLI()
+        return handover.GitHubCLI(read=self._github_read)
+
+    def _github_read(self, argv: Sequence[str]) -> str:
+        assert self.wait_scope is not None
+        return self.wait_scope.reader(
+            self._read_stage or self._current_stage()
+        ).command(argv)
+
+    @contextmanager
+    def _stage(self, stage: str) -> Iterator[None]:
+        previous = self._read_stage
+        self._read_stage = stage
+        try:
+            if getattr(self, "wait_scope", None) is not None:
+                assert self.wait_scope is not None
+                with self.wait_scope.context(stage):
+                    yield
+            else:
+                yield
+        finally:
+            self._read_stage = previous
+
+    def _task_stage(
+        self, store: loop.CheckpointStore, *, reconcile: bool = False
+    ) -> str:
+        saved = store.load()
+        if saved is None:
+            raise loop.LoopError("CHECKPOINT_NOT_FOUND")
+        prefix = "RECONCILE" if reconcile else "TASK"
+        return f"{prefix}:{saved['task']}:{saved['pending_phase'] or saved['phase']}"
+
+    def _current_stage(self) -> str:
+        seed = self.store.load()
+        if seed is None:
+            raise loop.LoopError("CHECKPOINT_NOT_FOUND")
+        cursor = workflow.StateStore(self.state / "session-control").load("cursor")
+        task = cursor["current_task"] if cursor is not None else seed["task"]
+        if (
+            type(task) is not int
+            or task <= 0
+            or (
+                cursor is not None
+                and any(
+                    cursor[key] != seed[key]
+                    for key in ("repository", "epic", "policy_sha")
+                )
+            )
+        ):
+            raise loop.LoopError("SESSION_SCOPE_CHANGED")
+        directory = (
+            self.state if task == seed["task"] else self.state / "tasks" / str(task)
+        )
+        return self._task_stage(loop.CheckpointStore(directory, self.root))
 
     def authority(
         self, iterations: int
@@ -105,7 +177,7 @@ class SessionRuntime:
         recipe = self._approved_recipe(task)
         if recipe is not None:
             return recipe
-        if self.config.get("schema_version") == "3.0":
+        if guards.planning_enabled(self.config):
             return admission.Admission(self.state, self.root).recipe(
                 task, self.config["approved_planning_digest"]
             )
@@ -179,7 +251,7 @@ class SessionRuntime:
         closed_guard: Callable[[], bool] | None = None,
     ) -> Mapping[str, Any]:
         mandate, _, context = self._fresh_authority(iterations)
-        issue = handover.GitHubCLI().issue(mandate["repository"], task)
+        issue = self._provenance_client().issue(mandate["repository"], task)
         body = issue.get("body")
         parent = issue.get("parent")
         if (
@@ -268,8 +340,15 @@ class SessionRuntime:
             return plan
 
         def authority() -> tuple[dict[str, Any], str, delivery.MandateContext]:
+            with self._stage(
+                engine._read_stage
+                or self._task_stage(store, reconcile=engine._reconciling)
+            ):
+                return task_authority()
+
+        def task_authority() -> tuple[dict[str, Any], str, delivery.MandateContext]:
             if (
-                self.config.get("schema_version") == "3.0"
+                guards.planning_enabled(self.config)
                 and self._approved_recipe(saved["task"]) is None
             ):
                 recipe = admission.Admission(self.state, self.root).recipe(
@@ -342,15 +421,27 @@ class SessionRuntime:
                 store.directory / "demo-completion.json"
             ),
             approved_order=tuple(self.config["approved_order"]),
+            wait_scope=getattr(self, "wait_scope", None),
         )
         engine.continuation_enabled = True
-        if self.config.get("schema_version") == "3.0":
-            engine.continuation_queue = self._planning_queue
+        if guards.planning_enabled(self.config):
+
+            def continuation_queue() -> queue.QueuePlan:
+                with self._stage(self._task_stage(store)):
+                    return self._planning_queue()
+
+            engine.continuation_queue = continuation_queue
         engine.bootstrap = BootstrapTask(engine, reviewed, authority)
         return engine
 
     def select(self) -> queue.QueuePlan:
-        if self.config.get("schema_version") == "3.0":
+        if getattr(self, "wait_scope", None) is not None:
+            with self._stage(self._current_stage()):
+                return self._select()
+        return self._select()
+
+    def _select(self) -> queue.QueuePlan:
+        if guards.planning_enabled(self.config):
             return self._planning_queue()
         return structural_queue(
             self.issues,
@@ -360,6 +451,12 @@ class SessionRuntime:
         )
 
     def _planning_queue(self) -> queue.QueuePlan:
+        if getattr(self, "wait_scope", None) is not None and self._read_stage is None:
+            with self._stage(self._current_stage()):
+                return self._planning_queue_once()
+        return self._planning_queue_once()
+
+    def _planning_queue_once(self) -> queue.QueuePlan:
         cursor = workflow.StateStore(self.state / "session-control").load("cursor")
         completed = cursor["completed_tasks"] if cursor is not None else []
         iterations = self.config["task_iterations"] + len(completed)
@@ -424,9 +521,22 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
+        if self.config.get("schema_version") == "4.0":
+            with self._stage(f"SUCCESSOR:{previous['task']}:{task}"):
+                self._prepare(previous, task, store, iterations)
+            return
+        self._prepare(previous, task, store, iterations)
+
+    def _prepare(
+        self,
+        previous: Mapping[str, Any],
+        task: int,
+        store: loop.CheckpointStore,
+        iterations: int,
+    ) -> None:
         recipe = self._approved_recipe(task)
         derived = recipe is None
-        if derived and self.config.get("schema_version") != "3.0":
+        if derived and not guards.planning_enabled(self.config):
             raise loop.PhaseBlocked("NEXT_TASK_PLAN_REQUIRED")
         mandate, approved, context = self.authority(iterations)
         branches = self.github.branches(mandate["repository"])
@@ -438,7 +548,7 @@ class SessionRuntime:
             or not isinstance(main, str)
         ):
             raise loop.PhaseBlocked("STALE_BASE")
-        issue = handover.GitHubCLI().issue(mandate["repository"], task)
+        issue = self._provenance_client().issue(mandate["repository"], task)
         body = issue.get("body")
         if not isinstance(body, str):
             raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
@@ -450,7 +560,9 @@ class SessionRuntime:
                 fresh, _, _ = self._fresh_authority(iterations)
                 if self._dependency_facts(task) != dependencies:
                     raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
-                current_issue = handover.GitHubCLI().issue(fresh["repository"], task)
+                current_issue = self._provenance_client().issue(
+                    fresh["repository"], task
+                )
                 current_refs = self.github.branches(fresh["repository"])
                 parent = current_issue.get("parent")
                 if (
@@ -639,6 +751,12 @@ class SessionRuntime:
     def reconcile_plan(
         self, previous: Mapping[str, Any], task: int, store: loop.CheckpointStore
     ) -> str:
+        with self._stage(f"RECONCILE:{task}:PLAN"):
+            return self._reconcile_plan(previous, task, store)
+
+    def _reconcile_plan(
+        self, previous: Mapping[str, Any], task: int, store: loop.CheckpointStore
+    ) -> str:
         try:
             saved = store.load()
             recipe = self._recipe(task)
@@ -711,6 +829,10 @@ class SessionRuntime:
             raise loop.PhaseBlocked("FINAL_SYNC_UNCONFIRMED") from None
 
     def final_resume(self, iterations: int) -> Mapping[str, Any]:
+        with self._stage("FINAL:FINAL_GATE"):
+            return self._final_resume(iterations)
+
+    def _final_resume(self, iterations: int) -> Mapping[str, Any]:
         approved_final = self.config["approved_final_digest"]
         if (
             not isinstance(approved_final, str)
@@ -729,6 +851,7 @@ class SessionRuntime:
             approved_digest=approved_final,
             lesson=lambda: private_json(self.state / "verified-lesson.json"),
             adapter=self._adapter(),
+            wait_scope=self.wait_scope,
         )
         owner = engine._owner()
         from tools.agent_epic_final_delivery import authorization_code

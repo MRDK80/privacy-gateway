@@ -278,14 +278,17 @@ def _ci_code(checks: Sequence[Check]) -> str:
     states = {cast(Check, item).state for item in required}
     if states == {SUCCESS}:
         return "OK"
-    if states & {
+    pending = {
         "EXPECTED",
         "IN_PROGRESS",
         "PENDING",
         "QUEUED",
         "REQUESTED",
         "WAITING",
-    }:
+    }
+    if states - ({SUCCESS} | pending):
+        return "CI_FAILED"
+    if states & pending:
         return "CI_PENDING"
     return "CI_FAILED"
 

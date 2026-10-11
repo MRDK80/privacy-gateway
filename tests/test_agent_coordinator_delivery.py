@@ -204,3 +204,14 @@ def test_pr_identity_change_after_checks_invalidates_assessment() -> None:
 
     result = delivery.assess(_options(), _gate(), MovingGitHub())
     assert result.machine_code == "STALE_IDENTITY"
+
+
+def test_terminal_required_check_cannot_be_masked_by_pending() -> None:
+    names = sorted(delivery.REQUIRED_CHECKS)
+    checks = [
+        delivery.Check(name, "SUCCESS", "https://example.invalid/check")
+        for name in names
+    ]
+    checks[0] = delivery.Check(names[0], "FAILURE", "https://example.invalid/check")
+    checks[1] = delivery.Check(names[1], "PENDING", "https://example.invalid/check")
+    assert delivery._ci_code(checks) == "CI_FAILED"

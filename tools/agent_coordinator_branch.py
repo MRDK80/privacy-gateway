@@ -113,7 +113,27 @@ class GitHubCLI:
     def __init__(self, *, read: Callable[[Sequence[str]], str] | None = None) -> None:
         self.read = read
 
+    def _json(self, arguments: Sequence[str]) -> Any:
+        if self.read is None:
+            return _gh_json(arguments)
+        try:
+            return json.loads(self.read(("gh", *arguments)))
+        except ValueError as error:
+            raise GitHubError("invalid read response") from error
+
     def repository(self, repository: str) -> dict[str, Any]:
+        if self.read is not None:
+            value = self._json(("api", f"repos/{repository}"))
+            if (
+                not isinstance(value, dict)
+                or value.get("full_name") != repository
+                or not isinstance(value.get("default_branch"), str)
+            ):
+                raise GitHubError("invalid repository response")
+            return {
+                "nameWithOwner": value["full_name"],
+                "defaultBranchRef": {"name": value["default_branch"]},
+            }
         value = _gh_json(
             ("repo", "view", repository, "--json", "nameWithOwner,defaultBranchRef")
         )
@@ -122,7 +142,7 @@ class GitHubCLI:
         return value
 
     def issue(self, repository: str, number: int) -> dict[str, Any]:
-        value = _gh_json(
+        value = self._json(
             (
                 "issue",
                 "view",
@@ -171,7 +191,7 @@ class GitHubCLI:
 
     def compare(self, repository: str, base: str, head: str) -> str:
         comparison = f"{quote(base, safe='')}...{quote(head, safe='')}"
-        value = _gh_json(("api", f"repos/{repository}/compare/{comparison}"))
+        value = self._json(("api", f"repos/{repository}/compare/{comparison}"))
         status = value.get("status") if isinstance(value, dict) else None
         if not isinstance(status, str):
             raise GitHubError("invalid compare response")
