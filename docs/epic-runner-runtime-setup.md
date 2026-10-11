@@ -10,6 +10,34 @@ does not establish background wakeup from a prompt or a running session ID.
 
 ## Trusted installation
 
+Task #296 adds `python -m tools.agent_epic_install`, run only from the reviewed
+policy revision. `prepare --repository-root ROOT --repository OWNER/REPO
+--policy-sha SHA --directory CANDIDATE` copies pinned Git blobs to a new
+owner-only directory outside worktrees, with `policy/`, `runtime.py` and
+`candidate.json`. Its returned `candidate_digest` is an identity, not approval.
+After the owner reviews the exact candidate, `install --repository-root ROOT
+--candidate CANDIDATE --directory INSTALLATION --approved-digest DIGEST`
+installs those exact bytes. The approval argument must come separately from
+the owner; preparation never fills it automatically. No state/mandate is
+issued and no runtime is started. An identical existing installation returns
+NO_OP; conflicting or unsafe destinations are refused.
+
+After separately preparing the existing owner-approved runtime config/state,
+`readiness --repository-root ROOT --directory INSTALLATION --state-dir STATE
+--github-identity LOGIN` checks the one-task profile. Add `--epic` for the
+whole-epic profile; one-task adapter config `1.0` cannot pass that check.
+The report contains only bounded check names and safe codes. It verifies
+policy bytes, interpreter, actual namespace availability, config/mandate and
+checkpoint provenance and read-only GitHub account/repository access without
+importing candidate code. READY is readiness evidence, not task completion,
+cross-turn wakeup, a launch mandate or production-pilot success.
+
+Parent directories must already be owner-only outside worktrees. Temporary
+staging cleanup is best-effort; separate directory publication is not crash
+durability or a transaction with private runtime state. The installer never
+rewrites active checkpoints or discovers/migrates stopped #131 state.
+The source contract is [ADR-296](ADR-296-runtime-install-preflight.md).
+
 First review and integrate the corrective code through the normal task PR
 and exact CI process. A new owner-approved mandate must pin the resulting
 policy SHA if the previous policy revision does not contain these modules.
