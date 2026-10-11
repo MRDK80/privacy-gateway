@@ -28,7 +28,9 @@ class InstallError(Exception):
 
 
 def digest(value: Any) -> str:
-    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    data = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 

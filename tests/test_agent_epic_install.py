@@ -11,6 +11,7 @@ from tools import agent_epic_delivery as delivery
 from tools import agent_epic_install as install
 from tools import agent_epic_loop as loop
 from tools.agent_coordinator_handover import handover_digest
+from tools.agent_epic_final_runtime import digest as runtime_digest
 
 from tests.test_agent_epic_delivery import _mandate
 from tests.test_agent_epic_loop import _checkpoint
@@ -367,3 +368,30 @@ def test_readiness_preserves_runtime_guard_parity(
         github_probe=lambda *_: None,
     )
     assert report["status"] == "BLOCKED"
+
+
+def test_readiness_uses_existing_unicode_plan_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, candidate, state = runtime_fixture(tmp_path, monkeypatch, epic=True)
+    path = state / "approved-plans.json"
+    plans = json.loads(path.read_text())
+    plans["tasks"] = {
+        "253": {"plan": {"causal_scope": "синтетический пример"}, "demo_plan": {}}
+    }
+    path.write_text(json.dumps(plans, ensure_ascii=False))
+    config_path = state / "epic-runtime.json"
+    config = json.loads(config_path.read_text())
+    config["approved_plans_digest"] = runtime_digest(plans)
+    config_path.write_text(json.dumps(config))
+    report = install.readiness(
+        root,
+        candidate,
+        state,
+        epic=True,
+        github_identity="OWNER",
+        namespace_probe=lambda: None,
+        github_probe=lambda *_: None,
+    )
+    assert report["status"] == "READY"
