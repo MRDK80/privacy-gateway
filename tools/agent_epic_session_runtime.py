@@ -129,6 +129,46 @@ class SessionRuntime:
             mandate=mandate,
         )
 
+    def _dependency_facts(
+        self, task: int, *, closed: bool = False
+    ) -> list[dict[str, Any]]:
+        """Resolve each structural blocker freshly; queue selection is no receipt."""
+        try:
+            issue = self.issues.issue(self.identity["repository"], task)
+            parent = issue.get("parent")
+            if (
+                type(issue.get("number")) is not int
+                or issue["number"] != task
+                or issue.get("state") != ("CLOSED" if closed else "OPEN")
+                or not isinstance(parent, Mapping)
+                or type(parent.get("number")) is not int
+                or parent["number"] != self.identity["epic"]
+            ):
+                raise ValueError
+            facts = queue.dependency_facts(
+                issue, repository=self.identity["repository"]
+            )
+            for fact in facts:
+                dependency = self.issues.issue(
+                    self.identity["repository"], fact["number"]
+                )
+                if (
+                    type(dependency.get("number")) is not int
+                    or dependency["number"] != fact["number"]
+                    or dependency.get("state") != fact["state"]
+                    or queue.dependency_facts(
+                        {"blockedBy": {"nodes": [dependency]}},
+                        repository=self.identity["repository"],
+                    )
+                    != [fact]
+                ):
+                    raise ValueError
+                if fact["state"] != "CLOSED":
+                    raise loop.PhaseBlocked("TASK_DEPENDENCIES_BLOCKED")
+            return facts
+        except (queue.GitHubError, KeyError, TypeError, ValueError):
+            raise loop.PhaseBlocked("TASK_DEPENDENCIES_INVALID") from None
+
     def _confirm_admission(
         self,
         task: int,
@@ -157,6 +197,7 @@ class SessionRuntime:
             or not isinstance(body, str)
         ):
             raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
+        self._dependency_facts(task, closed=issue["state"] == "CLOSED")
         if self.github.branches(mandate["repository"]).get("main") != default:
             raise loop.PhaseBlocked("PLANNING_ADMISSION_CHANGED")
         return admission.Admission(self.state, self.root).confirm(
@@ -403,9 +444,12 @@ class SessionRuntime:
             raise loop.PhaseBlocked("CRITERIA_PROVENANCE_MISMATCH")
         if derived:
             owner = self._planning_owner(mandate)
+            dependencies = self._dependency_facts(task)
 
             def planning_guard() -> None:
                 fresh, _, _ = self._fresh_authority(iterations)
+                if self._dependency_facts(task) != dependencies:
+                    raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
                 current_issue = handover.GitHubCLI().issue(fresh["repository"], task)
                 current_refs = self.github.branches(fresh["repository"])
                 parent = current_issue.get("parent")
@@ -431,6 +475,7 @@ class SessionRuntime:
                 body=body,
                 base=base,
                 default=main,
+                dependencies=dependencies,
                 guard=planning_guard,
                 invoke=PlanningRoles(
                     root=self.root,
@@ -501,6 +546,8 @@ class SessionRuntime:
                 raise loop.PhaseBlocked("PREPARATION_IDENTITY_CHANGED")
             self._guard_mutation(iterations)
             if derived:
+                if self._dependency_facts(task) != dependencies:
+                    raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
                 checked = self._confirm_admission(task, base, main, iterations)
                 if checked["plan"] != plan:
                     raise loop.PhaseBlocked("PLANNING_ADMISSION_CHANGED")

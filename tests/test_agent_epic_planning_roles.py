@@ -48,7 +48,10 @@ def request(facts: dict[str, Any]) -> dict[str, Any]:
         return dict(invoke(role, dict(value)))
 
     planning.Admission(facts["state"], facts["root"]).admit(
-        **arguments(facts, body), invoke=capture, guard=lambda: None
+        **arguments(facts, body),
+        dependencies=[{"number": 250, "state": "CLOSED"}],
+        invoke=capture,
+        guard=lambda: None,
     )
     return captured
 
@@ -85,6 +88,7 @@ def test_actual_codex_argv_is_fixed_read_only_and_full_data_is_bounded(
             "Additional requirement; never omit this from review.\n"
         )
         assert full["criteria"] == ["- First criterion", "- Second criterion"]
+        assert full["dependencies"] == [{"number": 250, "state": "CLOSED"}]
         assert full["grant"] == facts["mandate"]["task_grants"]["298"]
         assert full["task_profile"] == facts["owner"]["tasks"]["298"]
         assert "independently evaluate the complete issue body" in prompt
@@ -115,7 +119,9 @@ def test_actual_codex_argv_is_fixed_read_only_and_full_data_is_bounded(
     assert seen and (role == "planner" or result["verdict"] == "NEEDS_DECISION")
 
 
-@pytest.mark.parametrize("fault", ["extra", "oversize", "policy"])
+@pytest.mark.parametrize(
+    "fault", ["extra", "oversize", "policy", "dependency_open", "dependency_malformed"]
+)
 def test_role_rejects_unbounded_or_unbound_input_before_invocation(
     facts: dict[str, Any], monkeypatch: pytest.MonkeyPatch, fault: str
 ) -> None:
@@ -124,8 +130,12 @@ def test_role_rejects_unbounded_or_unbound_input_before_invocation(
         value["command"] = ["untrusted"]
     elif fault == "oversize":
         value["issue_body"] = "X" * value["limits"]["max_input_chars"]
-    else:
+    elif fault == "policy":
         value["identity"]["policy_sha"] = "f" * 40
+    elif fault == "dependency_open":
+        value["dependencies"][0]["state"] = "OPEN"
+    else:
+        value["dependencies"][0]["state"] = []
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(value)))
     monkeypatch.setattr(
         codex, "_run_codex", lambda **kwargs: pytest.fail("must not invoke")

@@ -11,6 +11,28 @@ Profile 1.0 has exactly schema_version, repository, epic, roadmap_ref, policy_sh
 
 Structural parent/sub-issues and dependencies determine readiness; titles and prose do not. Recompute the queue after each verified task completion. A follow-up is deduplicated by canonical issue ID and may enter only if it has the same structural parent, satisfied dependencies, an explicit task grant and profile entry, and remaining mandate follow-up/task budget. Newly discovered ungranted issues require a new owner decision. No untrusted issue can silently create a grant.
 
+Owner-approved dependency correction (2026-10-11): queue selection alone does
+not establish readiness for later effects. The canonical structural dependency
+parser supplies a sorted, bounded snapshot of exact positive issue IDs and
+OPEN/CLOSED states (at most 200); malformed, oversized, duplicate, unresolved or
+OPEN dependencies stop derived admission. Each structural blocker and resolved
+issue must have an exact GitHub issue URL for the selected repository and number;
+missing/foreign/ambiguous URL or contradictory supplied repository provenance
+fails closed rather than aliasing a foreign issue to a local number. The actual
+primary structural transport supplies these URLs. The parser retains complete
+count/pagination checks when supplied, without persisting raw titles or node IDs.
+Each dependency is resolved again by exact issue identity/state, including
+dependencies outside the epic in the same repository. Both
+read-only planning requests include the complete current snapshot as untrusted
+data, bound by the existing complete request digest. Fresh readiness is checked
+before admission, after each role, before local branch preparation and by every
+admitted task authority check, including RUN_TASK and restart. Snapshot drift
+during admission stops without refunding attempts or repeating pending roles.
+Cached admission still requires fresh readiness. A CLOSED task requires the
+existing exact close ledger guard and cannot bypass dependency readiness.
+This correction preserves profile/config/admission-record/handover/mandate
+schemas and authority; no persisted dependency snapshot grants permission.
+
 Criteria extraction supports only a profile-selected nonempty list of unique exact level-two Markdown section headings. Each required heading must occur exactly once. In source order, every nonempty paragraph or top-level bullet (including its indented continuation) in those sections becomes one criterion, preserving its exact source text. Nested lists, embedded headings, code blocks and malformed/empty sections are unsupported and stop admission. No generated selection may omit or reorder these extracted criteria. The complete bounded issue body is also supplied to independent review; requirements outside the approved sections that affect delivery produce NEEDS_DECISION, not silently discarded coverage. The source identity binds the entire issue-body digest and exact extracted sequence. No claim of semantic completeness is based on substring matching alone.
 
 A pinned read-only planner command receives bounded issue criteria/dependencies, mandate/profile facts and fresh repository identity/base information as untrusted input. It proposes the existing plan 2.0 shape plus a bounded criteria/path justification; it receives no executor or Git/GitHub write authority. A trusted validator verifies exact closed response shapes, repository/epic/task/ref/SHA identity, full acceptance-criteria coverage/provenance, policy ancestry, grant subset, permitted class, budgets/checks and demo template. Criteria sections that cannot be extracted completely and unambiguously stop rather than accept a subset. Unknown output, oversized input/output, new architecture/security choices or instruction-surface edits stop for owner review.
@@ -29,6 +51,6 @@ Demo templates are owner-approved profile data and validated using existing demo
 
 ## Verification and scope
 
-Synthetic failure tests: issue prompt injection and omitted criteria; absent recipe without opt-in; insufficient task grant; path/symlink/instruction-surface escapes; stale issue/profile/base/policy; malformed or self-approved review; exhausted/reserved attempts; concurrent admission, crash before/after role invocation and drift without counter refill; duplicate/unrelated/ungranted follow-ups; and two-task continuation with a genuinely admitted successor and independent review. Preserve old recipe-only behavior and schemas. Full local gate, independent controller and exact PR/post-merge CI remain mandatory.
+Synthetic failure tests: issue prompt injection and omitted criteria; absent recipe without opt-in; insufficient task grant; path/symlink/instruction-surface escapes; stale issue/profile/base/policy/dependencies; malformed or self-approved review; exhausted/reserved attempts; concurrent admission, crash before/after role invocation and drift without counter refill; duplicate/unrelated/ungranted follow-ups; and two-task Session.resume continuation through a genuinely admitted RUN_TASK, existing delivery guards, completion/update and next queue. Preserve old recipe-only behavior and schemas. Full local gate, independent controller and exact PR/post-merge CI remain mandatory.
 
 No production installation, new mandate issuance, #131 mutation, Library/pgw API, dependency/release metadata, persistent waits or wakeup. Atomic private writes do not promise a cross-file transaction, crash durability or exactly-once execution.

@@ -16,6 +16,7 @@ from typing import Any
 from tools import agent_consumer_demo as demo
 from tools import agent_epic_handover as handover
 from tools import agent_epic_loop as loop
+from tools import agent_epic_queue as queue
 from tools import agent_orchestrate as workflow
 from tools.agent_epic_runtime_cli import (
     DeploymentError,
@@ -454,6 +455,7 @@ class Admission:
         body: str,
         base: str,
         default: str,
+        dependencies: list[dict[str, Any]],
         invoke: Role,
         guard: Callable[[], None],
     ) -> dict[str, Any]:
@@ -461,6 +463,15 @@ class Admission:
             block("PLANNING_TASK_NOT_APPROVED")
         if len(body) > owner["limits"]["max_input_chars"]:
             block("PLANNING_INPUT_LIMIT")
+        try:
+            parsed = queue.dependency_facts({"blockedBy": {"nodes": dependencies}})
+            if parsed != dependencies or any(
+                item["state"] != "CLOSED" for item in parsed
+            ):
+                raise ValueError
+        except (TypeError, ValueError):
+            block("TASK_DEPENDENCIES_INVALID")
+        guard()
         criteria = extract_criteria(
             body, owner["tasks"][str(task)]["criteria_sections"]
         )
@@ -537,6 +548,7 @@ class Admission:
                 "evidence": evidence,
                 "issue_body": body,
                 "criteria": criteria,
+                "dependencies": copy.deepcopy(dependencies),
                 "task_profile": owner["tasks"][str(task)],
                 "grant": mandate["task_grants"][str(task)],
                 "limits": owner["limits"],
@@ -572,6 +584,9 @@ class Admission:
                 guard()
                 # A transport exception preserves the exact unfinished reservation.
                 response = dict(invoke(role, copy.deepcopy(request)))
+                # Evidence drift cannot complete this reserved request, even if
+                # the model returned a valid response. Preserve pending intent.
+                guard()
                 if (
                     len(json.dumps(response, ensure_ascii=False))
                     > owner["limits"]["max_output_chars"]

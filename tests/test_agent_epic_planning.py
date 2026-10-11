@@ -199,7 +199,10 @@ def test_admission_runs_independent_review_and_reuses_bound_receipt(
     admission = planning.Admission(facts["state"], facts["root"])
     for _ in range(2):
         result = admission.admit(
-            **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+            **arguments(facts),
+            dependencies=[],
+            invoke=roles(facts, calls),
+            guard=lambda: None,
         )
         assert result["plan"]["acceptance_criteria"] == [
             "- First criterion",
@@ -256,12 +259,14 @@ def test_drift_consumes_attempts_without_refill(facts: dict[str, Any]) -> None:
     for suffix in ("", "\n## Other\nOther source text"):
         admission.admit(
             **arguments(facts, BODY + suffix),
+            dependencies=[],
             invoke=roles(facts, calls),
             guard=lambda: None,
         )
     with pytest.raises(loop.PhaseBlocked, match="PLANNING_ATTEMPTS_EXHAUSTED"):
         admission.admit(
             **arguments(facts, BODY + "\n## Other\nThird drift"),
+            dependencies=[],
             invoke=roles(facts, calls),
             guard=lambda: None,
         )
@@ -276,11 +281,16 @@ def test_crashed_role_is_not_reinvoked_on_restart(facts: dict[str, Any]) -> None
         raise TimeoutError("synthetic")
 
     with pytest.raises(TimeoutError):
-        admission.admit(**arguments(facts), invoke=crash, guard=lambda: None)
+        admission.admit(
+            **arguments(facts), dependencies=[], invoke=crash, guard=lambda: None
+        )
     calls: list[str] = []
     with pytest.raises(loop.PhaseBlocked, match="PLANNING_PENDING_OUTCOME"):
         admission.admit(
-            **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+            **arguments(facts),
+            dependencies=[],
+            invoke=roles(facts, calls),
+            guard=lambda: None,
         )
     assert calls == []
     record = json.loads((facts["state"] / "planning/298/admission.json").read_text())
@@ -297,7 +307,10 @@ def test_symlinked_admission_directory_has_no_external_effect(
     calls: list[str] = []
     with pytest.raises((loop.PhaseBlocked, loop.LoopError)):
         planning.Admission(facts["state"], facts["root"]).admit(
-            **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+            **arguments(facts),
+            dependencies=[],
+            invoke=roles(facts, calls),
+            guard=lambda: None,
         )
     assert list(external.iterdir()) == [] and calls == []
     assert external.stat().st_mode & 0o777 == 0o755
@@ -331,7 +344,10 @@ def test_unsafe_admission_files_have_no_effect(
             admission.recipe(298, canonical_digest(facts["owner"]))
         else:
             admission.admit(
-                **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+                **arguments(facts),
+                dependencies=[],
+                invoke=roles(facts, calls),
+                guard=lambda: None,
             )
     assert external.read_text() == "{}" and calls == []
     if unsafe == "permissions":
@@ -346,7 +362,10 @@ def test_unsafe_existing_directory_is_not_chmodded(facts: dict[str, Any]) -> Non
     calls: list[str] = []
     with pytest.raises((loop.PhaseBlocked, loop.LoopError)):
         planning.Admission(facts["state"], facts["root"]).admit(
-            **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+            **arguments(facts),
+            dependencies=[],
+            invoke=roles(facts, calls),
+            guard=lambda: None,
         )
     assert list(directory.iterdir()) == [] and calls == []
     assert directory.stat().st_mode & 0o777 == 0o755
@@ -360,7 +379,10 @@ def test_admission_lock_excludes_concurrent_invocation(facts: dict[str, Any]) ->
     with admission._lock(directory):
         with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
             planning.Admission(facts["state"], facts["root"]).admit(
-                **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+                **arguments(facts),
+                dependencies=[],
+                invoke=roles(facts, calls),
+                guard=lambda: None,
             )
     assert calls == [] and not (directory / "admission.json").exists()
 
@@ -372,6 +394,9 @@ def test_windows_admission_refuses_storage_before_effects(
     calls: list[str] = []
     with pytest.raises(loop.PhaseBlocked, match="UNSAFE_RUNTIME_CONFIG"):
         planning.Admission(facts["state"], facts["root"]).admit(
-            **arguments(facts), invoke=roles(facts, calls), guard=lambda: None
+            **arguments(facts),
+            dependencies=[],
+            invoke=roles(facts, calls),
+            guard=lambda: None,
         )
     assert calls == [] and list(facts["state"].iterdir()) == []

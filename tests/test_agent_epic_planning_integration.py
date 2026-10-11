@@ -15,6 +15,7 @@ from tools import agent_epic_install as install
 from tools import agent_epic_loop as loop
 from tools import agent_epic_planning as planning
 from tools import agent_epic_session_runtime as runtime
+from tools import agent_orchestrate as workflow
 from tools.agent_epic_runtime_cli import canonical_digest, private_json
 
 from tests.test_agent_epic_entry import managed
@@ -25,6 +26,14 @@ BODY = (
     "## Acceptance\n- minimal handover\n- exact gates\n\n"
     "## Other\nFull source review.\n"
 )
+
+
+def blocker(number: int, state: str) -> dict[str, Any]:
+    return {
+        "number": number,
+        "state": state,
+        "url": f"https://github.com/OWNER/repo/issues/{number}",
+    }
 
 
 def profile(mandate: dict[str, Any], task: int, sha: str) -> dict[str, Any]:
@@ -74,9 +83,15 @@ def profile(mandate: dict[str, Any], task: int, sha: str) -> dict[str, Any]:
     }
 
 
-def admitted(
+def planning_setup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[runtime.SessionRuntime, loop.CheckpointStore]:
+) -> tuple[
+    runtime.SessionRuntime,
+    dict[str, Any],
+    loop.CheckpointStore,
+    dict[int, dict[str, Any]],
+    list[str],
+]:
     session, previous, store = build(tmp_path, monkeypatch)
     mandate = private_json(session.state / "mandate.json")
     mandate["operations"] += ["close_task", "update_epic", "merge_task_pr"]
@@ -125,8 +140,32 @@ def admitted(
         "policy_root": str(tmp_path / "policy"),
         "approved_order": [251],
     }
-    issue = {"number": 251, "state": "OPEN", "parent": {"number": 248}, "body": BODY}
-    monkeypatch.setattr(handover.GitHubCLI, "issue", lambda *args: dict(issue))
+    issues: dict[int, dict[str, Any]] = {
+        number: {
+            "number": number,
+            "title": "Synthetic task",
+            "url": f"https://github.com/OWNER/repo/issues/{number}",
+            "state": "OPEN" if number == 251 else "CLOSED",
+            "parent": {"number": 248},
+            "body": BODY,
+            "blockedBy": {"nodes": []},
+        }
+        for number in (250, 251)
+    }
+
+    def issue(repository: str, number: int) -> dict[str, Any]:
+        if number == 248:
+            return {
+                "number": 248,
+                "state": "OPEN",
+                "subIssues": {"nodes": [{"number": 250}, {"number": 251}]},
+            }
+        return copy.deepcopy(issues[number])
+
+    monkeypatch.setattr(
+        handover.GitHubCLI, "issue", lambda _, repo, number: issue(repo, number)
+    )
+    monkeypatch.setattr(session.issues, "issue", issue)
     calls: list[str] = []
 
     def invoke(role: str, request: dict[str, Any]) -> dict[str, Any]:
@@ -143,6 +182,13 @@ def admitted(
 
     monkeypatch.setattr(runtime, "PlanningRoles", lambda **kwargs: invoke)
     monkeypatch.setattr(session, "_adapter", lambda: None)
+    return session, previous, store, issues, calls
+
+
+def admitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[runtime.SessionRuntime, loop.CheckpointStore]:
+    session, previous, store, _, calls = planning_setup(tmp_path, monkeypatch)
     session.prepare(previous, 251, store, 1)
     assert calls == ["planner", "review"]
     assert store.load() is not None
@@ -272,7 +318,8 @@ def test_config3_prepare_readiness_and_digest_drift(
 def test_closed_admitted_task_requires_exact_current_close_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
-    session, store = admitted(tmp_path, monkeypatch)
+    session, previous, store, issues, _ = planning_setup(tmp_path, monkeypatch)
+    session.prepare(previous, 251, store, 1)
     loaded = store.load()
     assert loaded is not None
     saved = dict(loaded)
@@ -295,6 +342,7 @@ def test_closed_admitted_task_requires_exact_current_close_ledger(
             "body": BODY,
         },
     )
+    issues[251]["state"] = "CLOSED"
     engine = session.task_adapter(store, 1)
     request = engine._request("close_task")
     ledger = delivery.Ledger(store.directory, session.root)
@@ -308,6 +356,11 @@ def test_closed_admitted_task_requires_exact_current_close_ledger(
         }
     )
     assert engine.authority()[0]["epic"] == 248
+    issues[250]["state"] = "OPEN"
+    issues[251]["blockedBy"] = {"nodes": [blocker(250, "OPEN")]}
+    with pytest.raises(loop.PhaseBlocked, match="TASK_DEPENDENCIES_BLOCKED"):
+        engine.authority()
+    issues[251]["blockedBy"] = {"nodes": []}
     ledger.save({request.operation_id: delivery._entry(request, "FAILED", None)})
     with pytest.raises(loop.PhaseBlocked, match="CRITERIA_PROVENANCE_MISMATCH"):
         engine.authority()
@@ -322,7 +375,7 @@ def test_closed_admitted_task_requires_exact_current_close_ledger(
 
 
 @pytest.mark.parametrize("recovered", [False, True])
-def test_genuinely_admitted_successor_closes_updates_and_recalculates(
+def test_admitted_closure_reconciles_and_updates_exact_ledger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recovered: bool
 ) -> None:
     from tools import agent_coordinator_branch as branch
@@ -464,3 +517,250 @@ def test_genuinely_admitted_successor_closes_updates_and_recalculates(
     assert engine.effect("NEXT_TASK") == {"phase": "NEXT_TASK"}
     assert reads.count(251) == 1
     assert session.select().state == "FINAL_GATE"
+
+
+@pytest.mark.parametrize("point", ["selected", "planner", "review", "branch"])
+@pytest.mark.parametrize("change", ["appears", "reopens", "closed_appears"])
+def test_dependency_drift_after_selection_stops_before_next_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, point: str, change: str
+) -> None:
+    from tests.test_agent_epic_handover import _git
+
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    if change == "reopens":
+        issues[251]["blockedBy"] = {"nodes": [blocker(250, "CLOSED")]}
+    assert session.select().selected is not None
+
+    def drift() -> None:
+        issues[250]["state"] = "CLOSED" if change == "closed_appears" else "OPEN"
+        issues[251]["blockedBy"] = {"nodes": [blocker(250, issues[250]["state"])]}
+
+    original_role = getattr(runtime, "PlanningRoles")(
+        root=session.root, policy_root=tmp_path, policy_sha=previous["policy_sha"]
+    )
+    requests: list[dict[str, Any]] = []
+
+    def invoke(role: str, request: dict[str, Any]) -> dict[str, Any]:
+        requests.append(copy.deepcopy(request))
+        reserved = private_json(session.state / "planning/251/admission.json")
+        assert reserved["pending"]["request_digest"] == canonical_digest(request)
+        result = original_role(role, request)
+        if role == point:
+            drift()
+        return dict(result)
+
+    monkeypatch.setattr(runtime, "PlanningRoles", lambda **kwargs: invoke)
+    original_admit = planning.Admission.admit
+
+    def admit(self: planning.Admission, **kwargs: Any) -> dict[str, Any]:
+        result = original_admit(self, **kwargs)
+        if point == "branch":
+            drift()
+        return result
+
+    monkeypatch.setattr(planning.Admission, "admit", admit)
+    if point == "selected":
+        drift()
+    if point == "selected" and change == "closed_appears":
+        session.prepare(previous, 251, store, 1)
+        assert calls == ["planner", "review"]
+        return
+    with pytest.raises(loop.PhaseBlocked, match="DEPENDENC|PLANNING_EVIDENCE_CHANGED"):
+        session.prepare(previous, 251, store, 1)
+    assert calls == (
+        []
+        if point == "selected"
+        else ["planner"]
+        if point == "planner"
+        else ["planner", "review"]
+    )
+    assert store.load() is None
+    assert _git(session.root, "branch", "--list", "codex/251-admitted") == ""
+    assert _git(session.root, "branch", "--show-current") == "main"
+    if requests:
+        expected = [{"number": 250, "state": "CLOSED"}] if change == "reopens" else []
+        assert all(request["dependencies"] == expected for request in requests)
+        record = private_json(session.state / "planning/251/admission.json")
+        assert record["attempts"] == {"planner": 1, "review": int(point != "planner")}
+        if point in {"planner", "review"}:
+            assert record["pending"]["role"] == point
+            assert record["pending"]["request_digest"] == canonical_digest(requests[-1])
+
+
+@pytest.mark.parametrize(
+    "blocked_by",
+    [
+        None,
+        {"nodes": [{}]},
+        {"nodes": [blocker(250, "UNKNOWN")]},
+        {"nodes": [blocker(250, "CLOSED")], "totalCount": 2},
+        {"nodes": [blocker(250, "CLOSED")], "pageInfo": {"hasNextPage": True}},
+        {"nodes": [blocker(250, "CLOSED")] * 201},
+        {"nodes": [blocker(999, "CLOSED")]},
+    ],
+)
+def test_malformed_or_unresolved_dependencies_prevent_role_and_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_by: Any
+) -> None:
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    issues[251]["blockedBy"] = blocked_by
+    with pytest.raises(loop.PhaseBlocked, match="DEPENDENC"):
+        session.prepare(previous, 251, store, 1)
+    assert calls == [] and store.load() is None
+    assert not (session.state / "planning/251/admission.json").exists()
+
+
+def test_restarted_admitted_run_task_rechecks_dependency_before_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    session.prepare(previous, 251, store, 1)
+    issues[251]["blockedBy"] = {"nodes": [blocker(250, "OPEN")]}
+    issues[250]["state"] = "OPEN"
+    engine = session.task_adapter(store, 1)
+
+    def live() -> dict[str, Any]:
+        saved = store.load()
+        assert saved is not None
+        return {key: saved[key] for key in loop.IDENTITY_KEYS}
+
+    monkeypatch.setattr(engine, "live", live)
+    monkeypatch.setattr(
+        getattr(runtime, "ReviewedWorkflow"),
+        "run",
+        lambda _: pytest.fail("executor must not run"),
+    )
+    outcome = loop.resume(store=store, adapter=engine)
+    assert outcome.status == "BLOCKED" and "DEPENDENC" in outcome.machine_code
+    assert calls == ["planner", "review"]
+    record = private_json(session.state / "planning/251/admission.json")
+    assert record["attempts"] == {"planner": 1, "review": 1}
+
+
+def test_cached_admission_rechecks_readiness_without_refunding_attempts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_agent_epic_handover import _git
+
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    session.prepare(previous, 251, store, 1)
+    _git(session.root, "switch", "main")
+    _git(session.root, "branch", "-D", "codex/251-admitted")
+    issues[251]["blockedBy"] = {"nodes": [blocker(250, "OPEN")]}
+    issues[250]["state"] = "OPEN"
+    before = private_json(session.state / "planning/251/admission.json")
+    with pytest.raises(loop.PhaseBlocked, match="TASK_DEPENDENCIES_BLOCKED"):
+        session.prepare(previous, 251, store, 1)
+    assert calls == ["planner", "review"]
+    assert private_json(session.state / "planning/251/admission.json") == before
+    assert _git(session.root, "branch", "--list", "codex/251-admitted") == ""
+
+
+def test_dependency_drift_preserves_exact_pending_role_on_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    original_save = workflow.StateStore.save
+    reserved: dict[str, Any] = {}
+
+    def save(self: Any, name: str, value: Any) -> None:
+        original_save(self, name, value)
+        if name == "admission" and value["pending"] is not None:
+            reserved.update(copy.deepcopy(value))
+            issues[250]["state"] = "OPEN"
+            issues[251]["blockedBy"] = {"nodes": [blocker(250, "OPEN")]}
+
+    monkeypatch.setattr(workflow.StateStore, "save", save)
+    with pytest.raises(loop.PhaseBlocked, match="TASK_DEPENDENCIES_BLOCKED"):
+        session.prepare(previous, 251, store, 1)
+    record = private_json(session.state / "planning/251/admission.json")
+    assert record == reserved
+    assert record["attempts"] == {"planner": 1, "review": 0}
+    assert (
+        record["pending"]["role"] == "planner" and record["pending"]["request_digest"]
+    )
+    issues[251]["blockedBy"] = {"nodes": []}
+    with pytest.raises(loop.PhaseBlocked, match="PLANNING_PENDING_OUTCOME"):
+        session.prepare(previous, 251, store, 1)
+    assert calls == [] and store.load() is None
+    assert private_json(session.state / "planning/251/admission.json") == record
+
+
+@pytest.mark.parametrize("state", ["OPEN", "UNKNOWN", "CLOSED"])
+def test_dependencies_require_fresh_exact_resolution_even_outside_epic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    issues[999] = blocker(999, state) | {"parent": {"number": 777}}
+    issues[251]["blockedBy"] = {"nodes": [blocker(999, "CLOSED")]}
+    if state == "CLOSED":
+        session.prepare(previous, 251, store, 1)
+        assert calls == ["planner", "review"]
+    else:
+        with pytest.raises(loop.PhaseBlocked, match="TASK_DEPENDENCIES_INVALID"):
+            session.prepare(previous, 251, store, 1)
+        assert calls == [] and store.load() is None
+
+
+def test_dependency_drift_during_fetch_preserves_unknown_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.test_agent_epic_handover import _git
+
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    original = handover._git
+    fetches = 0
+
+    def changed(directory: Path, *args: str) -> str:
+        nonlocal fetches
+        result = original(directory, *args)
+        if args[0] == "fetch":
+            fetches += 1
+            issues[250]["state"] = "OPEN"
+            issues[251]["blockedBy"] = {"nodes": [blocker(250, "OPEN")]}
+        return result
+
+    monkeypatch.setattr(handover, "_git", changed)
+    with pytest.raises(loop.LoopError, match="SUCCESSOR_PREPARATION_UNKNOWN"):
+        session.prepare(previous, 251, store, 1)
+    assert fetches == 1 and calls == ["planner", "review"]
+    assert store.load() is None
+    assert _git(session.root, "branch", "--list", "codex/251-admitted") == ""
+    assert session.reconcile_plan(previous, 251, store) == "UNKNOWN"
+    record = private_json(session.state / "planning/251/admission.json")
+    assert record["attempts"] == {"planner": 1, "review": 1}
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "foreign_node",
+        "missing_node_url",
+        "foreign_repository",
+        "foreign_resolution",
+        "missing_resolution_url",
+    ],
+)
+def test_dependency_source_provenance_cannot_alias_local_issue_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    session, previous, store, issues, calls = planning_setup(tmp_path, monkeypatch)
+    url = "https://github.com/OWNER/repo/issues/250"
+    issues[250]["url"] = url
+    node: dict[str, Any] = {"number": 250, "state": "CLOSED", "url": url}
+    issues[251]["blockedBy"] = {"nodes": [node], "totalCount": 1}
+    assert session.select().selected is not None
+    if fault == "foreign_node":
+        node["url"] = "https://github.com/OTHER/repo/issues/250"
+    elif fault == "missing_node_url":
+        node.pop("url")
+    elif fault == "foreign_repository":
+        node["repository"] = {"nameWithOwner": "OTHER/repo"}
+    elif fault == "foreign_resolution":
+        issues[250]["url"] = "https://github.com/OTHER/repo/issues/250"
+    else:
+        issues[250].pop("url")
+    with pytest.raises(loop.PhaseBlocked, match="TASK_DEPENDENCIES_INVALID"):
+        session.prepare(previous, 251, store, 1)
+    assert calls == [] and store.load() is None
+    assert not (session.state / "planning/251/admission.json").exists()
