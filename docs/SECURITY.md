@@ -471,3 +471,8 @@ staging-каталог и rename всего набора не реализова
 запуск останавливается до первой записи вместе с `prompt.txt` и `route.json`
 (#48, ADR-48). Формулировка «защита от одновременной записи конкурентным
 процессом» к этой проверке не применима — preflight best-effort.
+
+<!-- Internal documentation-contract fixture; prose remains subject to review. -->
+```pgw-doc-facts
+{"cli.restore_strict_exit":5,"cli.usage_exit":3,"retention.api_key_limit":2,"retention.physical_bound_requires_successful_prune":true,"rotation.transactional":false}
+```

@@ -6,7 +6,8 @@
   в детерминированном порядке [active, retired] без дублей;
 - retired-entry содержит ровно один ключ после успешной ротации;
 - decryptability-матрица K0-K3: читаются только два последних поколения;
-- отказ на каждом шаге ротации не теряет данные и допускает retry;
+- отказ перед каждой из трёх записей сохраняет читаемость текущего
+  на момент вызова поколения; успешный retry завершает prune;
 - отказ verification не сообщает success и не раскрывает key material;
 - legacy-состояние с глубокой историей ограничивается при чтении
   и сокращается при первой явной ротации;
@@ -139,19 +140,21 @@ def test_decryptability_matrix_k0_to_k3(safe_backend: _SafeBackendMock) -> None:
 
 
 @pytest.mark.parametrize("fail_on_call", [1, 2, 3])
-def test_rotation_failure_preserves_data_and_allows_retry(
+def test_rotation_write_failure_preserves_current_generation_and_allows_retry(
     safe_backend: _SafeBackendMock,
     monkeypatch: pytest.MonkeyPatch,
     fail_on_call: int,
 ) -> None:
-    """Отказ любой записи не теряет данные и допускает retry.
+    """Отказ перед записью сохраняет читаемость текущего на входе поколения.
 
     Шаги записи по ADR-46: 1 — carry retired, 2 — новый active, 3 — prune.
-    При отказе на шагах 1 и 2 ротация не состоялась и active остаётся
-    прежним. При отказе на шаге 3 смена active уже выполнена и
+    Mock сообщает ошибку до выполнения выбранной записи. При отказе
+    на шагах 1 и 2 active остаётся прежним; после carry retired-entry
+    уже может измениться. При отказе на шаге 3 смена active уже выполнена и
     подтверждена чтением, недостигнутым остаётся только bounded-
     состояние retired-entry, о чём операция обязана сообщить ошибкой,
-    а не полным success.
+    а не полным success. Успешный retry приводит к active + одному
+    физическому retired; сохранение всех старых поколений не проверяется.
     """
     ks.create_key()
     ks.rotate_key()

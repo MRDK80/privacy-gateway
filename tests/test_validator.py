@@ -6,7 +6,9 @@
 
 from __future__ import annotations  # noqa: I001
 
-from privacy_gateway.models import ProcessingStatus
+import pytest
+
+from privacy_gateway.models import EntityType, ProcessingStatus
 from privacy_gateway.validator import ValidationResult, validate
 
 
@@ -215,3 +217,42 @@ def test_tokenizer_output_passes_validator() -> None:
         f"Выход токенизатора не прошёл валидацию: "
         f"status={result.status}, findings={result.findings}"
     )
+
+
+@pytest.mark.parametrize("entity_type", list(EntityType))
+@pytest.mark.parametrize("wrapper", ["({})", "{}:", "«{}»", "<{}>", "{}—", "{}{}"])
+def test_valid_tokens_with_adjacent_punctuation(
+    entity_type: EntityType, wrapper: str,
+) -> None:
+    token = f"[{entity_type.value}_123456789]"
+    result = validate(wrapper.format(token, token))
+    assert _is_ok(result)
+    assert result.findings == []
+
+
+@pytest.mark.parametrize("prefix", ["", "[EMAIL_1]", "([HOST_1]): "])
+@pytest.mark.parametrize("suffix", ["", "[EMAIL_2]", " :[HOST_2]"])
+@pytest.mark.parametrize("residual,rule", [
+    ("user@example.com", "email"),
+    ("192.0.2.10", "ipv4"),
+    ("+7 900 000-00-00", "phone"),
+    ("aB3xQ9mZpLwY7nKv2RtS5dUe", "high_entropy"),  # pragma: allowlist secret
+])
+def test_residual_next_to_valid_token_still_blocks(
+    prefix: str, suffix: str, residual: str, rule: str,
+) -> None:
+    text = prefix + residual + suffix
+    result = validate(text)
+    assert _is_blocked(result)
+    finding = next(f for f in result.findings if f.rule == rule)
+    assert finding.start == len(prefix)
+    assert finding.length == len(residual)
+
+
+@pytest.mark.parametrize("token", [
+    "[[EMAIL_1]]", "[EMAIL_]", "[EMAIL_1", "EMAIL_1]", "[UNKNOWN_1]",
+])
+def test_punctuation_does_not_hide_invalid_tokens(token: str) -> None:
+    result = validate(f"({token}):[HOST_1]")
+    assert not _is_ok(result)
+    assert result.positive_triggered

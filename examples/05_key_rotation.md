@@ -130,7 +130,8 @@ active и одним retired, а физический blast radius keyring со�
 
 Ротация не является транзакцией keyring, и verification либо prune
 failure не следует называть rollback: состояние определяется фактическим
-backend. Подробности — `docs/SECURITY.md`, раздел «Ротация ключа».
+backend. Подробности — [security policy](../docs/SECURITY.md),
+раздел «Ротация ключа».
 
 ## Что пример не обещает
 
@@ -148,3 +149,8 @@ backend. Подробности — `docs/SECURITY.md`, раздел «Рота�
 расшифровать записи в доверенной локальной среде, повторно зашифровать
 новым ключом, атомарно сохранить манифест и пересчитать `manifest_sha256`
 для связанной пары артефактов.
+
+<!-- Internal documentation-contract fixture; prose remains subject to review. -->
+```pgw-doc-facts
+{"retention.api_key_limit":2,"retention.physical_bound_requires_successful_prune":true,"retention.retired_key_limit":1,"rotation.failure_implies_rollback":false,"rotation.transactional":false}
+```

@@ -10,10 +10,7 @@
 from __future__ import annotations
 
 import runpy
-import socket
-import tempfile
 from pathlib import Path
-from typing import NoReturn
 from unittest.mock import patch
 
 import pytest
@@ -37,26 +34,6 @@ FORBIDDEN_FRAGMENTS = (
 )
 
 
-def _no_network(*args: object, **kwargs: object) -> NoReturn:
-    """Запретить любые сетевые сокеты во время примера."""
-    raise AssertionError("Пример не должен обращаться к сети.")
-
-
-@pytest.fixture()
-def temp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Изолировать домашний каталог, временные файлы и сеть."""
-    home = tmp_path / "home"
-    temp = tmp_path / "temp"
-    home.mkdir()
-    temp.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.setattr(tempfile, "tempdir", str(temp))
-    monkeypatch.setattr(socket, "socket", _no_network)
-    monkeypatch.chdir(REPO_ROOT)
-    return temp
-
-
 def _run_example() -> None:
     """Выполнить файл примера как самостоятельный сценарий."""
     runpy.run_path(str(EXAMPLE_PATH), run_name="__main__")
@@ -68,7 +45,7 @@ def test_example_file_exists() -> None:
 
 
 def test_quickstart_reports_expected_invariants(
-    temp_root: Path, capsys: pytest.CaptureFixture[str]
+    sandbox: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Пример завершается кодом 0 и печатает ожидаемые инварианты."""
     key = generate_key()
@@ -88,7 +65,7 @@ def test_quickstart_reports_expected_invariants(
 
 
 def test_quickstart_output_hides_sensitive_data(
-    temp_root: Path, capsys: pytest.CaptureFixture[str]
+    sandbox: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Вывод примера не раскрывает значения, пути и артефакты."""
     key = generate_key()
@@ -103,10 +80,10 @@ def test_quickstart_output_hides_sensitive_data(
     combined = captured.out + captured.err
     for fragment in FORBIDDEN_FRAGMENTS:
         assert fragment not in combined
-    assert list(temp_root.iterdir()) == []
+    assert list(sandbox.iterdir()) == []
 
 
-def test_discard_runs_when_processing_fails(temp_root: Path) -> None:
+def test_discard_runs_when_processing_fails(sandbox: Path) -> None:
     """При исключении рабочий каталог всё равно освобождается."""
     key = generate_key()
     with (
@@ -120,6 +97,6 @@ def test_discard_runs_when_processing_fails(temp_root: Path) -> None:
         _run_example()
 
     leftovers = [
-        child for base in temp_root.iterdir() for child in base.iterdir()
+        child for base in sandbox.iterdir() for child in base.iterdir()
     ]
     assert leftovers == []

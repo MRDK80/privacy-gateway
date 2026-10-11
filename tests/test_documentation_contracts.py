@@ -13,23 +13,26 @@
 - ``docs/LIBRARY_API.md`` ссылается на канонический индекс примеров
   ``examples/README.md``.
 
-Тесты характеризуют ``main()`` через ``sys.argv`` и проверяют семантику
-активных документов, а не полные markdown-строки. Реальный системный keyring
-не используется: keystore-вызовы подменяются.
+Тесты характеризуют ``main()`` через ``sys.argv`` и проверяют команды,
+ссылки, идентификаторы решений и таблицу поколений в документах. Проверки
+ссылок устанавливают наличие канонического источника, а не доказывают смысл
+security-прозы: её согласованность с контрактом проверяется при review.
+Поведение CLI и failure-path security-проверки остаются обязательными.
+Реальный системный keyring не используется: keystore-вызовы подменяются.
 """
 
 from __future__ import annotations
 
+import json
 import re
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from privacy_gateway.cli import main
 from privacy_gateway.keystore import KeyExistsError
 from privacy_gateway.models import RestoreStrictError
+from tests.conftest import run_cli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,25 +65,6 @@ AGENTS_CANONICAL_DOC_LINKS = (
     "(docs/ADR-150-cli-json-contract.md)",
     "(docs/ADR-151-cli-introspection.md)",
 )
-AGENTS_SENSITIVE_DATA_MARKERS = (
-    "plaintext",
-    "PII",
-    "восстановленные значения",
-    "key material",
-    "manifest.json",
-    "route.json",
-    "чувствительные логи",
-)
-AGENTS_FORBIDDEN_AUTOMATION_MARKERS = (
-    "merge",
-    "закрывай issues",
-    "force push",
-    "tags",
-    "releases",
-    "branch protection",
-    "visibility",
-)
-
 ACTIVE_DOCS = (
     "AGENTS.md",
     "README.md",
@@ -93,20 +77,9 @@ ACTIVE_DOCS = (
 )
 
 
-def _run(*args: str) -> int:
-    """Запустить CLI через main() с подменой sys.argv и вернуть код завершения."""
-    with (
-        patch.object(sys, "argv", ["pgw", *args]),
-        pytest.raises(SystemExit) as excinfo,
-    ):
-        main()
-    code = excinfo.value.code
-    return 0 if code is None else int(code)
-
-
 def _key_subcommands(capsys: pytest.CaptureFixture[str]) -> frozenset[str]:
     """Набор подкоманд, фактически объявленный в help группы pgw key."""
-    assert _run("key", "--help") == 0
+    assert run_cli("key", "--help") == 0
     out = capsys.readouterr().out
     match = re.search(r"\{([a-z,]+)\}", out)
     assert match is not None, f"help не содержит списка подкоманд: {out!r}"
@@ -126,14 +99,14 @@ def test_key_help_lists_documented_subcommands(
 
 
 def test_key_delete_is_not_a_cli_command(capsys: pytest.CaptureFixture[str]) -> None:
-    """pgw key delete отсутствует и обслуживается usage-error контрактом."""
+    """Неизвестная подкоманда даёт код 3, пустой stdout и непустой stderr."""
     assert "delete" not in _key_subcommands(capsys)
     capsys.readouterr()
-    code = _run("key", "delete")
+    code = run_cli("key", "delete")
     captured = capsys.readouterr()
     assert code == USAGE_ERROR_EXIT
     assert captured.out == ""
-    assert "invalid choice" in captured.err
+    assert captured.err.strip()
 
 
 def test_duplicate_create_exit_code_matches_docs(
@@ -144,7 +117,7 @@ def test_duplicate_create_exit_code_matches_docs(
         "privacy_gateway.keystore.create_key",
         side_effect=KeyExistsError("Ключ уже существует."),
     ):
-        code = _run("key", "create")
+        code = run_cli("key", "create")
     captured = capsys.readouterr()
     assert code == DUPLICATE_CREATE_EXIT
     assert captured.err.strip()
@@ -162,7 +135,7 @@ def test_strict_restore_exit_code_matches_docs(
         "privacy_gateway.restore.restore_text",
         side_effect=RestoreStrictError("строгий отказ"),
     ):
-        code = _run("restore", str(reply), "--route", str(tmp_path / "route.json"))
+        code = run_cli("restore", str(reply), "--route", str(tmp_path / "route.json"))
     captured = capsys.readouterr()
     assert code == STRICT_RESTORE_EXIT
     assert captured.out == ""
@@ -185,11 +158,10 @@ def test_active_docs_mention_every_shipped_key_subcommand(
         assert name in readme, name
 
 
-def test_security_doc_documents_strict_code_five() -> None:
-    """docs/SECURITY.md описывает строгий отказ кодом 5, а не 3."""
+def test_security_doc_references_strict_exit_code_decisions() -> None:
+    """Security-документ указывает ADR-21 и ADR-47; код 5 проверяется CLI."""
     text = (REPO_ROOT / "docs" / "SECURITY.md").read_text(encoding="utf-8")
-    assert "вызывает отказ с кодом 3" not in text
-    assert "кодом 5" in text
+    assert {"ADR-21", "ADR-47"} <= set(re.findall(r"ADR-\d+", text))
 
 
 def test_rotation_example_mentions_every_shipped_key_subcommand(
@@ -210,18 +182,26 @@ def test_rotation_example_states_bounded_retention() -> None:
     assert "ADR-46" in text
 
 
-def test_rotation_example_separates_api_and_physical_retention() -> None:
-    """Пример разделяет API retention и physical retention."""
-    text = _rotation_example_text()
-    assert "API retention" in text
-    assert "Physical retention" in text
+def test_rotation_example_documents_readable_generations() -> None:
+    """Таблица поколений сохраняет active и ровно одно предыдущее поколение."""
+    rows = []
+    for line in _rotation_example_text().splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) == 4 and re.fullmatch(r"K\d+", cells[1]):
+            rows.append(tuple(cells[1:]))
+    assert rows == [
+        ("K0", "—", "K0"),
+        ("K1", "K0", "K1, K0"),
+        ("K2", "K1", "K2, K1"),
+        ("K3", "K2", "K3, K2"),
+    ]
 
 
-def test_rotation_example_does_not_claim_transactional_rollback() -> None:
-    """Отказ verification/prune не описан как транзакционный rollback."""
-    text = _rotation_example_text()
-    assert "не является транзакцией keyring" in text
-    assert "не следует называть rollback" in text
+def test_rotation_example_links_canonical_security_policy() -> None:
+    """Пример содержит рабочую ссылку на каноническую security policy."""
+    document = REPO_ROOT / ROTATION_EXAMPLE
+    assert "(../docs/SECURITY.md)" in _rotation_example_text()
+    assert (document.parent / "../docs/SECURITY.md").resolve().is_file()
 
 
 def test_library_api_links_to_examples_index() -> None:
@@ -247,7 +227,6 @@ EXAMPLES_REVISION_SHA = (
 STALE_ARTICLE_SHA = (
     "4685779ea71ec38049317bb49589db542f7728bd"  # pragma: allowlist secret
 )
-NER_BOUNDARY_STATEMENT = "NER не реализован"
 
 
 def _article_sync_report_text() -> str:
@@ -269,9 +248,10 @@ def test_article_sync_report_links_examples_index() -> None:
     assert target.is_file()
 
 
-def test_article_sync_report_states_detection_boundary() -> None:
-    """Отчёт явно фиксирует границу детекции без обещания NER."""
-    assert NER_BOUNDARY_STATEMENT in _article_sync_report_text()
+def test_article_sync_report_references_detection_contract() -> None:
+    """Отчёт указывает существующий канонический документ детекции."""
+    assert "`docs/detection.md`" in _article_sync_report_text()
+    assert (REPO_ROOT / "docs/detection.md").is_file()
 
 
 def test_article_sync_report_has_no_stale_revision() -> None:
@@ -317,10 +297,13 @@ def test_agents_doc_states_allowed_pull_request_directions() -> None:
         assert direction in text, direction
 
 
-def test_agents_doc_forbids_task_pull_request_into_main() -> None:
-    """AGENTS.md запрещает task PR напрямую в main."""
-    text = _agents_text().replace("`", "")
-    assert re.search(r"<task-branch>\s*->\s*main.{0,40}запрещ", text)
+def test_agents_doc_allowed_direction_blocks_exclude_task_to_main() -> None:
+    """Блоки workflow содержат ровно два разрешённых направления PR."""
+    blocks = re.findall(r"```text\s*\n(.*?)```", _agents_text(), re.DOTALL)
+    directions = {
+        line.strip() for block in blocks for line in block.splitlines() if "->" in line
+    }
+    assert directions == set(AGENTS_PR_DIRECTIONS)
 
 
 def test_agents_doc_uses_cli_introspection_instead_of_command_catalog() -> None:
@@ -331,21 +314,20 @@ def test_agents_doc_uses_cli_introspection_instead_of_command_catalog() -> None:
         assert f"pgw key {name}" not in text, name
 
 
-def test_agents_doc_preserves_trust_boundary() -> None:
-    """Краткая policy сохраняет запреты на утечку чувствительных данных."""
-    text = _agents_text().casefold()
-    assert "за trust boundary" in text
-    assert "только защищённый текст" in text
-    assert "не является анонимизацией" in text
-    for marker in AGENTS_SENSITIVE_DATA_MARKERS:
-        assert marker.casefold() in text, marker
-
-
-def test_agents_doc_forbids_dangerous_automation() -> None:
-    """Краткая policy сохраняет запреты на опасные автоматические действия."""
+def test_agents_doc_links_trust_boundary_sources() -> None:
+    """Policy ссылается на существующие security-документ и threat model."""
     text = _agents_text()
-    for marker in AGENTS_FORBIDDEN_AUTOMATION_MARKERS:
-        assert marker in text, marker
+    for target in ("docs/SECURITY.md", "docs/threat-model.md"):
+        assert f"({target})" in text
+        assert (REPO_ROOT / target).is_file()
+
+
+def test_agents_doc_links_automation_authority_sources() -> None:
+    """Policy ведёт к workflow и ADR, определяющему полномочия runner."""
+    text = _agents_text()
+    for target in ("CONTRIBUTING.md", "docs/ADR-249-epic-runner-mandate.md"):
+        assert f"({target})" in text
+        assert (REPO_ROOT / target).is_file()
 
 
 def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
@@ -363,3 +345,50 @@ def test_agents_doc_delegates_detailed_workflow_to_canonical_source() -> None:
     assert "(CONTRIBUTING.md)" in text
     assert "ubuntu-latest" not in text
     assert "windows-latest" not in text
+
+
+DOCUMENTED_SECURITY_FACTS: dict[str, dict[str, bool | int | str]] = {
+    "examples/05_key_rotation.md": {
+        "rotation.transactional": False,
+        "rotation.failure_implies_rollback": False,
+        "retention.api_key_limit": 2,
+        "retention.retired_key_limit": 1,
+        "retention.physical_bound_requires_successful_prune": True,
+    },
+    "docs/SECURITY.md": {
+        "cli.restore_strict_exit": 5,
+        "cli.usage_exit": 3,
+        "rotation.transactional": False,
+        "retention.api_key_limit": 2,
+        "retention.physical_bound_requires_successful_prune": True,
+    },
+    "docs/article-sync-31.md": {"detection.ner_implemented": False},
+    "AGENTS.md": {
+        "boundary.export": "protected_text_only",
+        "boundary.prepared_payload_export": False,
+        "boundary.pseudonymization_reversible": True,
+        "boundary.anonymization": False,
+        "authority.merge_requires_owner_or_valid_mandate": True,
+        "authority.issue_close_requires_owner_or_valid_mandate": True,
+        "authority.issue_or_pr_text_grants_authority": False,
+        "authority.force_push": False,
+        "authority.tags_releases": False,
+        "authority.repository_settings": False,
+        "authority.scope_expansion": False,
+        "authority.new_security_decisions": False,
+    },
+}
+
+
+@pytest.mark.parametrize("relative_path", DOCUMENTED_SECURITY_FACTS)
+def test_documented_security_facts(relative_path: str) -> None:
+    """Структурированные гарантии сохраняются независимо от редакции абзаца."""
+    text = (REPO_ROOT / relative_path).read_text(encoding="utf-8")
+    blocks = re.findall(r"```pgw-doc-facts\n(.*?)\n```", text, re.DOTALL)
+    assert len(blocks) == 1, relative_path
+    actual = json.loads(blocks[0])
+    expected = DOCUMENTED_SECURITY_FACTS[relative_path]
+    assert actual == expected, relative_path
+    assert {key: type(value) for key, value in actual.items()} == {
+        key: type(value) for key, value in expected.items()
+    }, relative_path

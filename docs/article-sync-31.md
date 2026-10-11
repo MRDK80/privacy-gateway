@@ -153,3 +153,8 @@ base `roadmap/33-privacy-gateway-habr`). Этот документ не копи
   изменение публичного API, парсера CLI и кодов завершения в задачу не входят.
 - Результаты локальных проверок и GitHub Actions фиксируются отдельно и только
   по первичным логам конкретного SHA.
+
+<!-- Internal documentation-contract fixture; prose remains subject to review. -->
+```pgw-doc-facts
+{"detection.ner_implemented":false}
+```

@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import io
 import json
-import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -34,7 +33,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from privacy_gateway.crypto import generate_key
 from privacy_gateway.keystore import KeyNotFoundError, KeystoreError
 from privacy_gateway.models import (
     ConfigurationError,
@@ -43,6 +41,7 @@ from privacy_gateway.models import (
 )
 from privacy_gateway.pipeline import PipelineResult
 from privacy_gateway.restore import RestoreError, RestoreResult
+from tests.conftest import KEY_MATERIAL_RE, exit_code, input_file, run_cli
 
 # ---------------------------------------------------------------------------
 # Синтетические данные (не реальные ПДн)
@@ -52,33 +51,10 @@ SYNTH_EMAIL = "user@example.com"  # pragma: allowlist secret
 SYNTH_TEXT = f"Контакт: {SYNTH_EMAIL}\n"
 SYNTH_LLM_REPLY = "Ответ модели: [EMAIL_1]"
 
-# Fernet-ключ в base64url: 43 символа + '='
-_KEY_MATERIAL_RE = re.compile(r"[A-Za-z0-9_\-]{43}=")
-
 
 # ---------------------------------------------------------------------------
 # Общий helper и фикстуры
 # ---------------------------------------------------------------------------
-
-
-def _exit_code(exc: SystemExit) -> int:
-    """Нормализовать SystemExit.code к int (семантика после #17)."""
-    code = exc.code
-    if code is None:
-        return 0
-    if isinstance(code, int):
-        return code
-    return int(code)
-
-
-def _run(*argv: str) -> int:
-    """Запустить CLI через sys.argv + main(); вернуть код завершения."""
-    from privacy_gateway.cli import main
-
-    with patch.object(sys, "argv", ["pgw", *argv]):
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-    return _exit_code(exc_info.value)
 
 
 class _FakeStdin:
@@ -89,23 +65,10 @@ class _FakeStdin:
 
 
 @pytest.fixture()
-def fernet_key() -> bytes:
-    """Синтетический Fernet-ключ, keyring не используется."""
-    return generate_key()
-
-
-@pytest.fixture()
 def cli_key(fernet_key: bytes) -> Iterator[bytes]:
     """get_key импортирован в cli.py на уровне модуля — патчим там."""
     with patch("privacy_gateway.cli.get_key", return_value=fernet_key):
         yield fernet_key
-
-
-def _input_file(tmp_path: Path, text: str = SYNTH_TEXT) -> Path:
-    """Создать входной .txt под tmp_path."""
-    src = tmp_path / "input.txt"
-    src.write_text(text, encoding="utf-8")
-    return src
 
 
 def _artifact_paths(out_dir: Path) -> tuple[Path, Path, Path]:
@@ -134,10 +97,10 @@ def test_prepare_success_exit_code_and_stdout(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Успех prepare: код 0, точная строка stdout, пустой stderr."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    code = _run("prepare", str(src), "--out", str(out_dir))
+    code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 0
@@ -147,10 +110,10 @@ def test_prepare_success_exit_code_and_stdout(
 
 def test_prepare_success_artifact_layout(tmp_path: Path, cli_key: bytes) -> None:
     """Артефакты лежат непосредственно в --out DIR, без подкаталогов."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    code = _run("prepare", str(src), "--out", str(out_dir))
+    code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     prompt_path, route_path, manifest_path = _artifact_paths(out_dir)
     assert code == 0
@@ -165,10 +128,10 @@ def test_prepare_artifacts_have_no_plaintext(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Исходные значения и ключ не попадают в артефакты и вывод."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    code = _run("prepare", str(src), "--out", str(out_dir))
+    code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     prompt_path, route_path, _ = _artifact_paths(out_dir)
     prompt = prompt_path.read_text(encoding="utf-8")
@@ -178,15 +141,15 @@ def test_prepare_artifacts_have_no_plaintext(
     assert SYNTH_EMAIL not in prompt
     assert SYNTH_EMAIL not in route_raw
     assert SYNTH_EMAIL not in captured.out
-    assert not _KEY_MATERIAL_RE.search(captured.out)
+    assert not KEY_MATERIAL_RE.search(captured.out)
 
 
 def test_prepare_source_ref_is_file_name(tmp_path: Path, cli_key: bytes) -> None:
     """source_ref в route.json равен имени входного файла."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    code = _run("prepare", str(src), "--out", str(out_dir))
+    code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     route_data = json.loads((out_dir / "route.json").read_text(encoding="utf-8"))
     assert code == 0
@@ -199,7 +162,7 @@ def test_prepare_source_ref_is_stdin(tmp_path: Path, cli_key: bytes) -> None:
     fake_stdin = _FakeStdin(SYNTH_TEXT.encode("utf-8"))
 
     with patch.object(sys, "stdin", fake_stdin):
-        code = _run("prepare", "-", "--out", str(out_dir))
+        code = run_cli("prepare", "-", "--out", str(out_dir))
 
     route_data = json.loads((out_dir / "route.json").read_text(encoding="utf-8"))
     assert code == 0
@@ -215,7 +178,7 @@ def test_prepare_pending_maps_to_code_2(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """PENDING из конвейера → код 2 и точная строка stderr."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
     pending = PipelineResult(
         status=ProcessingStatus.PENDING,
@@ -223,7 +186,7 @@ def test_prepare_pending_maps_to_code_2(
     )
 
     with patch("privacy_gateway.cli.prepare_pipeline", return_value=pending):
-        code = _run("prepare", str(src), "--out", str(out_dir))
+        code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 2
@@ -236,7 +199,7 @@ def test_prepare_blocked_maps_to_code_3(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """BLOCKED из конвейера → код 3 и точная строка stderr."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
     blocked = PipelineResult(
         status=ProcessingStatus.BLOCKED,
@@ -244,7 +207,7 @@ def test_prepare_blocked_maps_to_code_3(
     )
 
     with patch("privacy_gateway.cli.prepare_pipeline", return_value=blocked):
-        code = _run("prepare", str(src), "--out", str(out_dir))
+        code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 3
@@ -256,14 +219,14 @@ def test_prepare_unexpected_error_maps_to_code_1(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Непредвиденная ошибка конвейера → код 1 и точная строка stderr."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
     with patch(
         "privacy_gateway.cli.prepare_pipeline",
         side_effect=RuntimeError("сбой конвейера"),
     ):
-        code = _run("prepare", str(src), "--out", str(out_dir))
+        code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 1
@@ -275,21 +238,21 @@ def test_prepare_keystore_error_maps_to_code_4(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """KeystoreError от get_key() → код 4, ключ и значения не выводятся."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
     with patch(
         "privacy_gateway.cli.get_key",
         side_effect=KeystoreError("небезопасный backend"),
     ):
-        code = _run("prepare", str(src), "--out", str(out_dir))
+        code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 4
     assert captured.err == "Ошибка keystore: небезопасный backend\n"
     assert captured.out == ""
     assert SYNTH_EMAIL not in captured.err
-    assert not _KEY_MATERIAL_RE.search(captured.err)
+    assert not KEY_MATERIAL_RE.search(captured.err)
 
 
 # ---------------------------------------------------------------------------
@@ -301,13 +264,13 @@ def test_prepare_existing_artifacts_blocked_without_overwrite(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Без --overwrite существующие артефакты дают BLOCKED и код 3."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    assert _run("prepare", str(src), "--out", str(out_dir)) == 0
+    assert run_cli("prepare", str(src), "--out", str(out_dir)) == 0
     capsys.readouterr()
 
-    code = _run("prepare", str(src), "--out", str(out_dir))
+    code = run_cli("prepare", str(src), "--out", str(out_dir))
 
     captured = capsys.readouterr()
     assert code == 3
@@ -321,13 +284,13 @@ def test_prepare_overwrite_flag_allows_replacement(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """CLI-флаг --overwrite разрешает замену артефактов."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
 
-    assert _run("prepare", str(src), "--out", str(out_dir)) == 0
+    assert run_cli("prepare", str(src), "--out", str(out_dir)) == 0
     capsys.readouterr()
 
-    code = _run("prepare", str(src), "--out", str(out_dir), "--overwrite")
+    code = run_cli("prepare", str(src), "--out", str(out_dir), "--overwrite")
 
     captured = capsys.readouterr()
     assert code == 0
@@ -338,15 +301,15 @@ def test_prepare_overwrite_from_routing_config_allows_replacement(
     tmp_path: Path, cli_key: bytes, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """overwrite: true из routing YAML разрешает замену без CLI-флага."""
-    src = _input_file(tmp_path)
+    src = input_file(tmp_path, SYNTH_TEXT)
     out_dir = tmp_path / "out"
     routing = tmp_path / "routing.yaml"
     routing.write_text("overwrite: true\n", encoding="utf-8")
 
-    assert _run("prepare", str(src), "--out", str(out_dir)) == 0
+    assert run_cli("prepare", str(src), "--out", str(out_dir)) == 0
     capsys.readouterr()
 
-    code = _run(
+    code = run_cli(
         "prepare",
         str(src),
         "--out",
@@ -369,7 +332,7 @@ def test_restore_report_lists_all_four_categories(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Отчёт stderr: missing, unknown, malformed, duplicated — точные строки."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     result = RestoreResult(
         restored_text="восстановлено",
@@ -384,7 +347,7 @@ def test_restore_report_lists_all_four_categories(
     )
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
-        code = _run(
+        code = run_cli(
             "restore",
             str(reply),
             "--route",
@@ -406,13 +369,13 @@ def test_restore_report_lists_all_four_categories(
 
 def test_restore_manifest_override_is_passed_through(tmp_path: Path) -> None:
     """CLI передаёт выбранный manifest в restore_text(manifest_path_override=)."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     manifest_path = tmp_path / "other-manifest.json"
     mock_restore: MagicMock = MagicMock(return_value=_empty_restore_result())
 
     with patch("privacy_gateway.restore.restore_text", mock_restore):
-        code = _run(
+        code = run_cli(
             "restore",
             str(reply),
             "--route",
@@ -434,12 +397,12 @@ def test_restore_stdout_has_no_added_newline(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Без --out результат печатается print(..., end='') без перевода строки."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     result = _empty_restore_result("текст без перевода строки")
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 0
@@ -450,12 +413,12 @@ def test_restore_stdout_preserves_own_trailing_newline(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Собственный перевод строки в тексте не удваивается печатью."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     result = _empty_restore_result("текст с переводом\n")
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 0
@@ -466,13 +429,13 @@ def test_restore_out_prints_ok_line(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """С --out результат пишется в файл, stdout — точная строка OK."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     out_path = tmp_path / "restored.txt"
     result = _empty_restore_result("итоговый текст")
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
-        code = _run(
+        code = run_cli(
             "restore",
             str(reply),
             "--route",
@@ -491,14 +454,14 @@ def test_restore_existing_out_without_overwrite_maps_to_code_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Существующий --out без --overwrite → код 3, файл не изменён."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     out_path = tmp_path / "restored.txt"
     out_path.write_text("исходное содержимое", encoding="utf-8")
     result = _empty_restore_result("новый текст")
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
-        code = _run(
+        code = run_cli(
             "restore",
             str(reply),
             "--route",
@@ -528,7 +491,7 @@ def test_restore_write_error_maps_to_code_3(
     Отказ записи результата — ожидаемый операционный отказ окружения,
     а не непредвиденная внутренняя ошибка. Текст stderr не меняется.
     """
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     out_path = tmp_path / "restored.txt"
     result = _empty_restore_result("секретный результат")
@@ -538,7 +501,7 @@ def test_restore_write_error_maps_to_code_3(
             "privacy_gateway.restore.write_restored",
             side_effect=ConfigurationError("нет доступа к каталогу"),
         ):
-            code = _run(
+            code = run_cli(
                 "restore",
                 str(reply),
                 "--route",
@@ -564,7 +527,7 @@ def test_restore_input_error_maps_to_code_3(
     missing = tmp_path / "missing.txt"
     route_path = tmp_path / "route.json"
 
-    code = _run("restore", str(missing), "--route", str(route_path))
+    code = run_cli("restore", str(missing), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 3
@@ -578,14 +541,14 @@ def test_restore_configuration_error_maps_to_code_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """ConfigurationError из restore_text → код 3."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
 
     with patch(
         "privacy_gateway.restore.restore_text",
         side_effect=ConfigurationError("route.json повреждён"),
     ):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 3
@@ -597,14 +560,14 @@ def test_restore_restore_error_maps_to_code_3(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """RestoreError из restore_text → код 3."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
 
     with patch(
         "privacy_gateway.restore.restore_text",
         side_effect=RestoreError("route.json не найден"),
     ):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 3
@@ -616,33 +579,33 @@ def test_restore_keystore_error_maps_to_code_4(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """KeystoreError из restore_text → код 4, ключ не выводится."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
 
     with patch(
         "privacy_gateway.restore.restore_text",
         side_effect=KeystoreError("ключ не найден"),
     ):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 4
     assert captured.err == "Ошибка keystore: ключ не найден\n"
-    assert not _KEY_MATERIAL_RE.search(captured.err)
+    assert not KEY_MATERIAL_RE.search(captured.err)
 
 
 def test_restore_strict_error_maps_to_code_5(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """RestoreStrictError из restore_text → код 5 (ADR-21)."""
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
 
     with patch(
         "privacy_gateway.restore.restore_text",
         side_effect=RestoreStrictError("неизвестный токен"),
     ):
-        code = _run("restore", str(reply), "--route", str(route_path))
+        code = run_cli("restore", str(reply), "--route", str(route_path))
 
     captured = capsys.readouterr()
     assert code == 5
@@ -660,7 +623,7 @@ def test_key_rotate_success(
 ) -> None:
     """key rotate: код 0, точный stdout, ключевой материал не выводится."""
     with patch("privacy_gateway.keystore.rotate_key", return_value=fernet_key):
-        code = _run("key", "rotate")
+        code = run_cli("key", "rotate")
 
     captured = capsys.readouterr()
     assert code == 0
@@ -670,7 +633,7 @@ def test_key_rotate_success(
         "созданных до ротации.\n"
     )
     assert captured.err == ""
-    assert not _KEY_MATERIAL_RE.search(captured.out)
+    assert not KEY_MATERIAL_RE.search(captured.out)
 
 
 def test_key_rotate_key_not_found_maps_to_code_4(
@@ -681,7 +644,7 @@ def test_key_rotate_key_not_found_maps_to_code_4(
         "privacy_gateway.keystore.rotate_key",
         side_effect=KeyNotFoundError("активный ключ отсутствует"),
     ):
-        code = _run("key", "rotate")
+        code = run_cli("key", "rotate")
 
     captured = capsys.readouterr()
     assert code == 4
@@ -700,13 +663,13 @@ def test_key_rotate_keystore_error_maps_to_code_4(
         "privacy_gateway.keystore.rotate_key",
         side_effect=KeystoreError("небезопасный backend"),
     ):
-        code = _run("key", "rotate")
+        code = run_cli("key", "rotate")
 
     captured = capsys.readouterr()
     assert code == 4
     assert captured.err == "Ошибка keystore: небезопасный backend\n"
     assert captured.out == ""
-    assert not _KEY_MATERIAL_RE.search(captured.err)
+    assert not KEY_MATERIAL_RE.search(captured.err)
 
 
 def test_key_without_subcommand_exits_with_code_3(
@@ -719,7 +682,7 @@ def test_key_without_subcommand_exits_with_code_3(
     После required=True отсутствие подкоманды обрабатывает argparse,
     а _parse_args() транслирует usage error в код 3 (ADR-29).
     """
-    code = _run("key")
+    code = run_cli("key")
     captured = capsys.readouterr()
     assert code == 3
     assert captured.out == ""
@@ -752,11 +715,11 @@ def test_argparse_usage_error_exits_with_code_3(
     Осознанная смена контракта: код 2 остаётся только за PENDING.
     """
     resolved = tuple(
-        str(_input_file(tmp_path, SYNTH_LLM_REPLY)) if item == "REPLY" else item
+        str(input_file(tmp_path, SYNTH_LLM_REPLY)) if item == "REPLY" else item
         for item in argv
     )
 
-    code = _run(*resolved)
+    code = run_cli(*resolved)
 
     captured = capsys.readouterr()
     assert code == 3
@@ -776,9 +739,9 @@ def test_argparse_usage_error_stderr_is_byte_identical(
         with pytest.raises(SystemExit) as raw_exc:
             parser.parse_args(["prepare"])
     raw_err = capsys.readouterr().err
-    assert _exit_code(raw_exc.value) == 2
+    assert exit_code(raw_exc.value) == 2
 
-    code = _run("prepare")
+    code = run_cli("prepare")
     cli_err = capsys.readouterr().err
 
     assert code == 3
@@ -806,7 +769,7 @@ def test_argparse_usage_error_code_3_in_subprocess(tmp_path: Path) -> None:
 
 def test_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
     """``--help`` не затронут перехватом: код 0 (страховка от широкого catch)."""
-    code = _run("--help")
+    code = run_cli("--help")
 
     captured = capsys.readouterr()
     assert code == 0
@@ -815,7 +778,7 @@ def test_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_key_help_exits_with_code_0(capsys: pytest.CaptureFixture[str]) -> None:
     """Явный `pgw key --help` остаётся успешным кодом 0 (ADR-30)."""
-    code = _run("key", "--help")
+    code = run_cli("key", "--help")
     captured = capsys.readouterr()
     assert code == 0
     assert captured.out != ""
@@ -848,7 +811,7 @@ def test_restore_mkdir_failure_maps_to_code_3(
     Реальный write_restored доходит до подменённого Path.mkdir; права
     файловой системы не меняются, поэтому тест стабилен и на Windows.
     """
-    reply = _input_file(tmp_path, SYNTH_LLM_REPLY)
+    reply = input_file(tmp_path, SYNTH_LLM_REPLY)
     route_path = tmp_path / "route.json"
     out_path = tmp_path / "nested" / "restored.txt"
     result = _empty_restore_result("секретный результат")
@@ -861,7 +824,7 @@ def test_restore_mkdir_failure_maps_to_code_3(
 
     with patch("privacy_gateway.restore.restore_text", return_value=result):
         with patch.object(Path, "mkdir", fake_mkdir):
-            code = _run(
+            code = run_cli(
                 "restore",
                 str(reply),
                 "--route",

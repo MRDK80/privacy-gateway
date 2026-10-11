@@ -4,7 +4,7 @@
 - после rotate_key() шифрование идёт новым ключом;
 - манифест, созданный до ротации, читается после ротации;
 - порядок ключей в MultiFernet имеет значение;
-- прерывание rotate_key не оставляет частично записанное состояние;
+- отказ перед записью нового active сохраняет читаемость текущего поколения;
 - удаление ключа делает старые манифесты нечитаемыми;
 - полный цикл: create → prepare → restore → rotate → restore старого манифеста;
 - коды возврата 3, 4, 5 различимы между собой.
@@ -32,6 +32,7 @@ from privacy_gateway.keystore import (
     KeyNotFoundError,
     KeystoreError,
 )
+from tests.conftest import input_file, run_cli
 
 
 class _SafeBackendMock:
@@ -120,11 +121,16 @@ def test_multifernet_order_matters(
         decrypt_multi(ciphertext, [key_b])
 
 
-def test_rotation_atomic(
+def test_rotation_active_write_failure_preserves_current_generation(
     safe_backend: _SafeBackendMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Прерывание на втором _set_raw не оставляет keystore в повреждённом состоянии."""
+    """Отказ перед второй записью сохраняет читаемость текущего поколения.
+
+    Mock сообщает ошибку до записи нового active, после carry в retired.
+    Проверяется расшифрование прежним active; атомарность и rollback
+    всей ротации не предполагаются (ADR-46, уточнение #66).
+    """
     old_key = ks.create_key()
     plaintext = "+7 900 000-00-00"
     ciphertext = encrypt_multi(plaintext, [old_key])
@@ -239,17 +245,6 @@ def test_full_lifecycle(
     )
 
 
-def _run_cli_key(*args: str) -> int:
-    from privacy_gateway.cli import main as _main
-
-    with patch("sys.argv", ["pgw", *args]):
-        try:
-            _main()
-        except SystemExit as exc:
-            return int(exc.code) if exc.code is not None else 0
-    return 0
-
-
 def test_exit_code_config_error(tmp_path: Path) -> None:
     """Код 3: ошибка конфигурации (неверный route.json) в команде restore."""
     bad_route = tmp_path / "route.json"
@@ -257,20 +252,19 @@ def test_exit_code_config_error(tmp_path: Path) -> None:
     llm_file = tmp_path / "llm.txt"
     llm_file.write_text("some text", encoding="utf-8")
 
-    code = _run_cli_key("restore", str(llm_file), "--route", str(bad_route))
+    code = run_cli("restore", str(llm_file), "--route", str(bad_route))
     assert code == 3, f"Ожидался код 3, получен {code}"
 
 
 def test_exit_code_keystore_error(tmp_path: Path) -> None:
     """Код 4: ключ не найден / недоступный backend в команде prepare."""
-    input_file = tmp_path / "input.txt"
-    input_file.write_text("Send to user@example.com", encoding="utf-8")
+    source = input_file(tmp_path, "Send to user@example.com")
 
     with patch(
         "privacy_gateway.cli.get_key",
         side_effect=KeystoreError("backend unavailable"),
     ):
-        code = _run_cli_key("prepare", str(input_file))
+        code = run_cli("prepare", str(source))
 
     assert code == 4, f"Ожидался код 4, получен {code}"
 
@@ -304,7 +298,7 @@ def test_exit_code_token_strict_failure(tmp_path: Path) -> None:
         "privacy_gateway.restore.get_all_keys",
         return_value=[generate_key()],
     ):
-        code = _run_cli_key(
+        code = run_cli(
             "restore", str(llm_file), "--route", str(route_file)
         )
 
@@ -317,17 +311,16 @@ def test_exit_codes_are_distinct(tmp_path: Path) -> None:
     bad_route.write_text("{\"broken\": true}", encoding="utf-8")
     llm_file = tmp_path / "llm.txt"
     llm_file.write_text("text", encoding="utf-8")
-    code_3 = _run_cli_key(
+    code_3 = run_cli(
         "restore", str(llm_file), "--route", str(bad_route)
     )
 
-    input_file = tmp_path / "input.txt"
-    input_file.write_text("Send to user@example.com", encoding="utf-8")
+    source = input_file(tmp_path, "Send to user@example.com")
     with patch(
         "privacy_gateway.cli.get_key",
         side_effect=KeystoreError("unavailable"),
     ):
-        code_4 = _run_cli_key("prepare", str(input_file))
+        code_4 = run_cli("prepare", str(source))
 
     manifest_file2 = tmp_path / "manifest2.json"
     manifest_file2.write_text("[]", encoding="utf-8")
@@ -347,7 +340,7 @@ def test_exit_codes_are_distinct(tmp_path: Path) -> None:
         "privacy_gateway.restore.get_all_keys",
         return_value=[generate_key()],
     ):
-        code_5 = _run_cli_key(
+        code_5 = run_cli(
             "restore", str(llm_unknown), "--route", str(route_file2)
         )
 
