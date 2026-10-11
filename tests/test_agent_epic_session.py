@@ -1,5 +1,8 @@
 """Two tasks -> final, using actual checkpoint supervisor and isolated state."""
 
+import os
+import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -138,3 +141,85 @@ def test_session_lock_excludes_second_supervisor(tmp_path: Path) -> None:
         with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
             session.resume()
     assert calls == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inherited supervisor lock")
+@pytest.mark.parametrize(
+    "fault", ["malformed", "closed", "wrong_inode", "unlocked", "other_owner"]
+)
+def test_inherited_supervisor_lock_rejects_invalid_ownership(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    session, calls = build(tmp_path)
+    directory = session.control.directory
+    directory.mkdir(mode=0o700)
+    path = directory / "epic-loop.lock"
+    path.touch(mode=0o600)
+    marker = "invalid"
+    descriptor: int | None = None
+    owner = loop.RunnerLock(directory) if fault == "other_owner" else None
+    if owner is not None:
+        owner.__enter__()
+    try:
+        if fault in {"wrong_inode", "unlocked", "other_owner"}:
+            target = tmp_path / "other.lock" if fault == "wrong_inode" else path
+            descriptor = os.open(target, os.O_RDWR | os.O_CREAT, 0o600)
+            marker = str(descriptor)
+        elif fault == "closed":
+            descriptor = os.open(path, os.O_RDWR)
+            marker = str(descriptor)
+            os.close(descriptor)
+            descriptor = None
+        monkeypatch.setenv(loop.SUPERVISOR_LOCK_FD_ENV, marker)
+        before = session.seed.path.read_bytes()
+        with pytest.raises(loop.LoopError, match="LOCK_FAILED|RUNNER_LOCKED"):
+            session.resume()
+        assert calls == []
+        assert session.seed.path.read_bytes() == before
+        assert loop.SUPERVISOR_LOCK_FD_ENV not in os.environ
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass  # Rejected adoption already consumed this duplicate.
+        if owner is not None:
+            owner.__exit__()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inherited supervisor lock")
+def test_inherited_lock_remains_parent_owned_and_is_not_forwarded_to_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, calls = build(tmp_path)
+    adapter = session.adapter
+    with loop.RunnerLock(session.control.directory) as parent:
+        duplicate = os.dup(parent.descriptor())
+        os.set_inheritable(duplicate, True)
+        monkeypatch.setenv(loop.SUPERVISOR_LOCK_FD_ENV, str(duplicate))
+
+        def checked_adapter(*args: Any) -> loop.RuntimeAdapter:
+            assert loop.SUPERVISOR_LOCK_FD_ENV not in os.environ
+            assert not os.get_inheritable(duplicate)
+            child = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os; assert 'PGW_SUPERVISOR_LOCK_FD' not in os.environ\n"
+                    f"try: os.fstat({duplicate})\n"
+                    "except OSError: pass\n"
+                    "else: raise AssertionError('inherited supervisor descriptor')",
+                ],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+            assert child.returncode == 0
+            return adapter(*args)
+
+        session.adapter = checked_adapter
+        assert session.resume()["status"] == "ROADMAP_DONE"
+        assert calls
+        with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
+            session.resume()
+    assert session.resume()["machine_code"] == "ALREADY_COMPLETED"

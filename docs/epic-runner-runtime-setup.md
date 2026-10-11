@@ -244,3 +244,74 @@ recorded or a revocation prevents further retries. Valid runtime error envelopes
 preserve their sanitized original machine code; malformed envelopes remain
 invalid. This code is not installed or activated by a task PR, and #131 remains
 stopped until separately reviewed owner deployment/recovery decisions.
+
+## Managed chat entry (ADR-297)
+
+The repo-local `pgw-epic` skill calls the owner-installed frozen runtime entry.
+Its new internal `entry` command accepts explicit discover/prepare/start/status/
+pause/stop/resume actions. Follow [ADR-297](ADR-297-chat-entry-supervisor.md);
+this section does not install or activate policy. Check the launcher bytes
+against the reviewed pinned Git object before invocation. Mutable checkout
+code is not a launch source.
+
+Register runs only in an explicitly selected owner-only JSON file outside
+worktrees: closed registry `1.0` has `schema_version` and `runs`; each run has
+exactly `repository`, positive integer `epic`, and absolute `state_directory`.
+There is no automatic home-directory search. Missing/duplicate matches,
+noncanonical remote or ambiguous/stale roadmap stop discovery. State and
+registry paths are private and must not appear in public reports.
+
+A new managed launch uses closed `epic-runtime.json` `2.0`: existing whole-epic
+`1.0` fields plus `approved_launch_digest`. Draft preparation may leave that
+field null. Existing owner-approved mandate, plans, handover, reviewed seed
+checkpoint and runtime-adapter configuration remain prerequisites. Missing
+mandate/config produces a prerequisite blocker rather than self-issued
+approval. Recovery stays one-task-only; no pending legacy state is migrated.
+
+`entry --action prepare` additionally takes explicit `--installation` and
+writes a closed private launch candidate `1.0` without activating it. The
+owner reviews its actual file and digest, then separately pins the exact
+approved digest in managed config. The candidate binds repository/epic,
+roadmap, policy SHA, installation manifest digest, owner, mandate digest and
+both runtime configs; only the circular `approved_launch_digest` is excluded
+from the runtime config digest. Every adapter argv, timeout and output limit
+is bound. Existing active/control state is not overwritten by preparation.
+
+Discover/start/resume take repository, epic and registry; every action takes
+state and repository root through the frozen entry. Start is for a new launch;
+resume is for the same existing run after fresh readiness/lifecycle and
+read-only reconciliation. The entry lock prevents competing entry runners;
+the entry also acquires the canonical session lock before validation,
+reconciliation or control writes and holds it through bounded child completion.
+The installed Bubblewrap supervisor inherits the locked descriptor and verifies
+its canonical private inode and exact lock ownership. It consumes the internal
+marker and prevents descriptor inheritance into effect/model subprocesses;
+closing its duplicate does not unlock the parent-held lock. Direct invocation
+uses that same lock, so no competing supervisor can enter during launch. UNKNOWN
+pending state is preserved and blocks another supervisor. Execution uses the
+existing bounded Bubblewrap epic adapter and its fixed approved argv.
+
+Owner pause/stop uses a separate short control lock and closed
+`launch-control.json` `1.0` with `schema_version`, `launch_digest`, `state` and
+nonnegative monotonic `generation`. Resume cannot clear a newer owner request
+observed during validation. PAUSED prohibits new effects; only explicit valid
+resume can reopen it. STOPPED is terminal for that launch, and start/resume,
+legacy config downgrade or direct child-task entry cannot clear it. Read-only
+reconciliation does not renew authority or reset pending/attempts/receipts.
+Already in-flight effects may have applied; no rollback, cross-file transaction,
+instant cancellation or additional crash durability is promised.
+
+The frozen entry requires a valid mandate lifecycle for every action, including
+status, pause and stop. Expiry/revocation therefore blocks those requests too;
+a rejected request does not establish a new control state. Use existing
+read-only reconciliation under its own guards and seek owner disposition of
+expired/revoked authority before continuation.
+
+Status returns bounded phase/task/control identifiers and canonical issue/PR
+links. Process-lock occupancy or exit zero alone does not establish verified
+progress/completion. The mechanism is foreground execution and explicit later
+resume from persisted state. `--background` is blocked: cross-turn wakeup and
+persistent waits require later separately tested mechanisms (#299/#300).
+The skill has no mandate-issuance or installation authority; #131 remains
+outside this deployment. Model reasoning escalation is operational policy,
+not automatic permission to change runtime settings or consume new attempts.

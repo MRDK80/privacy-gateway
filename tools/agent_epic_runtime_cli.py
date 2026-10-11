@@ -55,6 +55,154 @@ class DeploymentError(Exception):
     """A bounded code, never a private path or transport diagnostic."""
 
 
+LAUNCH_KEYS = {
+    "schema_version",
+    "repository",
+    "epic",
+    "roadmap_ref",
+    "policy_sha",
+    "installation_digest",
+    "runtime_config_digest",
+    "mandate_digest",
+    "owner_identity",
+}
+
+
+def canonical_digest(value: Any) -> str:
+    return (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+    )
+
+
+def launch_config_digest(config: dict[str, Any], adapter: dict[str, Any]) -> str:
+    return canonical_digest(
+        {
+            "epic_runtime": {
+                key: value
+                for key, value in config.items()
+                if key != "approved_launch_digest"
+            },
+            "runtime_adapter": adapter,
+        }
+    )
+
+
+def managed_state(state: Path) -> Path:
+    if state.parent.name == "tasks":
+        return state.parent.parent
+    return state
+
+
+def managed_launch_guard(
+    state: Path, root: Path, *, read_only: bool = False, allow_initial: bool = False
+) -> None:
+    """Stdlib guard before imports and effects, including direct child entry."""
+    seed = secure_directory(managed_state(state), root)
+    present = any(
+        (seed / name).exists() or (seed / name).is_symlink()
+        for name in ("launch.json", "launch-control.json")
+    )
+    epic_path = seed / "epic-runtime.json"
+    config = private_json(epic_path) if epic_path.exists() else None
+    managed = config is not None and config.get("schema_version") == "2.0"
+    if not present and not managed:
+        return
+    if (
+        config is None
+        or set(config) != EPIC_CONFIG_KEYS | {"approved_launch_digest"}
+        or not managed
+    ):
+        raise DeploymentError("LAUNCH_PROFILE_REQUIRED")
+    value = private_json(seed / "launch.json")
+    if set(value) != LAUNCH_KEYS or value.get("schema_version") != "1.0":
+        raise DeploymentError("LAUNCH_CANDIDATE_INVALID")
+    if (
+        type(value["epic"]) is not int
+        or value["epic"] <= 0
+        or not isinstance(value["repository"], str)
+        or re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value["repository"]) is None
+        or not isinstance(value["roadmap_ref"], str)
+        or not value["roadmap_ref"].startswith(f"roadmap/{value['epic']}-")
+        or not isinstance(value["owner_identity"], str)
+        or not value["owner_identity"]
+        or not isinstance(value["policy_sha"], str)
+        or re.fullmatch(r"[0-9a-f]{40}", value["policy_sha"]) is None
+        or any(
+            not isinstance(value[key], str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", value[key]) is None
+            for key in (
+                "installation_digest",
+                "runtime_config_digest",
+                "mandate_digest",
+            )
+        )
+    ):
+        raise DeploymentError("LAUNCH_CANDIDATE_INVALID")
+    approved = config["approved_launch_digest"]
+    if canonical_digest(value) != approved:
+        raise DeploymentError("LAUNCH_APPROVAL_MISMATCH")
+    adapter = private_json(seed / "runtime-adapter.json")
+    if launch_config_digest(config, adapter) != value["runtime_config_digest"]:
+        raise DeploymentError("LAUNCH_CONFIG_CHANGED")
+    mandate = private_json(seed / "mandate.json")
+    if (
+        any(
+            value[key] != mandate.get(key)
+            for key in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+        or value["mandate_digest"] != config["approved_mandate_digest"]
+    ):
+        raise DeploymentError("LAUNCH_IDENTITY_MISMATCH")
+    if not read_only:
+        bootstrap_authority(config, mandate, epic=True)
+    if state != seed:
+        child = private_json(state / "mandate.json")
+        child_config = private_json(state / "runtime-task.json")
+        payload = dict(child)
+        approval = child.get("approval")
+        if not isinstance(approval, dict):
+            raise DeploymentError("LAUNCH_IDENTITY_MISMATCH")
+        payload["approval"] = {
+            key: item for key, item in approval.items() if key != "mandate_digest"
+        }
+        if (
+            canonical_digest(payload) != value["mandate_digest"]
+            or child_config.get("approved_mandate_digest") != value["mandate_digest"]
+        ):
+            raise DeploymentError("LAUNCH_IDENTITY_MISMATCH")
+    policy = Path(config["policy_root"])
+    secure_directory(policy, root)
+    manifest = private_json(policy.parent / "candidate.json")
+    if canonical_digest(manifest) != value["installation_digest"]:
+        raise DeploymentError("LAUNCH_INSTALLATION_CHANGED")
+    path = seed / "launch-control.json"
+    if not path.exists() and not path.is_symlink() and allow_initial:
+        return
+    control = private_json(path)
+    if (
+        set(control) != {"schema_version", "launch_digest", "state", "generation"}
+        or control["schema_version"] != "1.0"
+        or control["launch_digest"] != approved
+        or control["state"] not in {"RUNNING", "PAUSED", "STOPPED"}
+        or type(control["generation"]) is not int
+        or control["generation"] < 0
+    ):
+        raise DeploymentError("LAUNCH_CONTROL_INVALID")
+    if not read_only and control["state"] != "RUNNING":
+        raise DeploymentError("OWNER_" + control["state"])
+
+
 def bootstrap_authority(
     config: dict[str, Any], mandate: dict[str, Any], *, epic: bool
 ) -> None:
@@ -263,7 +411,7 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
             raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
 
 
-def build_runtime(state: Path, root: Path) -> Any:
+def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     state = secure_directory(state, root)
     config = private_json(state / "runtime-task.json")
     recovery_profile = config.get("schema_version") == "2.0"
@@ -285,6 +433,7 @@ def build_runtime(state: Path, root: Path) -> Any:
         raise DeploymentError("RECOVERY_PROFILE_REQUIRED")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=False)
+    managed_launch_guard(state, root, read_only=read_only)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
@@ -302,6 +451,7 @@ def build_runtime(state: Path, root: Path) -> Any:
     from tools.agent_epic_workflow import ReviewedWorkflow, codex_role_adapter
 
     def authority() -> tuple[dict[str, Any], str, delivery.MandateContext]:
+        managed_launch_guard(state, root, read_only=read_only)
         current = private_json(state / "mandate.json")
         if current.get("policy_sha") != mandate.get("policy_sha"):
             raise DeploymentError("POLICY_PROVENANCE_MISMATCH")
@@ -381,7 +531,10 @@ def build_session(state: Path, root: Path) -> Any:
     ):
         raise DeploymentError("RECOVERY_ONE_TASK_REQUIRED")
     config = private_json(state / "epic-runtime.json")
-    if set(config) != EPIC_CONFIG_KEYS or config.get("schema_version") != "1.0":
+    managed = config.get("schema_version") == "2.0"
+    if set(config) != EPIC_CONFIG_KEYS | (
+        {"approved_launch_digest"} if managed else set()
+    ) or config.get("schema_version") not in {"1.0", "2.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     if (
         any(
@@ -394,6 +547,7 @@ def build_session(state: Path, root: Path) -> Any:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
+    managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
@@ -408,16 +562,81 @@ def build_session(state: Path, root: Path) -> Any:
     return SessionRuntime(state, root, config)
 
 
+def build_entry(state: Path, root: Path) -> Any:
+    """Frozen bootstrap checks before importing the installed entry module."""
+    state = secure_directory(state, root)
+    for name, code in (
+        ("epic-runtime.json", "EPIC_CONFIG_REQUIRED"),
+        ("mandate.json", "MANDATE_REQUIRED"),
+    ):
+        path = state / name
+        if not path.exists() and not path.is_symlink():
+            raise DeploymentError(code)
+    config = private_json(state / "epic-runtime.json")
+    managed = config.get("schema_version") == "2.0"
+    if set(config) != EPIC_CONFIG_KEYS | (
+        {"approved_launch_digest"} if managed else set()
+    ) or config.get("schema_version") not in {"1.0", "2.0"}:
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    mandate = private_json(state / "mandate.json")
+    bootstrap_authority(config, mandate, epic=True)
+    policy = Path(config["policy_root"])
+    verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
+    existing = sys.modules.get("tools")
+    if existing is not None and not Path(
+        existing.__file__ or ""
+    ).resolve().is_relative_to(policy.resolve()):
+        raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(policy))
+    from tools import agent_epic_entry
+
+    return agent_epic_entry
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "command", choices=("live", "effect", "reconcile", "epic_resume")
+        "command", choices=("live", "effect", "reconcile", "epic_resume", "entry")
     )
     parser.add_argument("--phase")
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--repository-root", type=Path, required=True)
+    parser.add_argument(
+        "--action",
+        choices=("discover", "prepare", "start", "status", "pause", "stop", "resume"),
+    )
+    parser.add_argument("--repository")
+    parser.add_argument("--epic", type=int)
+    parser.add_argument("--registry", type=Path)
+    parser.add_argument("--installation", type=Path)
+    parser.add_argument("--background", action="store_true")
     args = parser.parse_args()
+    if args.command != "entry" and any(
+        (
+            args.action,
+            args.repository,
+            args.epic,
+            args.registry,
+            args.installation,
+            args.background,
+        )
+    ):
+        parser.error("entry options require entry command")
     try:
+        if args.command == "entry":
+            result = build_entry(args.state_dir, args.repository_root).execute(
+                args.action,
+                args.repository_root,
+                args.state_dir,
+                repository=args.repository,
+                epic=args.epic,
+                registry=args.registry,
+                installation=args.installation,
+                background=args.background,
+            )
+            print(json.dumps(result, sort_keys=True))
+            return 0
         if args.command == "epic_resume":
             result = build_session(args.state_dir, args.repository_root).resume()
             status = result.get("status")
@@ -440,7 +659,9 @@ def main() -> int:
                 )
             )
             return 0
-        engine = build_runtime(args.state_dir, args.repository_root)
+        engine = build_runtime(
+            args.state_dir, args.repository_root, read_only=args.command == "reconcile"
+        )
         if args.command == "live":
             value = dict(engine.live())
             if engine.merge_sha() is not None:
@@ -467,7 +688,7 @@ def main() -> int:
             or re.fullmatch(r"[A-Z][A-Z0-9_]{0,63}", code) is None
         ):
             code = "RUNTIME_PHASE_FAILED"
-        if args.command == "epic_resume":
+        if args.command in {"epic_resume", "entry"}:
             value = {
                 "schema_version": "1.0",
                 "status": "BLOCKED"

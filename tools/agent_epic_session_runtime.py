@@ -19,7 +19,7 @@ from tools import agent_orchestrate as workflow
 from tools.agent_epic_bootstrap import BootstrapTask
 from tools.agent_epic_final_runtime import FinalRuntime, digest
 from tools.agent_epic_runtime import TaskPhaseRuntime
-from tools.agent_epic_runtime_cli import private_json
+from tools.agent_epic_runtime_cli import managed_launch_guard, private_json
 from tools.agent_epic_session import Session, structural_queue
 from tools.agent_epic_workflow import ReviewedWorkflow, codex_role_adapter
 
@@ -50,6 +50,7 @@ class SessionRuntime:
     def authority(
         self, iterations: int
     ) -> tuple[dict[str, Any], str, delivery.MandateContext]:
+        managed_launch_guard(self.state, self.root)
         mandate = private_json(self.state / "mandate.json")
         approved = self.config["approved_mandate_digest"]
         if (

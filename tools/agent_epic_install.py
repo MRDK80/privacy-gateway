@@ -323,6 +323,7 @@ def readiness(
         config = guards.private_json(state / filename)
         keys = guards.EPIC_CONFIG_KEYS if epic else guards.CONFIG_KEYS
         recovery = not epic and config.get("schema_version") == "2.0"
+        managed = epic and config.get("schema_version") == "2.0"
         if epic and (
             (state / "bootstrap-recovery.json").exists()
             or (
@@ -336,7 +337,9 @@ def readiness(
             raise InstallError("RECOVERY_ONE_TASK_REQUIRED")
         if set(config) != keys | (
             {"approved_recovery_digest"} if recovery else set()
-        ) or config.get("schema_version") not in ({"1.0"} if epic else {"1.0", "2.0"}):
+        ) | ({"approved_launch_digest"} if managed else set()) or config.get(
+            "schema_version"
+        ) not in {"1.0", "2.0"}:
             raise InstallError("RUNTIME_CONFIG_INVALID")
         if (
             any(
@@ -365,6 +368,8 @@ def readiness(
             raise InstallError("RECOVERY_PROFILE_REQUIRED")
         mandate = guards.private_json(state / "mandate.json")
         guards.bootstrap_authority(config, mandate, epic=epic)
+        if epic:
+            guards.managed_launch_guard(state, root, read_only=True, allow_initial=True)
         if (
             mandate["repository"] != value["repository"]
             or mandate["policy_sha"] != value["policy_sha"]
