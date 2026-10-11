@@ -69,7 +69,15 @@ is promised. Preserve pending intents and use existing read-only reconciliation
 before any authorized continuation. Never reset attempts, receipts or cursors.
 A separate short control lock serializes control changes; the existing process
 runner lock still prevents competing whole-epic execution. Resume refuses an
-active runner rather than killing it or trusting a reusable PID.
+active runner rather than killing it or trusting a reusable PID. The entry
+acquires the same canonical session process lock before validation,
+reconciliation or control mutation, and retains it through child completion.
+The bounded Bubblewrap child inherits that locked file descriptor; the session
+accepts it only after checking the canonical private file identity and ownership
+of the exclusive lock on that exact open-file description. Child close does not
+unlock the parent-held lock. The internal descriptor marker is consumed and
+the descriptor made non-inheritable before effects/model subprocesses. This
+transport conveys process ownership, not effect authority.
 
 Start/resume invoke the existing synchronous installed supervisor with fixed
 argv through the existing bounded Bubblewrap adapter. Durable checkpoints
@@ -79,6 +87,12 @@ cross-turn scheduling is claimed. Persistent waits and actual wakeup are
 separate #299/#300 requirements. Unsupported requested background capability
 returns a concrete blocker. No detached process, inferred quota reset or
 client automation is silently created.
+
+The frozen entry applies mandate lifecycle checks to every action, including
+status, pause and stop. After expiry or revocation those entry actions return
+the lifecycle blocker; they cannot install new control through an invalid
+mandate. Existing read-only reconciliation remains available through its own
+guards. Do not infer a recorded pause/stop from a rejected request.
 
 Status reads private canonical facts and reports bounded identifiers, phase,
 control state and safe codes with canonical issue/PR links. It omits private

@@ -36,6 +36,10 @@ policy и [контракт запуска](../../../docs/ADR-297-chat-entry-sup
 Для `status`, `pause`, `stop` используй соответствующий `entry --action` с
 тем же state/root. Отчёт содержит safe codes, phase и первичные issue/PR links;
 private paths, argv, payload и raw logs в публичный handover не копируй.
+Frozen entry проверяет lifecycle mandate для всех actions: после expiry или
+revocation `status`, `pause`, `stop` тоже возвращают blocker. Отказ не означает,
+что новый control state записан. Existing read-only reconciliation выполняется
+через собственные guards; продолжение требует решения владельца об authority.
 PAUSED запрещает дальнейшие effects до разрешённого resume. STOPPED терминален
 для данного launch; новая просьба не снимает latch. Ни pause, ни exit 0 не
 означают завершение task/epic. Не убивай процесс по одному PID.

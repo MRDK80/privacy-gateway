@@ -120,7 +120,7 @@ class Session:
 
     def resume(self) -> dict[str, Any]:
         self.control.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        with loop.RunnerLock(self.control.directory):
+        with loop.RunnerLock.supervisor(self.control.directory):
             seed = self.seed.load()
             if seed is None or seed["schema_version"] != "3.0":
                 raise loop.PhaseBlocked("PINNED_CHECKPOINT_REQUIRED")

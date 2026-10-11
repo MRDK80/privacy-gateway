@@ -115,6 +115,9 @@ class RuntimeAdapter(Protocol):
     def merge_sha(self) -> str | None: ...
 
 
+SUPERVISOR_LOCK_FD_ENV = "PGW_SUPERVISOR_LOCK_FD"
+
+
 RUNTIME_CONFIG_KEYS = {
     "schema_version",
     "live_command",
@@ -149,6 +152,7 @@ class CommandRuntimeAdapter:
         self.epic_command = epic_command
         self.state_directory = state_directory
         self._merge_sha: str | None = None
+        self.supervisor_lock: RunnerLock | None = None
 
     @staticmethod
     def _secure_ancestry(directory: Path, owner: int) -> None:
@@ -404,12 +408,23 @@ class CommandRuntimeAdapter:
                 "--",
                 *command,
             ]
+            # This internal descriptor carries process ownership only. Authority
+            # still comes from pinned policy and the fresh runtime guards.
+            child_environment = dict(os.environ)
+            child_environment.pop(SUPERVISOR_LOCK_FD_ENV, None)
+            inherited_fds: tuple[int, ...] = ()
+            if self.supervisor_lock is not None and command == self.epic_command:
+                descriptor = self.supervisor_lock.descriptor()
+                inherited_fds = (descriptor,)
+                child_environment[SUPERVISOR_LOCK_FD_ENV] = str(descriptor)
             process = subprocess.Popen(
                 contained_command,
                 cwd=self.root,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                pass_fds=inherited_fds,
+                env=child_environment,
             )
             if process.stdout is None or process.stderr is None:
                 raise LoopError("RUNTIME_ADAPTER_FAILED")
@@ -750,9 +765,65 @@ class CheckpointStore:
 class RunnerLock:
     """Non-blocking process lock for one private epic state directory."""
 
-    def __init__(self, directory: Path) -> None:
+    def __init__(self, directory: Path, *, inherited_fd: int | None = None) -> None:
         self.directory = directory.resolve()
         self._stream: BinaryIO | None = None
+        self._inherited_fd = inherited_fd
+
+    def descriptor(self) -> int:
+        if self._stream is None:
+            raise LoopError("LOCK_FAILED")
+        return self._stream.fileno()
+
+    @classmethod
+    def supervisor(cls, directory: Path) -> RunnerLock:
+        marker = os.environ.pop(SUPERVISOR_LOCK_FD_ENV, None)
+        if marker is None:
+            return cls(directory)
+        if os.name == "nt" or not marker.isascii() or not marker.isdecimal():
+            raise LoopError("LOCK_FAILED")
+        try:
+            descriptor = int(marker)
+            if descriptor < 3:
+                raise ValueError
+            # Consume the transport immediately; no effect/model child receives it.
+            os.set_inheritable(descriptor, False)
+        except (OSError, ValueError):
+            raise LoopError("LOCK_FAILED") from None
+        return cls(directory, inherited_fd=descriptor)
+
+    def _adopt(self) -> BinaryIO:
+        assert self._inherited_fd is not None
+        stream = os.fdopen(self._inherited_fd, "a+b")
+        try:
+            descriptor_info = os.fstat(stream.fileno())
+            path = self.directory / "epic-loop.lock"
+            canonical_info = path.lstat()
+            getuid = getattr(os, "getuid", None)
+            if (
+                getuid is None
+                or not stat.S_ISREG(canonical_info.st_mode)
+                or canonical_info.st_uid != getuid()
+                or stat.S_IMODE(canonical_info.st_mode) != 0o600
+                or (descriptor_info.st_dev, descriptor_info.st_ino)
+                != (canonical_info.st_dev, canonical_info.st_ino)
+            ):
+                raise LoopError("LOCK_FAILED")
+            # A separate open must be excluded, while flock on the inherited
+            # open-file description must succeed. Occupancy alone is insufficient.
+            with path.open("a+b") as probe:
+                try:
+                    self._lock(probe)
+                except BlockingIOError:
+                    pass
+                else:
+                    self._unlock(probe)
+                    raise LoopError("LOCK_FAILED")
+            self._lock(stream)
+        except Exception:
+            stream.close()
+            raise
+        return stream
 
     @staticmethod
     def _lock(stream: BinaryIO) -> None:
@@ -781,6 +852,9 @@ class RunnerLock:
     def __enter__(self) -> RunnerLock:
         stream: BinaryIO | None = None
         try:
+            if self._inherited_fd is not None:
+                self._stream = self._adopt()
+                return self
             self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.directory, 0o700)
             stream = (self.directory / "epic-loop.lock").open("a+b")
@@ -799,7 +873,9 @@ class RunnerLock:
 
     def __exit__(self, *_args: object) -> None:
         if self._stream is not None:
-            self._unlock(self._stream)
+            # Closing the child's duplicate must not unlock the parent-held flock.
+            if self._inherited_fd is None:
+                self._unlock(self._stream)
             self._stream.close()
             self._stream = None
 

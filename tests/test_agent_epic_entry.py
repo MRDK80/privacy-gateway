@@ -7,9 +7,13 @@ from typing import Any
 
 import pytest
 from tools import agent_epic_entry as entry
+from tools import agent_epic_install as install
 from tools import agent_epic_runtime_cli as guards
 
 from tests.test_agent_epic_install import runtime_fixture
+from tests.test_agent_epic_loop import (
+    active_runtime_namespace as active_runtime_namespace,
+)
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX private runtime")
 
@@ -202,6 +206,48 @@ def test_second_runner_and_unknown_pending_are_not_restarted(
     assert not (state / "launch-control.json").exists()
 
 
+@pytest.mark.parametrize("action", ["start", "resume"])
+def test_direct_supervisor_lock_preserves_pause_before_chat_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    from tools import agent_epic_loop as loop
+
+    root, _, state = managed(tmp_path, monkeypatch)
+    entry.control(root, state, "PAUSED")
+    before = (state / "launch-control.json").read_bytes()
+    store = loop.CheckpointStore(state, root)
+    saved = store.load()
+    assert saved is not None
+    saved.update(pending_phase="RUN_TASK", status="RUNNING")
+    store.save(saved)
+    checkpoint_before = store.path.read_bytes()
+    monkeypatch.setattr(
+        install,
+        "readiness",
+        lambda *args, **kwargs: pytest.fail("occupied supervisor readiness"),
+    )
+    monkeypatch.setattr(
+        loop.CommandRuntimeAdapter,
+        "reconcile",
+        lambda *args: pytest.fail("occupied supervisor reconciliation"),
+    )
+    calls: list[str] = []
+
+    def resumed(self: loop.CommandRuntimeAdapter) -> dict[str, Any]:
+        calls.append("resume")
+        return {"status": "BLOCKED", "machine_code": "RUNNER_LOCKED"}
+
+    monkeypatch.setattr(loop.CommandRuntimeAdapter, "resume_epic", resumed)
+    lock = state / "session-control"
+    lock.mkdir(mode=0o700)
+    with loop.RunnerLock(lock):
+        with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
+            entry.run(root, state, action)
+        assert (state / "launch-control.json").read_bytes() == before
+        assert store.path.read_bytes() == checkpoint_before
+        assert calls == []
+
+
 def test_entry_invokes_actual_checkpoint_supervisor_with_synthetic_callbacks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -275,6 +321,11 @@ def test_entry_invokes_actual_checkpoint_supervisor_with_synthetic_callbacks(
         adapter: loop.CommandRuntimeAdapter, command: object
     ) -> dict[str, object]:
         assert command == adapter.epic_command
+        assert adapter.supervisor_lock is not None
+        monkeypatch.setenv(
+            loop.SUPERVISOR_LOCK_FD_ENV,
+            str(os.dup(adapter.supervisor_lock.descriptor())),
+        )
         result = session.resume()
         return {
             "schema_version": "1.0",
@@ -407,18 +458,16 @@ def test_background_request_is_an_explicit_blocker() -> None:
         )
 
 
-@pytest.mark.parametrize("tampered", [False, True])
-def test_frozen_cli_validates_bytes_before_importing_entry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tampered: bool
-) -> None:
+def frozen_managed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, Path, Path]:
     import datetime
-    import subprocess
-    import sys
     import time
 
     from tools import agent_epic_delivery as delivery
     from tools import agent_epic_install as install
     from tools import agent_epic_loop as loop
+    from tools.agent_coordinator_handover import handover_digest
 
     from tests.test_agent_epic_snapshot import git
 
@@ -439,8 +488,18 @@ def test_frozen_cli_validates_bytes_before_importing_entry(
     approved = delivery.mandate_digest(mandate)
     mandate["approval"]["mandate_digest"] = approved
     (state / "mandate.json").write_text(json.dumps(mandate))
+    seed = guards.private_json(state / "checkpoint.json")
+    seed["policy_sha"] = sha
+    (state / "checkpoint.json").write_text(json.dumps(seed))
+    handover = guards.private_json(state / "handover.json")
+    handover["trusted_policy"]["policy_sha"] = sha
+    (state / "handover.json").write_text(json.dumps(handover))
+    plans = guards.private_json(state / "approved-plans.json")
+    plans["initial_handover_digest"] = handover_digest(handover)
+    (state / "approved-plans.json").write_text(json.dumps(plans))
     config = guards.private_json(state / "epic-runtime.json")
     config.update(
+        approved_plans_digest=install.digest(plans),
         policy_root=str(installation / "policy"),
         approved_mandate_digest=approved,
         started_at=now,
@@ -458,8 +517,23 @@ def test_frozen_cli_validates_bytes_before_importing_entry(
     assert saved is not None
     saved["policy_sha"] = sha
     store.save(saved)
+    return root, state, script
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+def test_frozen_cli_validates_bytes_before_importing_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tampered: bool
+) -> None:
+    import subprocess
+    import sys
+
+    root, state, script = frozen_managed(tmp_path, monkeypatch)
     if tampered:
-        target = installation / "policy" / "tools" / "agent_epic_entry.py"
+        target = (
+            Path(guards.private_json(state / "epic-runtime.json")["policy_root"])
+            / "tools"
+            / "agent_epic_entry.py"
+        )
         target.write_text("print('SYNTHETIC_UNTRUSTED_IMPORT')\n")
     completed = subprocess.run(
         [
@@ -484,3 +558,91 @@ def test_frozen_cli_validates_bytes_before_importing_entry(
     result = json.loads(completed.stdout)
     assert result["status"] == ("BLOCKED" if tampered else "STATUS")
     assert result["machine_code"] == ("UNTRUSTED_RUNTIME_COMMAND" if tampered else "OK")
+
+
+@pytest.mark.usefixtures("active_runtime_namespace")
+@pytest.mark.parametrize("action", ["start", "resume"])
+def test_managed_supervisor_shares_canonical_ownership_through_bubblewrap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    import subprocess
+
+    from tools import agent_epic_loop as loop
+    from tools.agent_epic_session import Session
+
+    root, state, _ = frozen_managed(tmp_path, monkeypatch)
+    if action == "resume":
+        entry.control(root, state, "PAUSED")
+    initial_generation = (
+        guards.private_json(state / "launch-control.json")["generation"]
+        if action == "resume"
+        else -1
+    )
+    monkeypatch.setattr(
+        loop.CommandRuntimeAdapter,
+        "_bubblewrap",
+        staticmethod(lambda: Path("/usr/bin/bwrap")),
+    )
+    probed_readiness(monkeypatch)
+    store = loop.CheckpointStore(state, root)
+    saved = store.load()
+    assert saved is not None
+    # An already completed synthetic cursor reaches the actual installed Session
+    # without remote services or any effect authority exercised by the fixture.
+    session = Session(
+        store=store,
+        adapter=lambda *args: pytest.fail("unexpected direct effect"),
+        select=lambda: pytest.fail("unexpected queue read"),
+        prepare=lambda *args: pytest.fail("unexpected successor"),
+        reconcile_plan=lambda *args: "UNKNOWN",
+        final_resume=lambda *args: pytest.fail("unexpected final effect"),
+        maximum_tasks=1,
+    )
+    session.control.save(
+        "cursor",
+        {
+            "schema_version": "1.0",
+            **{key: saved[key] for key in ("repository", "epic", "policy_sha")},
+            "seed_task": saved["task"],
+            "current_task": saved["task"],
+            "completed_tasks": [],
+            "pending_task": None,
+            "mode": "DONE",
+        },
+    )
+    observed: list[str] = []
+    readiness = install.readiness
+    original_popen = subprocess.Popen
+
+    def reject_direct(label: str) -> None:
+        with pytest.raises(loop.LoopError, match="RUNNER_LOCKED"):
+            session.resume()
+        observed.append(label)
+
+    def validate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        reject_direct("validation")
+        report = readiness(*args, **kwargs)
+        assert report["status"] == "READY", report
+        return report
+
+    def launch(*args: Any, **kwargs: Any) -> Any:
+        if args[0][0] != "/usr/bin/bwrap":
+            return original_popen(*args, **kwargs)
+        reject_direct("child launch")
+        child = original_popen(*args, **kwargs)
+        reject_direct("child running")
+        return child
+
+    monkeypatch.setattr(install, "readiness", validate)
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    before_checkpoint = store.path.read_bytes()
+    report = entry.run(root, state, action)
+    assert store.path.read_bytes() == before_checkpoint
+    assert (
+        guards.private_json(state / "launch-control.json")["generation"]
+        == initial_generation + 1
+    )
+    assert report["status"] == "ROADMAP_DONE"
+    assert report["machine_code"] == "ALREADY_COMPLETED"
+    assert observed == ["validation", "child launch", "child running"]
+    assert session.resume()["status"] == "ROADMAP_DONE"

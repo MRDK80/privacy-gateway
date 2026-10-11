@@ -281,7 +281,13 @@ Discover/start/resume take repository, epic and registry; every action takes
 state and repository root through the frozen entry. Start is for a new launch;
 resume is for the same existing run after fresh readiness/lifecycle and
 read-only reconciliation. The entry lock prevents competing entry runners;
-the existing session lock protects direct supervisor invocation too. UNKNOWN
+the entry also acquires the canonical session lock before validation,
+reconciliation or control writes and holds it through bounded child completion.
+The installed Bubblewrap supervisor inherits the locked descriptor and verifies
+its canonical private inode and exact lock ownership. It consumes the internal
+marker and prevents descriptor inheritance into effect/model subprocesses;
+closing its duplicate does not unlock the parent-held lock. Direct invocation
+uses that same lock, so no competing supervisor can enter during launch. UNKNOWN
 pending state is preserved and blocks another supervisor. Execution uses the
 existing bounded Bubblewrap epic adapter and its fixed approved argv.
 
@@ -294,6 +300,12 @@ legacy config downgrade or direct child-task entry cannot clear it. Read-only
 reconciliation does not renew authority or reset pending/attempts/receipts.
 Already in-flight effects may have applied; no rollback, cross-file transaction,
 instant cancellation or additional crash durability is promised.
+
+The frozen entry requires a valid mandate lifecycle for every action, including
+status, pause and stop. Expiry/revocation therefore blocks those requests too;
+a rejected request does not establish a new control state. Use existing
+read-only reconciliation under its own guards and seek owner disposition of
+expired/revoked authority before continuation.
 
 Status returns bounded phase/task/control identifiers and canonical issue/PR
 links. Process-lock occupancy or exit zero alone does not establish verified

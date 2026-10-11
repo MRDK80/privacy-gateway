@@ -310,7 +310,10 @@ def run(root: Path, state: Path, action: str) -> dict[str, Any]:
     if action not in {"start", "resume"}:
         raise guards.DeploymentError("ENTRY_ACTION_INVALID")
     state = guards.secure_directory(state, root)
-    with loop.RunnerLock(_lock_directory(state, root, "entry-run")):
+    with (
+        loop.RunnerLock(_lock_directory(state, root, "entry-run")),
+        loop.RunnerLock(_lock_directory(state, root, "session-control")) as supervisor,
+    ):
         guards.managed_launch_guard(state, root, read_only=True, allow_initial=True)
         existing = state / "launch-control.json"
         before = guards.private_json(existing) if existing.exists() else None
@@ -355,6 +358,7 @@ def run(root: Path, state: Path, action: str) -> dict[str, Any]:
             "RUNNING",
             expected_generation=before["generation"] if before is not None else -1,
         )
+        adapter.supervisor_lock = supervisor
         result = adapter.resume_epic()
         output = status(root, state)
         mode = output["control_state"]
