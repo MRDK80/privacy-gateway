@@ -1,7 +1,8 @@
 # ADR-301: bounded redacted session handoff
 
-Status: design candidate. Task301, epic294. Owner approval is required before
-production; no runtime installation/activation/mandate or main merge here.
+Status: accepted. Task301, epic294. Independent design review PASS; owner
+approved implementation on 2026-10-11. No runtime installation, activation,
+mandate or main merge is granted here.
 This task is structurally independent of300 (dependencies295/298 are closed).
 
 ## Opt-in and compatibility
