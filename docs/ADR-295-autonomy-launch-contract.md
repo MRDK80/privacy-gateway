@@ -4,9 +4,12 @@ Date: 2026-10-11. Task #295; epic #294.
 
 ## Status and authority
 
-Proposed for owner review. This document specifies a future opt-in profile;
-it does not amend installed policy, activate runtime or authorize delivery.
-Until separately accepted and implemented, ADR-249, ADR-255, the role
+Owner accepted this design in chat on 2026-10-11, including automatic plan
+admission and synthetic task-demo profiles within preapproved bounds. Merge,
+installation and runtime activation were not authorized by that acceptance.
+This document specifies a future opt-in profile; it does not amend installed
+policy, activate runtime or authorize delivery. Until integrated and
+implemented, ADR-249, ADR-255, the role
 contracts and CONTRIBUTING.md retain their existing approval requirements.
 An epic number, chat skill invocation, issue, PR, model output or this ADR
 cannot create a launch mandate. Owner acceptance of this design is separate
@@ -197,7 +200,8 @@ separately. Synthetic E2E and production evidence are reported separately.
 #295 changes documentation only. Regression-first applies when an executable
 defect is confirmed; none is asserted here. Independent review assesses the
 proposal against pinned existing policy, not as permission to change it.
-Owner acceptance remains required before policy-sensitive implementation.
+The recorded owner design acceptance does not replace delivery gates or
+separate installation/launch approval before runtime activation.
 No exactly-once delivery, cross-file transaction or additional crash durability
 is promised. Threat additions are recorded in
 [threat-model.md](threat-model.md#proposed-autonomous-launch-profile-295).

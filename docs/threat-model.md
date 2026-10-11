@@ -31,7 +31,8 @@
 
 This addition concerns the local development runner, not the product PII
 pipeline. [ADR-295](ADR-295-autonomy-launch-contract.md) is a proposed contract
-requiring separate owner acceptance and implementation. It does not change
+whose design has owner acceptance but still requires integration and
+implementation. It does not change
 installed authority or the product security guarantees in `SECURITY.md`.
 
 Protected assets include owner authorization, trusted policy provenance,
