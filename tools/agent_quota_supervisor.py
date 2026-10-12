@@ -29,7 +29,7 @@ def prepare(
     state: Path, root: Path, config: dict[str, Any]
 ) -> tuple[dict[str, Any], bytes]:
     """Generate an inactive exact installation candidate without host effects."""
-    if config.get("schema_version") != "5.0":
+    if not guards.quota_enabled(config):
         raise quota.QuotaError("QUOTA_PROFILE_REQUIRED")
     mandate = guards.private_json(state / "mandate.json")
     owner = quota.profile(guards.quota_profile_guard(state, config, mandate))
@@ -80,7 +80,7 @@ def prepare(
 
 
 def readiness(state: Path, root: Path, config: dict[str, Any]) -> None:
-    if config.get("schema_version") != "5.0":
+    if not guards.quota_enabled(config):
         return
     mandate = guards.private_json(state / "mandate.json")
     adapter = loop.CommandRuntimeAdapter.load(
@@ -489,7 +489,7 @@ def cancel_owned(state: Path, root: Path) -> dict[str, str]:
     state = guards.secure_directory(state, root)
     root = root.resolve()
     config = guards.private_json(state / "epic-runtime.json")
-    if config.get("schema_version") != "5.0":
+    if not guards.quota_enabled(config):
         return {"status": "NO_OP", "machine_code": "QUOTA_NOT_ENABLED"}
     existing = state.glob("quota-arm-*.json")
     first = next(existing, None)
@@ -611,7 +611,7 @@ def run(session: Any, *, wake: bool, wake_arm_id: str | None = None) -> dict[str
     """The original entry and persistent callback share one verified supervisor lock."""
     from tools import agent_epic_entry as entry
 
-    if session.config.get("schema_version") != "5.0":
+    if not guards.quota_enabled(session.config):
         if wake:
             raise quota.QuotaError("QUOTA_PROFILE_REQUIRED")
         return dict(session.resume())

@@ -805,10 +805,27 @@ class CheckpointStore:
 class RunnerLock:
     """Non-blocking process lock for one private epic state directory."""
 
+    _held: dict[Path, RunnerLock] = {}
+
     def __init__(self, directory: Path, *, inherited_fd: int | None = None) -> None:
         self.directory = directory.resolve()
         self._stream: BinaryIO | None = None
         self._inherited_fd = inherited_fd
+        self._owner_pid: int | None = None
+
+    @classmethod
+    def current_owned(cls, directory: Path) -> RunnerLock:
+        """Retrieve and verify this process's real held canonical lock."""
+        key = directory.resolve()
+        held = cls._held.get(key)
+        if held is None or held._owner_pid != os.getpid():
+            raise LoopError("LOCK_FAILED")
+        held.assert_owned(key)
+        return held
+
+    def _register(self) -> None:
+        self._owner_pid = os.getpid()
+        self._held[self.directory] = self
 
     def descriptor(self) -> int:
         if self._stream is None:
@@ -925,6 +942,7 @@ class RunnerLock:
         try:
             if self._inherited_fd is not None:
                 self._stream = self._adopt()
+                self._register()
                 return self
             self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             os.chmod(self.directory, 0o700)
@@ -940,9 +958,13 @@ class RunnerLock:
                 stream.close()
             raise LoopError("LOCK_FAILED") from error
         self._stream = stream
+        self._register()
         return self
 
     def __exit__(self, *_args: object) -> None:
+        if self._held.get(self.directory) is self:
+            del self._held[self.directory]
+        self._owner_pid = None
         if self._stream is not None:
             # Closing the child's duplicate must not unlock the parent-held flock.
             if self._inherited_fd is None:

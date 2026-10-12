@@ -201,6 +201,7 @@ def validate_handover(
     root: Path,
     approved_digest: str,
     github: GitHubClient,
+    verify_dirty_recovery: Callable[[workflow.TaskContract], None] | None = None,
 ) -> ValidatedHandover:
     """Validate authority, scope and current Git identity without side effects."""
     if not isinstance(value, Mapping) or not (
@@ -347,7 +348,8 @@ def validate_handover(
     top = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
     if top != root.resolve() or _repository_identity(root) != repository:
         raise HandoverError("REPOSITORY_MISMATCH")
-    if _git(root, "status", "--porcelain=v1", "-z"):
+    dirty = bool(_git(root, "status", "--porcelain=v1", "-z"))
+    if dirty and verify_dirty_recovery is None:
         raise HandoverError("DIRTY_WORKTREE")
     if _git(root, "branch", "--show-current") != head_ref:
         raise HandoverError("WRONG_BRANCH")
@@ -381,6 +383,11 @@ def validate_handover(
         raise HandoverError(error.machine_code) from error
     if contract.base_sha != base_sha:
         raise HandoverError("STALE_BASE")
+    if dirty:
+        # Only a trusted caller may prove exact completed-role recovery. The
+        # ordinary initial admission still requires a clean workspace.
+        assert verify_dirty_recovery is not None
+        verify_dirty_recovery(contract)
     return ValidatedHandover(repository, digest, contract)
 
 

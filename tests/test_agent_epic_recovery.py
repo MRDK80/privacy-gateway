@@ -339,3 +339,32 @@ def test_recovery_profile_cannot_bypass_rate_limit_pause(
         ).status
         == "PAUSED_RATE_LIMIT"
     )
+
+
+@pytest.mark.parametrize(
+    ("version", "approval", "marker", "expected"),
+    [
+        ("2.0", None, False, True),
+        ("3.0", None, False, False),
+        ("3.0", "sha256:" + "a" * 64, False, True),
+        ("3.0", None, True, True),
+    ],
+)
+def test_continuation_task_optional_recovery_keeps_marker_fail_closed(
+    tmp_path: Path, version: str, approval: str | None,
+    marker: bool, expected: bool,
+) -> None:
+    import json
+
+    from tools import agent_epic_recovery as recovery
+
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    path = state / "runtime-task.json"
+    path.write_text(json.dumps({
+        "schema_version": version, "approved_recovery_digest": approval,
+    }))
+    path.chmod(0o600)
+    if marker:
+        (state / "bootstrap-recovery.json").write_text("{}")
+    assert recovery.present(state) is expected

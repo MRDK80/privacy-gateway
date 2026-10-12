@@ -42,22 +42,27 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
 
 def epic_config_keys(config: dict[str, Any]) -> set[str]:
     version = config.get("schema_version")
-    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0"}:
+    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     keys = EPIC_CONFIG_KEYS | (
         {"approved_launch_digest"} if version != "1.0" else set()
     )
     return (
         keys
-        | ({"approved_planning_digest"} if version in {"3.0", "4.0", "5.0"} else set())
-        | ({"approved_wait_digest"} if version in {"4.0", "5.0"} else set())
-        | ({"approved_quota_digest"} if version == "5.0" else set())
+        | (
+            {"approved_planning_digest"}
+            if version in {"3.0", "4.0", "5.0", "6.0"}
+            else set()
+        )
+        | ({"approved_wait_digest"} if version in {"4.0", "5.0", "6.0"} else set())
+        | ({"approved_quota_digest"} if version in {"5.0", "6.0"} else set())
+        | ({"approved_continuation_digest"} if version == "6.0" else set())
     )
 
 
 def planning_enabled(config: Mapping[str, Any]) -> bool:
     return config.get("schema_version") == "3.0" or (
-        config.get("schema_version") in {"4.0", "5.0"}
+        config.get("schema_version") in {"4.0", "5.0", "6.0"}
         and config.get("approved_planning_digest") is not None
     )
 
@@ -66,7 +71,7 @@ def wait_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Validate the closed owner profile before importing candidate code."""
-    if config.get("schema_version") not in {"4.0", "5.0"}:
+    if config.get("schema_version") not in {"4.0", "5.0", "6.0"}:
         return None
     path = state / "wait-profile.json"
     owner = private_json(path)
@@ -230,11 +235,27 @@ def quota_profile_document(value: Any) -> dict[str, Any]:
     return value
 
 
+def recovery_config_enabled(config: Mapping[str, Any]) -> bool:
+    """Task3 opts into recovery only with a binding; task2 behavior is unchanged."""
+    return config.get("schema_version") == "2.0" or (
+        config.get("schema_version") == "3.0"
+        and config.get("approved_recovery_digest") is not None
+    )
+
+
+def quota_enabled(config: Mapping[str, Any]) -> bool:
+    """Config6 composes separately approved quota only through a nonnull binding."""
+    return config.get("schema_version") == "5.0" or (
+        config.get("schema_version") == "6.0"
+        and config.get("approved_quota_digest") is not None
+    )
+
+
 def quota_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Bind the opt-in quota document before importing the pinned runtime."""
-    if config.get("schema_version") != "5.0":
+    if not quota_enabled(config):
         return None
     owner = quota_profile_document(private_json(state / "quota-profile.json"))
     expected = {
@@ -271,6 +292,140 @@ def quota_profile_guard(
         raise DeploymentError("QUOTA_APPROVAL_MISMATCH")
     if (state / "quota-profile.json").stat().st_nlink != 1:
         raise DeploymentError("UNSAFE_RUNTIME_CONFIG")
+    return owner
+
+
+def role_backend_document(raw: Any) -> dict[str, Any]:
+    """Closed source/settings validation usable before candidate imports."""
+    keys = {"schema_version", "source", "model", "original_reasoning",
+            "repeat_reasoning_levels"}
+    if (
+        not isinstance(raw, dict) or set(raw) != keys
+        or raw["schema_version"] != "1.0"
+        or raw["original_reasoning"] != "low"
+        or raw["repeat_reasoning_levels"] != ["medium", "high"]
+        or not isinstance(raw["model"], str) or not 1 <= len(raw["model"]) <= 128
+        or any(ord(c) < 32 or ord(c) == 127 for c in raw["model"])
+    ):
+        raise DeploymentError("CONTINUATION_BACKEND_INVALID")
+    source = raw["source"]
+    if (
+        not isinstance(source, dict) or set(source) != {
+            "executable", "executable_sha256", "version_digest",
+            "request_timeout_seconds",
+        }
+        or not isinstance(source["executable"], str)
+        or not source["executable"].startswith("/")
+        or any(c in source["executable"] for c in "\r\n\x00")
+        or type(source["request_timeout_seconds"]) is not int
+        or not 1 <= source["request_timeout_seconds"] <= 120
+        or any(
+            not isinstance(source[k], str)
+            or re.fullmatch(r"[0-9a-f]{64}", source[k]) is None
+            for k in ("executable_sha256", "version_digest")
+        )
+    ):
+        raise DeploymentError("CONTINUATION_BACKEND_INVALID")
+    return raw
+
+
+def role_backend_guard(
+    seed: Path, owner: dict[str, Any], quota_owner: dict[str, Any] | None
+) -> dict[str, Any]:
+    path = seed / "role-backend.json"
+    value = role_backend_document(private_json(path))
+    if (path.stat().st_nlink != 1
+        or canonical_digest(value) != "sha256:" + owner["backend_digest"]
+        or (quota_owner is not None and value["source"] != quota_owner["source"])):
+        raise DeploymentError("CONTINUATION_BACKEND_CHANGED")
+    return value
+
+
+
+def continuation_transport_guard(raw: dict[str, Any]) -> None:
+    """Prove the supported pinned native executable without inference."""
+    source = role_backend_document(raw)["source"]
+    path = Path(source["executable"])
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+        or info.st_mode & 0o022 or not os.access(path, os.X_OK)
+        or any(parent.is_symlink() for parent in path.parents)
+        or hashlib.sha256(path.read_bytes()).hexdigest()
+        != source["executable_sha256"]
+    ):
+        raise DeploymentError("CONTINUATION_SOURCE_CHANGED")
+    version = _quota_read([str(path), "--version"]).strip()
+    if (
+        version != b"codex-cli 0.157.1"
+        or hashlib.sha256(version).hexdigest() != source["version_digest"]
+    ):
+        raise DeploymentError("CONTINUATION_SOURCE_UNSUPPORTED")
+
+def continuation_profile_guard(
+    state: Path, config: dict[str, Any], mandate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Closed owner profile binding before pinned runtime imports."""
+    version = config.get("schema_version")
+    if version not in {"3.0", "6.0"} or "approved_continuation_digest" not in config:
+        return None
+    seed = managed_state(state)
+    epic = config if version == "6.0" else private_json(seed / "epic-runtime.json")
+    if epic.get("schema_version") != "6.0" or config.get(
+        "approved_continuation_digest"
+    ) != epic.get("approved_continuation_digest"):
+        raise DeploymentError("CONTINUATION_APPROVAL_MISMATCH")
+    owner = private_json(seed / "continuation-profile.json")
+    keys = {
+        "schema_version",
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+        "backend_digest",
+        "limits",
+    }
+    if (
+        set(owner) != keys
+        or owner.get("schema_version") != "1.0"
+        or canonical_digest(owner) != epic.get("approved_continuation_digest")
+        or owner.get("mandate_digest") != epic.get("approved_mandate_digest")
+        or any(
+            owner.get(k) != mandate.get(k)
+            for k in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+        or not isinstance(owner.get("backend_digest"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", owner["backend_digest"]) is None
+        or (seed / "continuation-profile.json").stat().st_nlink != 1
+    ):
+        raise DeploymentError("CONTINUATION_APPROVAL_MISMATCH")
+    maxima = {
+        "threshold_permille": 950,
+        "max_handoffs": 32,
+        "max_prompt_bytes": 262144,
+        "max_record_bytes": 65536,
+        "max_findings": 128,
+    }
+    limits = owner["limits"]
+    if (
+        not isinstance(limits, dict)
+        or set(limits) != set(maxima)
+        or any(
+            type(limits[k]) is not int or not 1 <= limits[k] <= maximum
+            for k, maximum in maxima.items()
+        )
+    ):
+        raise DeploymentError("CONTINUATION_PROFILE_INVALID")
+    quota_owner = quota_profile_guard(seed, epic, mandate)
+    role_backend_guard(seed, owner, quota_owner)
     return owner
 
 
@@ -547,7 +702,7 @@ def quota_deployment_guard(
     command: tuple[str, ...] | None,
 ) -> None:
     """Readiness reads only pinned bytes/native metadata, never candidate Python."""
-    if config.get("schema_version") != "5.0":
+    if not quota_enabled(config):
         return
     owner = quota_profile_guard(state, config, mandate)
     assert owner is not None
@@ -770,6 +925,7 @@ def managed_launch_guard(
         "3.0",
         "4.0",
         "5.0",
+        "6.0",
     }
     if not present and not managed:
         return
@@ -810,6 +966,7 @@ def managed_launch_guard(
     planning_profile_guard(seed, config, mandate)
     wait_profile_guard(seed, config, mandate)
     quota_profile_guard(seed, config, mandate)
+    continuation_profile_guard(seed, config, mandate)
     if (
         any(
             value[key] != mandate.get(key)
@@ -1074,10 +1231,14 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
 def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     state = secure_directory(state, root)
     config = private_json(state / "runtime-task.json")
-    recovery_profile = config.get("schema_version") == "2.0"
+    recovery_profile = config.get("schema_version") in {"2.0", "3.0"}
     if set(config) != CONFIG_KEYS | (
         {"approved_recovery_digest"} if recovery_profile else set()
-    ) or config["schema_version"] not in {"1.0", "2.0"}:
+    ) | (
+        {"approved_continuation_digest"}
+        if config.get("schema_version") == "3.0"
+        else set()
+    ) or config["schema_version"] not in {"1.0", "2.0", "3.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     if (
         recovery_profile
@@ -1093,6 +1254,7 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
         raise DeploymentError("RECOVERY_PROFILE_REQUIRED")
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=False)
+    continuation_profile_guard(state, config, mandate)
     managed_launch_guard(state, root, read_only=read_only)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -1152,17 +1314,26 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
         for key in ("repository", "epic", "task", "base_ref", "base_sha", "head_ref")
     ):
         raise DeploymentError("HANDOVER_IDENTITY_MISMATCH")
+    from tools.agent_epic_wait_scope import Scope
+
+    wait_scope = Scope.inherited(state, root, read_only=read_only)
+    role_options: dict[str, Any] = {}
+    if config.get("schema_version") == "3.0":
+        seed = managed_state(state)
+        epic_config = private_json(seed / "epic-runtime.json")
+        role_options["continuation_state"] = seed
+        if quota_enabled(epic_config):
+            role_options.update(quota_state=seed, wait_scope=wait_scope)
     reviewed = ReviewedWorkflow(
         root=root,
         directory=state,
         value=task_handover,
         approved_digest=config["approved_handover_digest"],
         adapter=codex_role_adapter(
-            policy_root=policy, root=root, policy_sha=current["policy_sha"]
+            policy_root=policy, root=root, policy_sha=current["policy_sha"],
+            **role_options,
         ),
     )
-    from tools.agent_epic_wait_scope import Scope
-
     engine = TaskPhaseRuntime(
         store=loop.CheckpointStore(state, root),
         authority=authority,
@@ -1170,10 +1341,11 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
         demo_plan=lambda: private_json(state / "demo-plan.json"),
         demo_completion=lambda: private_json(state / "demo-completion.json"),
         approved_order=tuple(config["approved_order"]),
-        wait_scope=Scope.inherited(state, root, read_only=read_only),
+        wait_scope=wait_scope,
     )
     engine.bootstrap = BootstrapTask(engine, reviewed, authority)
-    if recovery_profile:
+    from tools import agent_epic_recovery
+    if recovery_config_enabled(config) or agent_epic_recovery.present(state):
         from tools.agent_epic_recovery import BootstrapRecovery
 
         def approved_recovery() -> str | None:
@@ -1190,7 +1362,7 @@ def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
     state = secure_directory(state, root)
     if (state / "bootstrap-recovery.json").exists() or (
         (state / "runtime-task.json").exists()
-        and private_json(state / "runtime-task.json").get("schema_version") == "2.0"
+        and recovery_config_enabled(private_json(state / "runtime-task.json"))
     ):
         raise DeploymentError("RECOVERY_ONE_TASK_REQUIRED")
     config = private_json(state / "epic-runtime.json")
@@ -1210,6 +1382,7 @@ def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
     planning_profile_guard(state, config, mandate)
     wait_profile_guard(state, config, mandate)
     quota_profile_guard(state, config, mandate)
+    continuation_profile_guard(state, config, mandate)
     managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -1248,6 +1421,7 @@ def build_entry(state: Path, root: Path) -> Any:
     planning_profile_guard(state, config, mandate)
     wait_profile_guard(state, config, mandate)
     quota_profile_guard(state, config, mandate)
+    continuation_profile_guard(state, config, mandate)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
@@ -1266,7 +1440,7 @@ def build_quota_cleanup(state: Path, root: Path) -> Any:
     """Verify pinned bytes for narrow cleanup without granting expired work."""
     state = secure_directory(state, root)
     config = private_json(state / "epic-runtime.json")
-    if config.get("schema_version") != "5.0" or set(config) != epic_config_keys(config):
+    if not quota_enabled(config) or set(config) != epic_config_keys(config):
         raise DeploymentError("QUOTA_PROFILE_REQUIRED")
     managed_launch_guard(state, root, read_only=True)
     mandate = private_json(state / "mandate.json")
@@ -1466,7 +1640,7 @@ def main() -> int:
                 args.repository_root,
                 wake=args.command == "quota_wake",
             )
-            if session.config.get("schema_version") == "5.0":
+            if quota_enabled(session.config):
                 from tools.agent_quota_supervisor import run as quota_run
 
                 result = quota_run(

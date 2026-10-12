@@ -24,7 +24,7 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     state = guards.secure_directory(state, root)
     installed, _ = install._validate(root, installation)
     config = guards.private_json(state / "epic-runtime.json")
-    if config.get("schema_version") not in {"2.0", "3.0", "4.0", "5.0"} or set(
+    if config.get("schema_version") not in {"2.0", "3.0", "4.0", "5.0", "6.0"} or set(
         config
     ) != guards.epic_config_keys(config):
         raise guards.DeploymentError("LAUNCH_PROFILE_REQUIRED")
@@ -33,6 +33,7 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     guards.planning_profile_guard(state, config, mandate)
     guards.wait_profile_guard(state, config, mandate)
     guards.quota_profile_guard(state, config, mandate)
+    guards.continuation_profile_guard(state, config, mandate)
     if (
         installed["repository"] != mandate["repository"]
         or installed["policy_sha"] != mandate["policy_sha"]
@@ -405,7 +406,7 @@ def execute(
     if action in {"pause", "stop"}:
         control(root, state, "PAUSED" if action == "pause" else "STOPPED")
         config = guards.private_json(state / "epic-runtime.json")
-        if config.get("schema_version") == "5.0":
+        if guards.quota_enabled(config):
             from tools.agent_quota_supervisor import cancel_owned
 
             cancel_owned(state, root)

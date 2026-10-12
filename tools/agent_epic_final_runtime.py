@@ -234,9 +234,10 @@ class FinalRuntime:
         key: str,
     ) -> dict[str, Any]:
         from tools import agent_quota_role as transport
+        from tools.agent_continuation_backend import SettingsAdapter
         from tools.agent_quota_wait import bare_digest
 
-        if not isinstance(self.adapter, transport.CommandAdapter):
+        if not isinstance(self.adapter, (transport.CommandAdapter, SettingsAdapter)):
             return self.adapter.review(review, policy, key)
         store = workflow.StateStore(self.directory / "final-role-reservations")
         if store.load(key) is not None:
@@ -261,11 +262,14 @@ class FinalRuntime:
         try:
             return self.adapter.review(review, policy, key)
         except loop.QuotaPaused as error:
+            backend_digest = self.adapter.backend_digest
+            if not isinstance(backend_digest, str):
+                raise loop.PhaseBlocked("FINAL_ROLE_OUTCOME_UNKNOWN") from None
             event = transport.validate_event(
                 error.interruption,
                 role="controller",
                 invocation_digest=invocation,
-                backend_digest=self.adapter.backend_digest,
+                backend_digest=backend_digest,
             )
             store.save(
                 key,
@@ -292,9 +296,10 @@ class FinalRuntime:
         if saved:
             return saved
         from tools import agent_quota_role as transport
+        from tools.agent_continuation_backend import SettingsAdapter
 
         if (
-            isinstance(self.adapter, transport.CommandAdapter)
+            isinstance(self.adapter, (transport.CommandAdapter, SettingsAdapter))
             and workflow.StateStore(self.directory / "final-role-reservations").load(
                 key
             )
