@@ -416,6 +416,8 @@ def _run_codex(
     invocation: str | None = None,
     backend_digest: str | None = None,
     guard: Any = None,
+    reasoning: str | None = None,
+    settings_observed: dict[str, Any] | None = None,
 ) -> None:
     argv = [
         *command,
@@ -501,11 +503,17 @@ def _run_codex(
             raise AdapterError("INVALID_REQUEST")
         from tools import agent_role_app_server as roles
 
+        settings_options: dict[str, Any] = {}
+        if settings_observed is not None:
+            settings_options = {
+                "reasoning": reasoning, "on_settings": settings_observed.update
+            }
         payload = roles.run(
             argv, role=role, workdir=workdir, prompt=prompt,
             schema=json.loads(schema_path.read_text()), model=model, timeout=timeout,
             output_limit=DEFAULT_OUTPUT_LIMIT, invocation=invocation,
             backend_digest=backend_digest, environment=environment, guard=guard,
+            **settings_options,
         )
         output_path.write_text(json.dumps(payload), encoding="utf-8")
         return
@@ -805,7 +813,57 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             _pinned(approved_owner["source"])
         quota_guard()
         args.codex_command = [quota_owner["source"]["executable"]]
-    if quota_owner is None:
+    continuation_backend: dict[str, Any] | None = None
+    observed_settings: dict[str, Any] = {}
+    reasoning: str | None = None
+    continuation_state = getattr(args, "continuation_state", None)
+    if continuation_state is not None:
+        from tools import agent_continuation_backend as continuation
+        from tools import agent_epic_runtime_cli as runtime_guards
+        from tools.agent_quota_source import _pinned
+        from tools.agent_quota_wait import bare_digest
+
+        state = runtime_guards.secure_directory(continuation_state, root)
+        config = runtime_guards.private_json(state / "epic-runtime.json")
+        mandate = runtime_guards.private_json(state / "mandate.json")
+        approved_profile = runtime_guards.continuation_profile_guard(
+            state, config, mandate
+        )
+        if config.get("schema_version") != "6.0" or approved_profile is None:
+            raise AdapterError("INVALID_REQUEST")
+        continuation_backend = continuation.document(
+            runtime_guards.role_backend_guard(state, approved_profile, quota_owner)
+        )
+        approved_backend = dict(continuation_backend)
+        parent_guard = quota_guard
+
+        def quota_guard() -> None:
+            if parent_guard is not None:
+                parent_guard()
+            runtime_guards.managed_launch_guard(state, root)
+            fresh_config = runtime_guards.private_json(state / "epic-runtime.json")
+            fresh_mandate = runtime_guards.private_json(state / "mandate.json")
+            fresh_profile = runtime_guards.continuation_profile_guard(
+                state, fresh_config, fresh_mandate
+            )
+            if (fresh_config != config or fresh_mandate != mandate
+                or fresh_profile != approved_profile
+                or runtime_guards.role_backend_guard(
+                    state, approved_profile, quota_owner
+                ) != approved_backend):
+                raise AdapterError("INVALID_REQUEST")
+            _pinned(approved_backend["source"])
+        iteration = request.get("repair_iteration")
+        if type(iteration) is not int or not 0 <= iteration <= 2:
+            raise AdapterError("INVALID_REQUEST")
+        reasoning = ["low", "medium", "high"][iteration]
+        args.model = approved_backend["model"]
+        args.codex_command = [approved_backend["source"]["executable"]]
+        quota_guard()
+    native_source = (continuation_backend["source"]
+                     if continuation_backend is not None
+                     else quota_owner["source"] if quota_owner is not None else None)
+    if native_source is None:
         _assert_version(args.codex_command, root)
     else:
         import hashlib
@@ -820,7 +878,7 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         if (
             version.returncode != 0
             or hashlib.sha256(version.stdout.strip()).hexdigest()
-            != quota_owner["source"]["version_digest"]
+            != native_source["version_digest"]
         ):
             raise AdapterError("INVALID_REQUEST")
 
@@ -838,6 +896,11 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             _materialize_bundle(request, workdir)
         else:
             workdir = root
+        settings_call: dict[str, Any] = {}
+        if continuation_backend is not None:
+            settings_call = {
+                "reasoning": reasoning, "settings_observed": observed_settings
+            }
         _run_codex(
             command=args.codex_command,
             role=args.role,
@@ -849,14 +912,15 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             timeout=args.timeout,
             allowed_paths=executor_paths,
             scratch_path=scratch_path,
+            **settings_call,
             **(
                 {
                     "app_server": True,
                     "invocation": bare_digest(request),
-                    "backend_digest": bare_digest(quota_owner["source"]),
+                    "backend_digest": bare_digest(native_source),
                     "guard": quota_guard,
                 }
-                if quota_owner is not None else {}
+                if native_source is not None else {}
             ),
         )
         payload = _read_payload(output_path, args.output_limit)
@@ -867,6 +931,15 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
     payload = {str(key): item for key, item in pruned.items()}
     payload = _apply_authority(payload, args.role, request)
     validate(payload, schema)
+    if continuation_backend is not None:
+        from tools.agent_continuation_backend import completed_receipt
+
+        receipt, terminal = completed_receipt(
+            continuation_backend, observed_settings, role=args.role,
+            invocation=bare_digest(request), output=payload,
+        )
+        return {"role_output": payload, "settings_receipt": receipt,
+                "terminal_fact": terminal}
     return payload
 
 
@@ -879,6 +952,7 @@ def _parser() -> argparse.ArgumentParser:
         default=["codex"],
         help='JSON array invoking the Codex CLI, e.g. ["codex"]',
     )
+    parser.add_argument("--continuation-state", type=Path)
     parser.add_argument("--quota-profile", type=Path)
     parser.add_argument("--approved-quota-digest")
     parser.add_argument("--model", default=None)

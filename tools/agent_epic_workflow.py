@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ def codex_role_adapter(
     root: Path,
     policy_sha: str,
     quota_state: Path | None = None,
+    continuation_state: Path | None = None,
     wait_scope: Any = None,
 ) -> workflow.CommandAdapter:
     """Use only an owner-installed policy copy, never task checkout code."""
@@ -103,6 +105,56 @@ def codex_role_adapter(
         for role in ("executor", "controller")
     ]
     commands[1] += ("--input-limit", "1000000")
+    continuation_profile: dict[str, Any] | None = None
+    continuation_backend: dict[str, Any] | None = None
+    continuation_guard: Any = None
+    if continuation_state is not None:
+        from tools import agent_epic_runtime_cli as guards
+        from tools.agent_quota_source import _pinned
+
+        seed = guards.secure_directory(continuation_state, root)
+        continuation_config = guards.private_json(seed / "epic-runtime.json")
+        continuation_mandate = guards.private_json(seed / "mandate.json")
+        continuation_profile = guards.continuation_profile_guard(
+            seed, continuation_config, continuation_mandate
+        )
+        if continuation_profile is None:
+            raise loop.LoopError("CONTINUATION_PROFILE_REQUIRED")
+        continuation_backend = guards.role_backend_guard(
+            seed, continuation_profile,
+            guards.quota_profile_guard(seed, continuation_config, continuation_mandate),
+        )
+
+        def continuation_guard() -> None:
+            guards.managed_launch_guard(seed, root)
+            fresh_config = guards.private_json(seed / "epic-runtime.json")
+            fresh_mandate = guards.private_json(seed / "mandate.json")
+            fresh_profile = guards.continuation_profile_guard(
+                seed, fresh_config, fresh_mandate
+            )
+            if (fresh_config != continuation_config
+                or fresh_mandate != continuation_mandate
+                or fresh_profile != continuation_profile
+                or guards.role_backend_guard(seed, continuation_profile, None)
+                != continuation_backend):
+                raise loop.LoopError("CONTINUATION_BINDING_CHANGED")
+            _pinned(continuation_backend["source"])
+        guards.continuation_transport_guard(continuation_backend)
+        continuation_guard()
+        for index in range(2):
+            commands[index] += ("--continuation-state", str(seed))
+
+    def continued(adapter: workflow.CommandAdapter) -> workflow.CommandAdapter:
+        if continuation_profile is None:
+            return adapter
+        assert continuation_backend is not None and continuation_state is not None
+        from tools.agent_continuation_backend import SettingsAdapter
+
+        return SettingsAdapter(
+            adapter, continuation_backend, continuation_profile,
+            continuation_state, continuation_guard,
+        )
+
     if quota_state is not None:
         from tools import agent_epic_runtime_cli as guards
         from tools import agent_quota as quota
@@ -110,7 +162,7 @@ def codex_role_adapter(
 
         state = guards.secure_directory(quota_state, root)
         config = guards.private_json(state / "epic-runtime.json")
-        if config.get("schema_version") != "5.0":
+        if not guards.quota_enabled(config):
             raise loop.LoopError("QUOTA_PROFILE_REQUIRED")
         mandate = guards.private_json(state / "mandate.json")
         owner_profile = quota.profile(
@@ -211,7 +263,7 @@ def codex_role_adapter(
                 "--approved-quota-digest",
                 config["approved_quota_digest"],
             )
-        return transport.CommandAdapter(
+        return continued(transport.CommandAdapter(
             commands[0],
             commands[1],
             root=root,
@@ -220,7 +272,22 @@ def codex_role_adapter(
             backend_digest=bare_digest(owner_profile["source"]),
             guard=guard,
             on_interruption=on_interruption,
+        ))
+    if continuation_profile is not None:
+        from tools.agent_quota_role import CommandAdapter
+
+        def unsupported_quota(event: dict[str, Any]) -> None:
+            raise workflow.OrchestrationError("ROLE_OUTCOME_UNKNOWN")
+
+        assert continuation_backend is not None
+        fixed = CommandAdapter(
+            commands[0], commands[1], root=root, timeout_seconds=3600,
+            output_limit=200_000,
+            backend_digest=bare_digest(continuation_backend["source"]),
+            guard=continuation_guard, on_interruption=unsupported_quota,
         )
+        fixed.quota_resume_enabled = False
+        return continued(fixed)
     return workflow.CommandAdapter(
         commands[0], commands[1], root=root, timeout_seconds=3600, output_limit=200_000
     )
@@ -273,13 +340,74 @@ class ReviewedWorkflow:
     def artifacts(self) -> Mapping[str, Any]:
         return self.artifact_store.load(self.key) or {}
 
+    @staticmethod
+    def _controller_ready(continuation: Any) -> bool:
+        saved = continuation.workflow.load(workflow._run_key(continuation.contract))
+        if (saved is None or saved.get("terminal") is not False
+            or saved.get("role_pending") is not None):
+            return False
+        continuation.validate_state(saved)
+        if continuation.resume_executor(saved) is None:
+            return False
+        continuation.verify_handoff(saved)
+        return True
+
+    def _validated(
+        self, ownership: ExitStack,
+    ) -> tuple[handover.ValidatedHandover, Any]:
+        from tools.agent_continuation_backend import SettingsAdapter
+
+        continuation: Any = None
+        enabled = isinstance(self.adapter, SettingsAdapter)
+
+        def open_continuation(contract: workflow.TaskContract) -> Any:
+            from tools.agent_continuation_runtime import Continuation
+
+            return ownership.enter_context(Continuation(
+                adapter=self.adapter, contract=contract,
+                directory=self.directory, root=self.root,
+            ))
+
+        def verify_dirty_recovery(contract: workflow.TaskContract) -> None:
+            nonlocal continuation
+            continuation = open_continuation(contract)
+            if not self._controller_ready(continuation):
+                raise handover.HandoverError("DIRTY_WORKTREE")
+
+        validated = handover.validate_handover(
+            self.value, root=self.root, approved_digest=self.approved_digest,
+            github=handover.GitHubCLI(),
+            verify_dirty_recovery=verify_dirty_recovery if enabled else None,
+        )
+        if enabled and continuation is None:
+            continuation = open_continuation(validated.contract)
+        # The caller retains canonical task ownership and the narrow role lock
+        # throughout proof validation and the subsequent workflow call.
+        return validated, continuation
+
     def controller_resume_available(self) -> bool:
+        from tools.agent_continuation_backend import SettingsAdapter
+
+        if isinstance(self.adapter, SettingsAdapter):
+            try:
+                with ExitStack() as ownership:
+                    validated, continuation = self._validated(ownership)
+                    if self._controller_ready(continuation):
+                        return True
+                    return (
+                        getattr(self.adapter, "quota_resume_enabled", False) is True
+                        and workflow.controller_resume_available(
+                            validated.contract, root=self.root,
+                            storage=continuation.workflow,
+                        )
+                    )
+            except (workflow.OrchestrationError, loop.LoopError,
+                    handover.HandoverError, OSError, ValueError, TypeError, KeyError):
+                return False
         if getattr(self.adapter, "quota_resume_enabled", False) is not True:
             return False
         validated = handover.validate_handover(
-            self.value,
-            root=self.root,
-            approved_digest=self.approved_digest,
+            self.value, root=self.root, approved_digest=self.approved_digest,
             github=handover.GitHubCLI(),
         )
         return workflow.controller_resume_available(
@@ -292,17 +420,19 @@ class ReviewedWorkflow:
         existing = self.artifacts()
         if existing:
             return existing
-        validated = handover.validate_handover(
-            self.value,
-            root=self.root,
-            approved_digest=self.approved_digest,
-            github=handover.GitHubCLI(),
-        )
+        with ExitStack() as ownership:
+            validated, continuation = self._validated(ownership)
+            return self._run_validated(validated, continuation)
+
+    def _run_validated(
+        self, validated: handover.ValidatedHandover, continuation: Any,
+    ) -> Mapping[str, Any]:
         captured: dict[str, Any] = {}
         delegate = self.adapter
         contract = validated.contract
 
         class CaptureAdapter:
+            continuation: Any = None
             backend_digest = getattr(delegate, "backend_digest", None)
             quota_resume_enabled = (
                 getattr(delegate, "quota_resume_enabled", False) is True
@@ -357,12 +487,15 @@ class ReviewedWorkflow:
                     captured.clear()
                 return value
 
+        wrapped = CaptureAdapter()
+        wrapped.continuation = continuation
         try:
             result = workflow.run(
                 contract,
                 root=self.root,
-                storage=workflow.StateStore(self.directory / "bounded-workflow"),
-                adapter=CaptureAdapter(),
+                storage=(continuation.workflow if continuation is not None else
+                         workflow.StateStore(self.directory / "bounded-workflow")),
+                adapter=wrapped,
             )
         except loop.QuotaPaused as error:
             saved = loop.CheckpointStore(self.directory, self.root).load()

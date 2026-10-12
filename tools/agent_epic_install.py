@@ -322,25 +322,32 @@ def readiness(
         filename = "epic-runtime.json" if epic else "runtime-task.json"
         config = guards.private_json(state / filename)
         keys = guards.EPIC_CONFIG_KEYS if epic else guards.CONFIG_KEYS
-        recovery = not epic and config.get("schema_version") == "2.0"
+        recovery = not epic and config.get("schema_version") in {"2.0", "3.0"}
         if epic and (
             (state / "bootstrap-recovery.json").exists()
             or (
                 (state / "runtime-task.json").exists()
-                and guards.private_json(state / "runtime-task.json").get(
-                    "schema_version"
+                and guards.recovery_config_enabled(
+                    guards.private_json(state / "runtime-task.json")
                 )
-                == "2.0"
             )
         ):
             raise InstallError("RECOVERY_ONE_TASK_REQUIRED")
         expected = (
             guards.epic_config_keys(config)
             if epic
-            else keys | ({"approved_recovery_digest"} if recovery else set())
+            else keys
+            | ({"approved_recovery_digest"} if recovery else set())
+            | (
+                {"approved_continuation_digest"}
+                if config.get("schema_version") == "3.0"
+                else set()
+            )
         )
         if set(config) != expected or config.get("schema_version") not in (
-            {"1.0", "2.0", "3.0", "4.0", "5.0"} if epic else {"1.0", "2.0"}
+            {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0"}
+            if epic
+            else {"1.0", "2.0", "3.0"}
         ):
             raise InstallError("RUNTIME_CONFIG_INVALID")
         if (
@@ -370,11 +377,21 @@ def readiness(
             raise InstallError("RECOVERY_PROFILE_REQUIRED")
         mandate = guards.private_json(state / "mandate.json")
         guards.bootstrap_authority(config, mandate, epic=epic)
+        if not epic:
+            guards.continuation_profile_guard(state, config, mandate)
+        if config.get("schema_version") in {"3.0", "6.0"}:
+            continuation = guards.continuation_profile_guard(state, config, mandate)
+            if continuation is not None:
+                seed = guards.managed_state(state)
+                guards.continuation_transport_guard(
+                    guards.role_backend_guard(seed, continuation, None)
+                )
         if epic:
             guards.planning_profile_guard(state, config, mandate)
             guards.wait_profile_guard(state, config, mandate)
             guards.quota_profile_guard(state, config, mandate)
-            if config.get("schema_version") == "5.0":
+            guards.continuation_profile_guard(state, config, mandate)
+            if guards.quota_enabled(config):
                 guards.quota_deployment_guard(
                     state, root, config, mandate, adapter.epic_command,
                 )

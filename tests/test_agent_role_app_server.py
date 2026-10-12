@@ -151,3 +151,44 @@ def test_blocked_prompt_pipe_obeys_transport_deadline(tmp_path: Path) -> None:
             guard=lambda: None,
         )
     assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize("effective", ["low", "high", None])
+def test_config6_requires_bound_effective_reasoning_before_turn(
+    tmp_path: Path, effective: str | None
+) -> None:
+    path = child(tmp_path)
+    s = path.read_text().replace(
+        '"instructionSources": [], "sandbox": {"type": "readOnly"}}})',
+        '"instructionSources": [], "model": "synthetic-model", '
+        + '"reasoningEffort": ' + repr(effective)
+        + ', "sandbox": {"type": "readOnly"}}})',
+    ).replace(
+        'read("turn/start")',
+        'assert start["params"]["config"]["model_reasoning_effort"] == "low"\n'
+        'turn = read("turn/start")\n'
+        'assert "effort" not in turn["params"] and "model" not in turn["params"]',
+    )
+    path.write_text(s)
+    observed: list[dict[str, object]] = []
+    def invoke() -> dict[str, object]:
+        return roles.run(
+            [sys.executable, str(path), "--ro-bind"], role="controller",
+            workdir=tmp_path, prompt="synthetic", schema={},
+            model="synthetic-model", timeout=3, output_limit=1000,
+            invocation="a" * 64, backend_digest="b" * 64,
+            environment=dict(os.environ), guard=lambda: None, reasoning="low",
+            on_settings=observed.append,
+        )
+    if effective == "low":
+        assert invoke() == {"synthetic": True}
+        assert len(observed) == 1
+        assert observed[0]["model"] == "synthetic-model"
+        assert observed[0]["reasoning"] == "low"
+        assert set(observed[0]) == {
+            "model", "reasoning", "thread_digest", "turn_digest"
+        }
+    else:
+        with pytest.raises(roles.RoleError, match="ROLE_EFFECTIVE_POLICY_UNVERIFIED"):
+            invoke()
+        assert not observed

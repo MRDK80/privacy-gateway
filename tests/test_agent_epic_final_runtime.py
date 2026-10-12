@@ -245,3 +245,33 @@ def test_consumed_final_review_blocks_before_repeating_local_gate(
     monkeypatch.setattr(handover, "_git", lambda *args: pytest.fail("no repeated gate"))
     with pytest.raises(loop.PhaseBlocked, match="FINAL_ROLE_OUTCOME_UNKNOWN"):
         FinalRuntime._prepare(engine, request)
+
+
+def test_config6_settings_wrapper_retains_final_single_call_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools import agent_epic_loop as loop
+    from tools import agent_orchestrate as workflow
+    from tools.agent_continuation_backend import SettingsAdapter
+
+    engine, _ = build(tmp_path, monkeypatch)
+    adapter = SettingsAdapter.__new__(SettingsAdapter)
+    adapter.backend_digest = "a" * 64
+    adapter.quota_resume_enabled = False
+    engine.adapter = adapter
+    key = "d" * 64
+    calls: list[str] = []
+
+    def review(*args: Any) -> dict[str, Any]:
+        saved = workflow.StateStore(
+            engine.directory / "final-role-reservations"
+        ).load(key)
+        assert saved is not None and saved["calls"] == 1
+        calls.append("controller")
+        return {"synthetic": True}
+
+    monkeypatch.setattr(adapter, "review", review)
+    assert engine._quota_review({"synthetic": True}, {}, key) == {"synthetic": True}
+    with pytest.raises(loop.PhaseBlocked, match="FINAL_ROLE_OUTCOME_UNKNOWN"):
+        engine._quota_review({"synthetic": True}, {}, key)
+    assert calls == ["controller"]

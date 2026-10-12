@@ -110,9 +110,11 @@ def present(directory: Path) -> bool:
     if marker.exists() or marker.is_symlink():
         return True
     config = directory / "runtime-task.json"
-    return (config.exists() or config.is_symlink()) and private_value(config).get(
-        "schema_version"
-    ) == "2.0"
+    if not (config.exists() or config.is_symlink()):
+        return False
+    from tools.agent_epic_runtime_cli import recovery_config_enabled
+
+    return recovery_config_enabled(private_value(config))
 
 
 def diagnostic(error: BaseException) -> str:
@@ -143,7 +145,7 @@ def command_entry(directory: Path, root: Path) -> None:
         import time
 
         if (
-            config.get("schema_version") != "2.0"
+            config.get("schema_version") not in {"2.0", "3.0"}
             or digest(approval) != config.get("approved_recovery_digest")
             or set(approval) != APPROVAL_KEYS
             or approval["generation"] != value["generation"]

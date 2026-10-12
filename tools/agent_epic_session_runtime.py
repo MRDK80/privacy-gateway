@@ -42,7 +42,7 @@ class SessionRuntime:
         self.root = root
         self.config = config
         self.wait_scope = wait_scope
-        if config.get("schema_version") in {"4.0", "5.0"} and wait_scope is None:
+        if config.get("schema_version") in {"4.0", "5.0", "6.0"} and wait_scope is None:
             raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED")
         self.store = loop.CheckpointStore(state, root)
         self.plans = private_json(state / "approved-plans.json")
@@ -147,8 +147,10 @@ class SessionRuntime:
 
     def _adapter(self) -> workflow.CommandAdapter:
         options: dict[str, Any] = {}
-        if self.config.get("schema_version") == "5.0":
+        if guards.quota_enabled(self.config):
             options = {"quota_state": self.state, "wait_scope": self.wait_scope}
+        if self.config.get("schema_version") == "6.0":
+            options["continuation_state"] = self.state
         return codex_role_adapter(
             policy_root=Path(self.config["policy_root"]),
             root=self.root,
@@ -286,6 +288,37 @@ class SessionRuntime:
             default=default,
         )
 
+    def _continuation_task_config(
+        self, store: loop.CheckpointStore, approved: str, iterations: int
+    ) -> None:
+        if self.config.get("schema_version") != "6.0":
+            return
+        mandate, digest, _ = self._fresh_authority(iterations)
+        expected = {
+            "schema_version": "3.0", "policy_root": self.config["policy_root"],
+            "approved_mandate_digest": digest, "approved_handover_digest": approved,
+            "owner_identity": self.config["owner_identity"],
+            "started_at": self.config["started_at"], "task_iterations": iterations,
+            "follow_up_issues": self.config["follow_up_issues"],
+            "approved_order": self.config["approved_order"],
+            "approved_recovery_digest": None,
+            "approved_continuation_digest": self.config["approved_continuation_digest"],
+        }
+        local = workflow.StateStore(store.directory)
+        path = store.directory / "runtime-task.json"
+        if path.exists() or path.is_symlink():
+            current = guards.private_json(path)
+            if current != expected:
+                raise loop.PhaseBlocked("CONTINUATION_TASK_PROFILE_CHANGED")
+        else:
+            local.save("runtime-task", expected)
+        path = store.directory / "mandate.json"
+        if path.exists() or path.is_symlink():
+            if guards.private_json(path) != mandate:
+                raise loop.PhaseBlocked("MANDATE_IDENTITY_MISMATCH")
+        else:
+            local.save("mandate", mandate)
+
     def task_adapter(
         self, store: loop.CheckpointStore, iterations: int
     ) -> TaskPhaseRuntime:
@@ -327,6 +360,7 @@ class SessionRuntime:
             }
         ):
             raise loop.PhaseBlocked("HANDOVER_IDENTITY_MISMATCH")
+        self._continuation_task_config(store, approved, iterations)
         reviewed = ReviewedWorkflow(
             root=self.root,
             directory=store.directory,
@@ -525,7 +559,7 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
-        if self.config.get("schema_version") in {"4.0", "5.0"}:
+        if self.config.get("schema_version") in {"4.0", "5.0", "6.0"}:
             with self._stage(f"SUCCESSOR:{previous['task']}:{task}"):
                 self._prepare(previous, task, store, iterations)
             return

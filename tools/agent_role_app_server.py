@@ -35,8 +35,12 @@ class QuotaInterrupted(RoleError):
             "schema_version": "1.0",
             "role": role,
             "invocation_digest": invocation,
-            "thread_digest": hashlib.sha256(thread.encode()).hexdigest(),
-            "turn_digest": hashlib.sha256(turn.encode()).hexdigest(),
+            "thread_digest": hashlib.sha256(
+                                        thread.encode()
+                                    ).hexdigest(),
+            "turn_digest": hashlib.sha256(
+                                        turn.encode()
+                                    ).hexdigest(),
             "error_code": code,
             "backend_digest": backend_digest,
             "outcome": "UNKNOWN",
@@ -57,6 +61,8 @@ def run(
     backend_digest: str,
     environment: dict[str, str],
     guard: Callable[[], None],
+    reasoning: str | None = None,
+    on_settings: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Caller must provide the verified outer namespace; no direct fallback."""
     if (
@@ -66,6 +72,11 @@ def run(
         or "--ro-bind" not in argv
     ):
         raise RoleError("ROLE_SANDBOX_UNSUPPORTED")
+    if reasoning is not None and (
+        reasoning not in {"low", "medium", "high"}
+        or model is None or on_settings is None
+    ):
+        raise RoleError("ROLE_EFFECTIVE_POLICY_UNVERIFIED")
     guard()
     set_blocking = getattr(os, "set_blocking", None)
     if not callable(set_blocking):
@@ -161,6 +172,8 @@ def run(
                                 },
                             },
                         }
+                        if reasoning is not None:
+                            params["config"]["model_reasoning_effort"] = reasoning
                         if model is not None:
                             params["model"] = model
                         send({"id": 2, "method": "thread/start", "params": params})
@@ -172,6 +185,8 @@ def run(
                             or response.get("cwd") != str(workdir)
                             or response.get("instructionSources") != []
                             or (model is not None and response.get("model") != model)
+                            or (reasoning is not None
+                                and response.get("reasoningEffort") != reasoning)
                             or not isinstance(response.get("sandbox"), dict)
                             or response["sandbox"].get("type")
                             != (
@@ -299,6 +314,18 @@ def run(
                                 raise RoleError("ROLE_OUTPUT_INVALID") from None
                             if not isinstance(payload, dict):
                                 raise RoleError("ROLE_OUTPUT_INVALID")
+                            if reasoning is not None:
+                                assert thread is not None and turn is not None
+                                assert on_settings is not None
+                                on_settings({
+                                    "model": model, "reasoning": reasoning,
+                                    "thread_digest": hashlib.sha256(
+                                        thread.encode()
+                                    ).hexdigest(),
+                                    "turn_digest": hashlib.sha256(
+                                        turn.encode()
+                                    ).hexdigest(),
+                                })
                             return payload
             raise RoleError("ROLE_BACKEND_TIMEOUT")
     except OSError:

@@ -1382,6 +1382,71 @@ def controller_resume_available(
         return False
 
 
+_CAPACITY_STOP_CODES = frozenset({
+    "CONTEXT_CAPACITY_STRATEGY_REQUIRED", "CONTEXT_REVIEW_TOO_LARGE",
+})
+
+
+def _continuation_capacity_stop(
+    continuation: Any, state: dict[str, Any], machine_code: str | None = None,
+) -> RunResult | None:
+    """Retain a negative decision separately from the exact prepared boundary."""
+    from tools import agent_continuation as records
+    from tools.agent_continuation_store import Store
+    from tools.agent_epic_loop import LoopError, PhaseBlocked
+    from tools.agent_epic_runtime_cli import DeploymentError, secure_directory
+
+    directory = continuation.store.directory / "capacity-stops"
+    if not directory.exists() and not directory.is_symlink():
+        if machine_code is None:
+            return None
+        directory.mkdir(mode=0o700)
+    try:
+        secure_directory(directory, continuation.root)
+        store = Store(directory, continuation.root)
+    except (DeploymentError, LoopError, PhaseBlocked):
+        raise OrchestrationError("CONTINUATION_STATE_INVALID") from None
+    key = "checkpoint-" + records.digest({
+        "contract": _contract_fields(continuation.contract), "run_id": state["run_id"],
+    })
+    saved = store.load(key, cap=1024)
+    if saved is None and machine_code is None:
+        return None
+    # A stop has no authority to relax ownership, lifecycle or source checks.
+    try:
+        continuation.check()
+        continuation.validate_state(state)
+        if state.get("terminal") is not False or state.get("role_pending") is not None:
+            raise OrchestrationError("CONTINUATION_STATE_INVALID")
+        continuation.verify_handoff(state)
+    except (DeploymentError, LoopError, PhaseBlocked):
+        raise OrchestrationError("CONTINUATION_STATE_INVALID") from None
+    if saved is not None:
+        if (
+            set(saved) != {"schema_version", "checkpoint_digest", "machine_code",
+                           "record_digest"}
+            or saved["schema_version"] != "1.0"
+            or saved["checkpoint_digest"] != records.digest(state)
+            or saved["machine_code"] not in _CAPACITY_STOP_CODES
+            or saved["record_digest"] != records.digest({
+                k: v for k, v in saved.items() if k != "record_digest"
+            })
+            or (machine_code is not None and machine_code != saved["machine_code"])
+        ):
+            raise OrchestrationError("CONTINUATION_STATE_INVALID")
+        machine_code = saved["machine_code"]
+    else:
+        if machine_code not in _CAPACITY_STOP_CODES:
+            raise OrchestrationError("CONTINUATION_STATE_INVALID")
+        value = {"schema_version": "1.0", "checkpoint_digest": records.digest(state),
+                 "machine_code": machine_code}
+        value["record_digest"] = records.digest(value)
+        store.save(key, value, cap=1024)
+    assert machine_code is not None
+    return RunResult("FAIL_ESCALATE", machine_code, state["repair_iterations"],
+                     state["run_id"])
+
+
 def run(
     contract: TaskContract,
     *,
@@ -1413,6 +1478,17 @@ def run(
         return RunResult("FAIL_ESCALATE", "INVALID_CONTRACT", 0, "not-started")
     run_key = _run_key(contract)
     previous = storage.load(run_key)
+    continuation = getattr(adapter, "continuation", None)
+    if previous is not None and continuation is not None:
+        try:
+            continuation.validate_state(previous)
+            stopped = _continuation_capacity_stop(continuation, previous)
+            if stopped is not None:
+                return stopped
+        except (OrchestrationError, OSError, KeyError, TypeError, ValueError):
+            return RunResult(
+                "FAIL_ESCALATE", "CONTINUATION_STATE_INVALID", 0, "not-started"
+            )
     if previous and previous.get("terminal") is True:
         return RunResult(
             status=str(previous["status"]),
@@ -1434,6 +1510,13 @@ def run(
     )
 
     evidence_state = _new_evidence_state()
+
+    def continuation_fields() -> dict[str, Any]:
+        if continuation is None:
+            return {}
+        saved = storage.load(run_key)
+        return {"continuation_handoffs":
+                saved.get("continuation_handoffs", 0) if saved else 0}
 
     def finish(status: str, machine_code: str) -> RunResult:
         result = RunResult(status, machine_code, repairs, run_id)
@@ -1476,6 +1559,7 @@ def run(
             run_key,
             {
                 **asdict(result),
+                **continuation_fields(),
                 "terminal": True,
                 "started": started,
                 "executor_calls": executor_calls,
@@ -1492,6 +1576,7 @@ def run(
     controller_boundary: dict[str, Any] | None = None
     resume_controller = False
     quota_enabled = getattr(adapter, "quota_resume_enabled", False) is True
+    resume_executor = False
 
     def reserve_role(role: str, payload: dict[str, Any]) -> None:
         # Persist consumption before the provider starts. An orphaned call is
@@ -1500,6 +1585,7 @@ def run(
             run_key,
             {
                 "run_id": run_id,
+                **continuation_fields(),
                 "started": started,
                 "repair_iterations": repairs,
                 "terminal": False,
@@ -1525,6 +1611,11 @@ def run(
             },
         )
 
+        if continuation is not None:
+            reserved = storage.load(run_key)
+            assert reserved is not None
+            continuation.reserve(role, payload, reserved)
+
     if previous and previous.get("role_pending") is not None:
         boundary = previous.get("controller_boundary")
         if (
@@ -1546,10 +1637,17 @@ def run(
             return finish("FAIL_ESCALATE", "ROLE_OUTCOME_UNKNOWN")
         controller_boundary = boundary
         resume_controller = True
+    if previous and continuation is not None and previous.get("role_pending") is None:
+        try:
+            resume_executor = continuation.resume_executor(previous) is not None
+            if resume_executor:
+                continuation.verify_handoff(previous)
+        except OrchestrationError as error:
+            return finish("FAIL_ESCALATE", error.machine_code)
     if max(executor_calls, controller_calls) > contract.max_repair_iterations + 1:
         return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
 
-    if previous and repairs > 0 and not resume_controller:
+    if previous and repairs > 0 and not (resume_controller or resume_executor):
         # Public state deliberately excludes model-derived feedback. A resumed
         # repair cannot safely reconstruct it from that state (#219).
         return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
@@ -1574,9 +1672,6 @@ def run(
                 resume_controller = False
             else:
                 executor_session = uuid.uuid4().hex
-                executor_calls += 1
-                if executor_calls > contract.max_repair_iterations + 1:
-                    return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
                 executor_started = time.perf_counter()
                 executor_request: dict[str, Any] = {
                     "contract": _contract_fields(contract),
@@ -1598,12 +1693,24 @@ def run(
                     ]
                 if repair_feedback is not None:
                     executor_request["repair_feedback"] = repair_feedback
-                reserve_role(
-                    "executor",
-                    {**executor_request, "session_id": executor_session},
-                )
-                report = adapter.execute(executor_request, executor_session)
-                _validate_report(report, contract, head_sha)
+                full_executor_request = {
+                    **executor_request, "session_id": executor_session
+                }
+                if continuation is not None and not resume_executor:
+                    continuation.preflight("executor", full_executor_request)
+                if not resume_executor:
+                    executor_calls += 1
+                    if executor_calls > contract.max_repair_iterations + 1:
+                        return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
+                    reserve_role(
+                        "executor",
+                        full_executor_request,
+                    )
+                    report = adapter.execute(executor_request, executor_session)
+                    _validate_report(report, contract, head_sha)
+                else:
+                    report = {"status": "completed"}
+                    resume_executor = False
                 evidence_state["executor_seconds"] = round(
                     max(0.0, time.perf_counter() - executor_started), 3
                 )
@@ -1612,8 +1719,30 @@ def run(
                 _assert_private_artifacts_safe(root)
                 paths = _changed_files(root, contract)
                 _assert_scope(paths, contract)
+                if continuation is not None and "task_issue" in report:
+                    reserved = storage.load(run_key)
+                    assert reserved is not None
+                    proof = continuation.complete("executor", reserved, report)
+                    proof["policy_digest"] = hashlib.sha256(
+                        json.dumps(
+                            trusted_policy, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False,
+                        ).encode()
+                    ).hexdigest()
+                    if report["status"] == "completed":
+                        executor_boundary = {
+                            **reserved, "role_pending": None,
+                            "completed_executor": proof,
+                        }
+                        storage.save(run_key, executor_boundary)
+                        continuation.prepare_handoff(executor_boundary)
                 gate_started = time.perf_counter()
-                gate_result = gate_runner(contract)
+                retained_gate = previous.get("continuation_gate") if previous else None
+                if (continuation is not None
+                    and "task_issue" not in report and retained_gate):
+                    gate_result = retained_gate
+                else:
+                    gate_result = gate_runner(contract)
                 evidence_state["gate_seconds"] = round(
                     max(0.0, time.perf_counter() - gate_started), 3
                 )
@@ -1638,6 +1767,7 @@ def run(
                         run_key,
                         {
                             "run_id": run_id,
+                            **continuation_fields(),
                             "started": started,
                             "repair_iterations": repairs,
                             "terminal": False,
@@ -1666,11 +1796,17 @@ def run(
                     "head_sha": head_sha,
                     "gate": gate_result,
                 }
+            if continuation is not None and production_gate:
+                boundary_state = storage.load(run_key)
+                if (boundary_state is not None
+                    and boundary_state.get("completed_executor")):
+                    boundary_state = {
+                        **boundary_state, "continuation_gate": gate_result
+                    }
+                    storage.save(run_key, boundary_state)
+                    continuation.prepare_handoff(boundary_state)
             diff = _diff(root, contract, contract.max_report_chars)
             controller_session = uuid.uuid4().hex
-            controller_calls += 1
-            if controller_calls > contract.max_repair_iterations + 1:
-                return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
             controller_started = time.perf_counter()
             review_request: dict[str, Any] = {
                 "issue": contract.issue,
@@ -1718,6 +1854,19 @@ def run(
                 )
             if contract.policy_sha is not None:
                 review_request["contract"]["policy_sha"] = contract.policy_sha
+            if continuation is not None:
+                continuation.preflight("controller", {
+                    **review_request, "session_id": controller_session,
+                    "trusted_policy": trusted_policy,
+                })
+            if continuation is not None:
+                boundary_state = storage.load(run_key)
+                if (boundary_state is not None
+                    and boundary_state.get("completed_executor")):
+                    continuation.consume_handoff(boundary_state)
+            controller_calls += 1
+            if controller_calls > contract.max_repair_iterations + 1:
+                return finish("FAIL_ESCALATE", "ROLE_CALL_BUDGET_EXHAUSTED")
             reserve_role(
                 "controller",
                 {
@@ -1730,6 +1879,10 @@ def run(
                 review_request, trusted_policy, controller_session
             )
             verdict = _validate_verdict(verdict_payload, contract, head_sha)
+            if continuation is not None:
+                reserved = storage.load(run_key)
+                assert reserved is not None
+                continuation.complete("controller", reserved, verdict_payload)
             evidence_state["controller_seconds"] = round(
                 max(0.0, time.perf_counter() - controller_started), 3
             )
@@ -1748,6 +1901,7 @@ def run(
                 run_key,
                 {
                     "run_id": run_id,
+                    **continuation_fields(),
                     "started": started,
                     "repair_iterations": repairs,
                     "terminal": False,
@@ -1765,6 +1919,8 @@ def run(
         from tools.agent_quota_role import validate_event
 
         reserved = storage.load(run_key)
+        if continuation is not None and reserved is not None:
+            continuation.interrupted(reserved)
         if reserved is not None and quota_enabled:
             backend_digest = getattr(adapter, "backend_digest", None)
             if not isinstance(backend_digest, str):
@@ -1791,6 +1947,27 @@ def run(
             )
         raise
     except OrchestrationError as error:
+        if continuation is not None and error.machine_code in _CAPACITY_STOP_CODES:
+            boundary = storage.load(run_key)
+            if (boundary is not None and boundary.get("role_pending") is None
+                and boundary.get("completed_executor") is not None):
+                try:
+                    stopped = _continuation_capacity_stop(
+                        continuation, boundary, error.machine_code
+                    )
+                    assert stopped is not None
+                    return stopped
+                except (OrchestrationError, OSError, KeyError, TypeError, ValueError):
+                    # Conflicting evidence is never replaced by a terminal summary.
+                    return RunResult("FAIL_ESCALATE", "CONTINUATION_STATE_INVALID",
+                                     repairs, run_id)
+        if continuation is not None:
+            reserved = storage.load(run_key)
+            if reserved is not None and reserved.get("role_pending") is not None:
+                try:
+                    continuation.interrupted(reserved)
+                except (OrchestrationError, OSError, KeyError, TypeError):
+                    pass  # Retain reservation; failed capture never permits replay.
         return finish("FAIL_ESCALATE", error.machine_code)
     except Exception:
         return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
