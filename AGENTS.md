@@ -39,21 +39,21 @@
 
 ## Обязательный local quality gate
 
-Установи developer-окружение и hooks по канонической инструкции в
-[`CONTRIBUTING.md`](CONTRIBUTING.md). Полный gate обязателен и для
-documentation-only diff:
-
+Установи developer-окружение и hooks по канонической инструкции в [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Во время repair выполняй связанные regression/integration tests и быстрые lint/type/hooks проверки;
+фиксируй scope и результаты отдельно. После всех исправлений и review полный gate обязателен
+на итоговых исходниках перед готовностью/завершением задачи, включая documentation-only diff:
 ```bash
 pytest -q
 ruff check .
 mypy .
 pre-commit run --all-files
 ```
-
-`git diff --check` — дополнительная проверка, не заменяющая четыре команды.
-Фактические результаты local gate и GitHub CI фиксируются раздельно; правила
-отчётности, Python policy и exact CI описаны в
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Если gate выявил дефект, заверши repair со связанными проверками, затем повтори полный gate на итоговых исходниках.
+Scoped или прерванный прогон не считается полным PASS; успешный gate не повторяй без изменения проверенных исходников/окружения или конкретной причины недостоверности evidence.
+Exact PR/post-merge CI, controller, demo и обязательные runtime/deterministic gates сохраняются.
+`git diff --check` — дополнительная проверка, не заменяющая четыре команды. Local gate и GitHub CI фиксируются раздельно;
+правила отчётности, Python policy и exact CI описаны в [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Reasoning при repair retry
 
