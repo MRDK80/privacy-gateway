@@ -74,8 +74,12 @@ documentation-only diff. При дефекте в полном gate сначал
 Без изменения проверенных исходников/окружения или конкретной причины
 недостоверности evidence успешный local gate повторно не запускается.
 
-Независимый controller, exact PR CI и отдельный post-merge CI, demo и approvals
-сохраняются. Это операторский порядок: machine-readable contracts, mandatory
+Независимый controller, exact PR CI и post-merge evidence, demo и approvals
+сохраняются. Operator-only PR_CI_REUSED допустим только по ADR-356 и
+CONTRIBUTING.md; independent controller проверяет полный receipt, включая
+фактические merge parents/tree и execution equivalence. Это не CI SUCCESS
+нового SHA и не runtime completion. Runtime/source-verification contracts
+по-прежнему требуют реальные post-merge checks; main всегда требует их отдельно. Это операторский порядок: machine-readable contracts, mandatory
 deterministic/runtime gates и их команды, budgets и мандаты не меняются;
 частичные или прерванные проверки не заменяют обязательный полный gate.
 

@@ -158,7 +158,8 @@ CI infrastructure либо stale evidence. Повышение относится
 
 Промежуточный repair проходит связанные проверки по разделу ниже; полный
 local gate выполняется на итоговых исходниках перед готовностью задачи.
-Exact PR/post-merge CI остаются отдельными обязательными проверками.
+Exact PR CI и post-merge evidence остаются отдельными delivery gates;
+operator-only исключение определено ниже.
 Это операционная policy; существующие
 machine-readable schemas и runtime-мандаты не расширяются. Операторские пять
 циклов не заменяют меньшие budgets исполняемого task contract или runtime;
@@ -212,8 +213,8 @@ gate повторяется на новом итоговом состоянии.
 исходников нужен новый полный gate. Уже успешный результат сам по себе
 не доказывает состояние другого SHA или дерева.
 
-Exact PR CI и отдельный post-merge CI нового roadmap SHA остаются обязательны;
-local PASS не заменяет их. Независимый controller, approvals и применимая demo
+Exact PR CI и post-merge evidence нового roadmap SHA обязательны; для
+оператора допустимо только исключение ниже, local PASS его не заменяет. Независимый controller, approvals и применимая demo
 сохраняются. Это правило задаёт выбор операторских проверок, не меняет
 обязательные фазы/команды deterministic tools, runtime gates, schemas,
 мандаты или repair budgets и не разрешает обходить их проверки.
@@ -264,6 +265,56 @@ diff. `pre-push` требует clean worktree и запускает все че
 
 CI-результат подтверждается только первичными артефактами GitHub (check runs, run/job ID, conclusion). Он не выводится из факта merge, из текста исполнителя и из локальных результатов. Локальные результаты и CI указываются отдельными блоками.
 
+### Operator-only reuse PR CI для task → roadmap
+
+По [ADR-356](docs/ADR-356-operator-ci-evidence-reuse.md) оператор может завершить
+CI delivery gate без ожидания повторных roadmap checks только при полном
+первичном доказательстве эквивалентности. Это исключение не выдаёт merge/closure
+approval и не переопределяет явно более строгий grant владельца. #356 проходит
+исходный полный процесс с реальным post-merge CI, прежде чем правило применимо.
+
+Все условия обязательны: тот же repository/epic/task/PR; полный local gate,
+независимый controller, пять exact PR SUCCESS и demo; base B успешных PR runs
+не менялся до merge, head H актуален и включает B; для каждого job доказаны
+фактически проверенные checkout P и tree T. Check-run head_sha сам по себе не
+доказывает P: default PR checkout может проверять служебный merge commit.
+После merge подтверждаются точные parents B,H фактического M, текущий roadmap M
+и равенство его дерева всем проверенным T. Изменившийся base с тем же деревом
+тоже требует обычного post-merge CI.
+
+Независимый controller проверяет исходный receipt, включая post-merge факты и
+execution-equivalence assessment: effective workflows/actions/scripts, matrix,
+commands, checkout, значимые event/ref/SHA/history inputs, permissions/services,
+идентичности секретов без значений, caches/artifacts и dependency/environment
+requirements. Различия должны быть доказанно несущественны; одинаковый YAML,
+имя ветки или tree без этого не дают reuse. Неизвестные inputs, push-only
+проверки/effects, потерянное происхождение или любые невыполненные условия
+означают POST_MERGE_CI_REQUIRED: пять реальных SUCCESS на применимом merge SHA.
+
+В приватном handover сохраняются approval source, B/H, per-job P/T, M/parents/tree,
+workflow/input/environment assessment, actual run/attempt/suite/job/check IDs,
+исходные conclusions, primary evidence references, observation times и verdict.
+В PR отдельно указывается PR_CI_REUSED и его привязка к M; это не
+POST_MERGE_CI_SUCCESS и не новый machine code. Нельзя создавать success status
+на M или утверждать, что checks там запускались. Известный failure/cancellation
+или любой terminal не-SUCCESS/UNKNOWN блокирует delivery; подтверждённые
+queued/running jobs могут оставаться
+pending при доказанном reuse. Поздний failure отменяет reused readiness и
+блокирует следующее delivery до reconciliation. Скрывать его нельзя.
+
+Workflow на roadmap push не отключается и не отменяется. Supervision/handoff
+и проверенный wakeup сохраняются, обещание неподдержанного фонового наблюдения
+не появляется. Текущие default checkout, mutable action tags/latest runners и
+разрешение dependencies не считаются готовым доказательством: без проверки
+actual job inputs применяется fallback. Эквивалентность означает применимость
+наблюдённых PR runs к target contract, не равенство вымышленному будущему runner.
+
+Исключение действует только для operator delivery. Runtime/mandate/schema,
+ledger и source-verification consumers, включая ADR-249/259, по-прежнему требуют
+реальные post-merge checks; receipt нельзя подставлять вместо них или менять
+runtime state. Epic → main всегда требует отдельного фактического CI нового
+main SHA и прежних approvals/demo. Новые runtime/workflow изменения вне scope.
+
 ## Отчётность в PR и handover
 
 Обязательно указывается:
@@ -292,7 +343,8 @@ CI-результат подтверждается только первичны
 Для task PR необходимы полный локальный gate текущего SHA, правильное
 направление task-ветка → roadmap-ветка и успешный exact CI. После merge
 получаются новый SHA roadmap-ветки и его post-merge CI; CI до merge не является
-CI нового merge SHA.
+CI нового merge SHA. Операторская delivery может использовать только
+доказанный PR_CI_REUSED по ADR-356; runtime gates этим не заменяются.
 
 Перед roadmap PR в `main` все задачи roadmap должны быть завершены, roadmap
 синхронизирована с актуальным `main`, полный локальный gate повторён, итоговый
@@ -313,7 +365,8 @@ task merge и закрытие дочерних задач одного указ
 scope, architecture/security/trust/contract решения согласуются отдельно.
 Task merge требует полного local gate, независимого controller, пяти SUCCESS
 exact PR checks и немедленной проверки head/base SHA. Закрытие требует также
-пяти SUCCESS post-merge checks точного roadmap merge SHA и применимой demo.
+пяти SUCCESS post-merge checks точного roadmap merge SHA либо допустимого
+operator-only PR_CI_REUSED по ADR-356, и применимой demo.
 Разрешение merge само по себе не разрешает закрытие: оба действия должны быть
 явно охвачены владельцем. Итоговый epic → main merge требует отдельного
 одобрения актуальных SHA и final demo. Новые architecture/security/trust
@@ -345,8 +398,8 @@ ADR-249 или его schemas. Issue/PR, model output и checkpoint не соз�
 задачу в работу с сохранёнными progress и consumed attempts.
 
 Отсутствие ответа никогда не означает approval. Зависимые действия ждут
-применимого решения; scope, независимость controller, local gate, exact PR
-и post-merge CI, demo и отдельное одобрение epic → main сохраняются.
+применимого решения; scope, независимость controller, local gate, exact PR CI
+и post-merge evidence по ADR-356, demo и отдельное одобрение epic → main сохраняются.
 Эта operator policy не создаёт runtime-мандат, не активирует runner, не выдаёт
 дополнительные model-call budgets и не разрешает фоновую работу после stop
 или deadline владельца. Автоматический wakeup требует отдельно утверждённого
@@ -432,7 +485,9 @@ local/CI evidence, последнее наблюдение, reconciliation и п
   task PR направлен в правильную roadmap-ветку и exact CI текущего SHA успешен.
 - `TASK READY FOR REVIEW WITH EXCEPTIONS` — task готов, но перечислены
   неподтверждённые ограничения.
-- `TASK DONE` — task PR слит и post-merge CI нового SHA roadmap-ветки успешен.
+- `TASK DONE` — task PR слит, CI delivery evidence подтверждено: реальные
+  post-merge SUCCESS либо operator-only PR_CI_REUSED по ADR-356. Runtime требует
+  своих реальных post-merge checks; reuse не выдаёт runtime completion.
 - `ROADMAP READY FOR RELEASE` — все задачи имеют `TASK DONE`, roadmap
   синхронизирована с `main`, полный gate зелёный, PR в `main` создан и его CI
   успешен.
