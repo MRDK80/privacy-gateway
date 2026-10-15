@@ -36,7 +36,8 @@ roadmap-ветка → `main`. Task PR непосредственно в `main` 
 ## GitHub CI
 
 Подтверждается только фактическими check runs текущего SHA. CI до merge и
-post-merge CI указываются отдельно.
+post-merge evidence указываются отдельно. Operator-only reuse — только по
+CONTRIBUTING.md / ADR-356; runtime и main требуют реальный post-merge CI.
 
 - [ ] Ubuntu latest / Python 3.11 — run/job ID и conclusion:
 - [ ] Ubuntu latest / Python 3.12 — run/job ID и conclusion:
@@ -44,7 +45,9 @@ post-merge CI указываются отдельно.
 - [ ] Windows latest / Python 3.12 — run/job ID и conclusion:
 - [ ] pre-commit workflow — run/job ID и conclusion:
 - [ ] `main-source-guard` — для roadmap PR; для task PR указать N/A:
-- [ ] Post-merge CI нового SHA — run/job ID и conclusion либо ещё не выполнен:
+- [ ] Delivery mode: actual post-merge CI / PR_CI_REUSED / pending (не CI SUCCESS нового SHA):
+- [ ] Actual post-merge CI нового SHA — run/job ID и conclusion либо ещё не выполнен:
+- [ ] При operator reuse: B/H, per-job tested P/T, M/parents/tree; execution-equivalence receipt и независимый controller (без секретов/raw logs):
 
 ## Review и риски
 
