@@ -658,8 +658,7 @@ def test_active_selection_rereads_every_consumed_original_completion(
 ) -> None:
     value = active_run(tmp_path, monkeypatch, pause_at=3)
     assert child(value, SELECT) == {"code": "USABLE"}
-    result = child(
-        value,
+    body = (
         "role="
         + repr(role)
         + "\nordinal="
@@ -704,16 +703,9 @@ def select():
     try: Verifier(fresh,session).selection('feature','executor','typing')
     except Exception as error: return str(error)
     return 'USABLE'
-for change in ('missing_reservation','partial_reservation','unknown_reservation',
-        'contract_digest','consumed_digest','checkpoint_digest','invocation_digest',
-        'identity','missing_checkpoint','checkpoint_run','checkpoint_ordinal',
-        'checkpoint_repair','missing_settings','partial_settings','requested',
-        'effective','output_digest','observed_exit','metadata_ordinal',
-        'metadata_catalog','metadata_unknown','snapshot_before_digest',
-        'snapshot_after_digest','missing_before','missing_after','before_index',
-        'after_index','missing_before_blob','missing_after_blob',
-        'corrupt_before_blob','corrupt_after_blob'):
-    assert select()=='USABLE', change
+for change in ((requested,) if requested!='missing_review' else ()):
+    baseline=select()
+    assert baseline=='USABLE', (change,baseline)
     try:
         if change.startswith('missing_') and change[8:] in paths:
             paths[change[8:]].unlink()
@@ -792,8 +784,9 @@ for change in ('missing_reservation','partial_reservation','unknown_reservation'
             path.write_bytes(original[name])
             path.chmod(0o600)
     assert canonical_path.read_bytes()==canonical_bytes
-if role=='controller':
-    assert select()=='USABLE'
+if role=='controller' and requested=='missing_review':
+    baseline=select()
+    assert baseline=='USABLE', ('missing_review',baseline)
     review_path=task_state/'continuation'/('review-'+inv+'.json')
     review_bytes=review_path.read_bytes()
     review_path.unlink()
@@ -801,17 +794,62 @@ if role=='controller':
     finally:
         review_path.write_bytes(review_bytes)
         review_path.chmod(0o600)
-assert select()=='USABLE'
+restored=select()
+assert restored=='USABLE', (requested,restored)
 assert canonical_path.read_bytes()==canonical_bytes
 assert snapshots()==original_snapshots
-print(json.dumps({'failures':failures,'calls':[3,2]}))""",
-        timeout_seconds=600,
+print(json.dumps({'failures':failures,'calls':[3,2]}))"""
     )
-    assert result["calls"] == [3, 2]
-    assert all(
-        code not in {"USABLE", "LEARNING_CI_SOURCE_MISSING"}
-        for code in result["failures"].values()
-    ), result
+    cases: tuple[str, ...] = (
+        "missing_reservation",
+        "partial_reservation",
+        "unknown_reservation",
+        "contract_digest",
+        "consumed_digest",
+        "checkpoint_digest",
+        "invocation_digest",
+        "identity",
+        "missing_checkpoint",
+        "checkpoint_run",
+        "checkpoint_ordinal",
+        "checkpoint_repair",
+        "missing_settings",
+        "partial_settings",
+        "requested",
+        "effective",
+        "output_digest",
+        "observed_exit",
+        "metadata_ordinal",
+        "metadata_catalog",
+        "metadata_unknown",
+        "snapshot_before_digest",
+        "snapshot_after_digest",
+        "missing_before",
+        "missing_after",
+        "before_index",
+        "after_index",
+        "missing_before_blob",
+        "missing_after_blob",
+        "corrupt_before_blob",
+        "corrupt_after_blob",
+    )
+    if role == "controller":
+        cases += ("missing_review",)
+    for requested in cases:
+        # Each independent fault probe starts a new bounded read invocation;
+        # original task state, consumed role calls and all source guards persist.
+        result = child(
+            value,
+            "requested=" + repr(requested) + "\n" + body,
+            timeout_seconds=600,
+        )
+        assert result["calls"] == [3, 2]
+        assert set(result["failures"]) == {requested}
+        assert all(
+            code
+            not in {"USABLE", "LEARNING_CI_SOURCE_MISSING", "WAIT_INVOCATION_EXPIRED"}
+            for code in result["failures"].values()
+        ), (requested, result)
 
 
 @pytest.mark.parametrize("stage", ["before", "after"])
