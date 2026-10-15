@@ -42,7 +42,10 @@ class SessionRuntime:
         self.root = root
         self.config = config
         self.wait_scope = wait_scope
-        if config.get("schema_version") in {"4.0", "5.0", "6.0"} and wait_scope is None:
+        if (
+            config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}
+            and wait_scope is None
+        ):
             raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED")
         self.store = loop.CheckpointStore(state, root)
         self.plans = private_json(state / "approved-plans.json")
@@ -149,14 +152,24 @@ class SessionRuntime:
         options: dict[str, Any] = {}
         if guards.quota_enabled(self.config):
             options = {"quota_state": self.state, "wait_scope": self.wait_scope}
-        if self.config.get("schema_version") == "6.0":
+        if self.config.get("schema_version") in {"6.0", "7.0"}:
             options["continuation_state"] = self.state
-        return codex_role_adapter(
+        result = codex_role_adapter(
             policy_root=Path(self.config["policy_root"]),
             root=self.root,
             policy_sha=self.identity["policy_sha"],
             **options,
         )
+        if self.config.get("schema_version") == "7.0":
+            from tools.agent_learning_evidence import SourceReader
+            from tools.agent_learning_invocation import Runtime
+
+            reader = getattr(result, "learning_reader", None)
+            if not isinstance(reader, SourceReader):
+                raise loop.PhaseBlocked("LEARNING_SOURCE_INVALID")
+            reader.read = self._github_read
+            setattr(result, "learning_runtime", Runtime(reader, self))
+        return result
 
     def _fresh_authority(
         self, iterations: int, *, at_task_start: bool = True
@@ -291,14 +304,17 @@ class SessionRuntime:
     def _continuation_task_config(
         self, store: loop.CheckpointStore, approved: str, iterations: int
     ) -> None:
-        if self.config.get("schema_version") != "6.0":
+        if self.config.get("schema_version") not in {"6.0", "7.0"}:
             return
         mandate, digest, _ = self._fresh_authority(iterations)
         expected = {
-            "schema_version": "3.0", "policy_root": self.config["policy_root"],
-            "approved_mandate_digest": digest, "approved_handover_digest": approved,
+            "schema_version": "3.0",
+            "policy_root": self.config["policy_root"],
+            "approved_mandate_digest": digest,
+            "approved_handover_digest": approved,
             "owner_identity": self.config["owner_identity"],
-            "started_at": self.config["started_at"], "task_iterations": iterations,
+            "started_at": self.config["started_at"],
+            "task_iterations": iterations,
             "follow_up_issues": self.config["follow_up_issues"],
             "approved_order": self.config["approved_order"],
             "approved_recovery_digest": None,
@@ -461,6 +477,17 @@ class SessionRuntime:
             approved_order=tuple(self.config["approved_order"]),
             wait_scope=getattr(self, "wait_scope", None),
         )
+        if self.config.get("schema_version") == "7.0":
+            from tools.agent_learning_evidence import SourceReader
+
+            engine.learning_reader = SourceReader(
+                self.state,
+                self.root,
+                read=engine._github_read,
+            )
+            context = getattr(reviewed.adapter, "learning_runtime", None)
+            if context is not None:
+                engine.learning_verifier = context.verifier
         engine.continuation_enabled = True
         if guards.planning_enabled(self.config):
 
@@ -559,9 +586,16 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
-        if self.config.get("schema_version") in {"4.0", "5.0", "6.0"}:
+        if self.config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}:
             with self._stage(f"SUCCESSOR:{previous['task']}:{task}"):
-                self._prepare(previous, task, store, iterations)
+                if self.config.get("schema_version") == "7.0":
+                    from tools.agent_learning_evidence import SourceReader
+
+                    reader = SourceReader(self.state, self.root, read=self._github_read)
+                    with reader.ownership(self.state):
+                        self._prepare(previous, task, store, iterations)
+                else:
+                    self._prepare(previous, task, store, iterations)
             return
         self._prepare(previous, task, store, iterations)
 
@@ -617,6 +651,15 @@ class SessionRuntime:
                 ):
                     raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
 
+            learning = None
+            if self.config.get("schema_version") == "7.0":
+                from tools.agent_learning_evidence import SourceReader
+                from tools.agent_learning_planning import Planning
+
+                learning = Planning(
+                    SourceReader(self.state, self.root, read=self._github_read),
+                    self,
+                )
             proposal = admission.Admission(self.state, self.root).admit(
                 owner=owner,
                 mandate=mandate,
@@ -627,10 +670,12 @@ class SessionRuntime:
                 default=main,
                 dependencies=dependencies,
                 guard=planning_guard,
+                learning=learning,
                 invoke=PlanningRoles(
                     root=self.root,
                     policy_root=Path(self.config["policy_root"]),
                     policy_sha=mandate["policy_sha"],
+                    learning_state=self.state if learning is not None else None,
                 ),
             )
             recipe = {"plan": proposal["plan"], "demo_plan": proposal["demo_plan"]}
@@ -926,7 +971,9 @@ class SessionRuntime:
         return asdict(engine.resume())
 
     def resume(
-        self, *, supervisor_lock: loop.RunnerLock | None = None,
+        self,
+        *,
+        supervisor_lock: loop.RunnerLock | None = None,
     ) -> dict[str, Any]:
         return Session(
             store=self.store,
@@ -937,6 +984,10 @@ class SessionRuntime:
             final_resume=self.final_resume,
             maximum_tasks=self.maximum,
             initial_iterations=self.config["task_iterations"],
-        ).resume(**(
-            {"supervisor_lock": supervisor_lock} if supervisor_lock is not None else {}
-        ))
+        ).resume(
+            **(
+                {"supervisor_lock": supervisor_lock}
+                if supervisor_lock is not None
+                else {}
+            )
+        )

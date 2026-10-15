@@ -345,7 +345,7 @@ def readiness(
             )
         )
         if set(config) != expected or config.get("schema_version") not in (
-            {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0"}
+            {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0"}
             if epic
             else {"1.0", "2.0", "3.0"}
         ):
@@ -377,9 +377,10 @@ def readiness(
             raise InstallError("RECOVERY_PROFILE_REQUIRED")
         mandate = guards.private_json(state / "mandate.json")
         guards.bootstrap_authority(config, mandate, epic=epic)
+        guards.learning_profile_guard(state, config, mandate)
         if not epic:
             guards.continuation_profile_guard(state, config, mandate)
-        if config.get("schema_version") in {"3.0", "6.0"}:
+        if config.get("schema_version") in {"3.0", "6.0", "7.0"}:
             continuation = guards.continuation_profile_guard(state, config, mandate)
             if continuation is not None:
                 seed = guards.managed_state(state)

@@ -742,3 +742,99 @@ def test_active_context_survives_nested_entry_and_clears_on_error(
             assert budget.active_stage == "DISCOVERY"
             raise RuntimeError("synthetic")
     assert budget.active_stage is None
+
+
+def test_historical_learning_demo_reuses_completed_task_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import subprocess
+
+    from tools import agent_learning_sources
+    from tools.agent_epic_runtime import TaskPhaseRuntime
+    from tools.agent_learning_evidence import SourceReader
+
+    root, state = configured(tmp_path, monkeypatch)
+    store = loop.CheckpointStore(state, root)
+    saved = store.load()
+    assert saved is not None
+    saved.update(
+        phase="TASK_DONE",
+        pending_phase="NEXT_TASK",
+        completed_phases=list(loop.PHASES[1:-1]),
+        merge_sha="d" * 40,
+        status="TASK_DONE",
+    )
+    store.save(saved)
+    budget = scope.Scope.for_root(state, root)
+    assert budget is not None
+    plan = {
+        "schema_version": "1.0",
+        "repository": saved["repository"],
+        "epic": saved["epic"],
+        "task": saved["task"],
+        "baseline_ref": "main",
+        "baseline_sha": "a" * 40,
+        "roadmap_ref": saved["base_ref"],
+        "roadmap_sha": saved["merge_sha"],
+        "consumer_visible": False,
+        "not_applicable_reason": "synthetic documentation change",
+        "scenario": None,
+        "parameters": [],
+        "old_argv": [],
+        "new_argv": [],
+    }
+    runtime = TaskPhaseRuntime(
+        store=store,
+        authority=lambda: pytest.fail("network authority in wait guard"),
+        artifacts=lambda: {},
+        demo_plan=lambda: plan,
+        approved_order=(),
+        wait_scope=budget,
+    )
+    stage = f"TASK:{saved['task']}:NEXT_TASK"
+    reader = budget.reader(stage)
+    reader.now = time.time
+
+    def read(
+        argv: tuple[str, ...], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        sha = "a" * 40 if argv[-1].endswith("/main") else saved["merge_sha"]
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps({"object": {"sha": sha}}), ""
+        )
+
+    reader.run = read
+    with runtime._stage():
+        runtime.github.ref_sha(saved["repository"], "main")
+    before = reader.inspect()
+    deadline = reader.current_deadline
+    store.save(loop._complete(saved, "NEXT_TASK", None))
+    with pytest.raises(loop.LoopError, match="LIVE_IDENTITY_CHANGED"):
+        reader.guard()
+
+    # Isolate trusted callback wiring; retain real ownership, private checkpoint,
+    # demo validation, GitHub ref parsing and the original Scope/Reader ledger.
+    source = SourceReader.__new__(SourceReader)
+    source.seed, source.root = state, root
+    source.config = {"approved_order": [saved["task"]]}
+    source.owner = {"limits": {"max_record_bytes": 65536}}
+    monkeypatch.setattr(
+        agent_learning_sources, "historical_runtime", lambda *args: runtime
+    )
+    receipt = source.demo(saved["task"], object())
+    assert receipt == {
+        "status": "DEMO_NOT_APPLICABLE",
+        "baseline_sha": "a" * 40,
+        "roadmap_sha": saved["merge_sha"],
+        "reason": "synthetic documentation change",
+    }
+    assert budget.reader(stage) is reader
+    after = reader.inspect()
+    assert len(before["requests"]) == 1
+    assert after["requests"]["1"] == before["requests"]["1"]
+    for key in ("identity", "started_at", "deadline_at"):
+        assert after[key] == before[key]
+    assert len(after["requests"]) == 3
+    assert reader.current_deadline == deadline
+    assert runtime._read_stage is None
+    assert budget.active_stage is None

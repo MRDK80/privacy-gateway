@@ -1490,6 +1490,20 @@ def run(
                 "FAIL_ESCALATE", "CONTINUATION_STATE_INVALID", 0, "not-started"
             )
     if previous and previous.get("terminal") is True:
+        reader = getattr(adapter, 'learning_reader', None)
+        if getattr(adapter, 'learning_enabled', False) is True and reader is not None:
+            from tools.agent_learning_observe import terminal
+            try:
+                terminal(reader, contract.issue)
+                context = getattr(adapter, 'learning_runtime', None)
+                if context is not None:
+                    from tools.agent_learning_measure import capture
+                    capture(reader, context.verifier.session, contract.issue)
+            except OrchestrationError as error:
+                return RunResult(
+                    'FAIL_ESCALATE', error.machine_code,
+                    int(previous['repair_iterations']), str(previous['run_id']),
+                )
         return RunResult(
             status=str(previous["status"]),
             machine_code=str(previous["machine_code"]),
@@ -1571,11 +1585,24 @@ def run(
                 "record_schema_version": PUBLIC_RECORD_SCHEMA_VERSION,
             },
         )
+        reader = getattr(adapter, "learning_reader", None)
+        if getattr(adapter, "learning_enabled", False) is True and reader is not None:
+            from tools.agent_learning_observe import terminal
+            try:
+                terminal(reader, contract.issue)
+                context = getattr(adapter, 'learning_runtime', None)
+                if context is not None:
+                    from tools.agent_learning_measure import capture
+                    capture(reader, context.verifier.session, contract.issue)
+            except OrchestrationError as error:
+                return RunResult("FAIL_ESCALATE", error.machine_code, repairs, run_id)
         return result
 
     controller_boundary: dict[str, Any] | None = None
     resume_controller = False
     quota_enabled = getattr(adapter, "quota_resume_enabled", False) is True
+    learning_enabled = getattr(adapter, "learning_enabled", False) is True
+    learning_runtime = getattr(adapter, "learning_runtime", None)
     resume_executor = False
 
     def reserve_role(role: str, payload: dict[str, Any]) -> None:
@@ -1615,6 +1642,8 @@ def run(
             reserved = storage.load(run_key)
             assert reserved is not None
             continuation.reserve(role, payload, reserved)
+        if learning_runtime is not None:
+            learning_runtime.reserve(role, payload)
 
     if previous and previous.get("role_pending") is not None:
         boundary = previous.get("controller_boundary")
@@ -1660,7 +1689,19 @@ def run(
         _assert_scope(paths, contract)
         trusted_policy = _load_trusted_policy(root, contract)
         production_gate = gate is None
-        gate_runner = gate or (lambda value: _production_gate(root, value))
+        def observed_gate(value: TaskContract) -> dict[str, Any]:
+            reader = getattr(adapter, "learning_reader", None)
+            if not learning_enabled or reader is None:
+                return _production_gate(root, value)
+            from tools.agent_learning_gate import GateJournal
+            return agent_gate.run_repository_full(
+                root=root, base_sha=value.base_sha, allowed_paths=value.allowed_paths,
+                observer_factory=lambda snapshot: GateJournal(
+                    reader, value.issue, run_id, executor_calls, repairs, snapshot,
+                ),
+            )
+        gate_runner = gate or observed_gate
+        repair_gate: dict[str, Any] | None = None
         while True:
             if time.time() - started > contract.max_minutes * 60:
                 return finish("FAIL_ESCALATE", "TIME_BUDGET_EXHAUSTED")
@@ -1693,6 +1734,10 @@ def run(
                     ]
                 if repair_feedback is not None:
                     executor_request["repair_feedback"] = repair_feedback
+                if learning_runtime is not None and not resume_executor:
+                    executor_request = learning_runtime.augment(
+                        'executor', executor_request, current_gate=repair_gate,
+                    )
                 full_executor_request = {
                     **executor_request, "session_id": executor_session
                 }
@@ -1723,6 +1768,8 @@ def run(
                     reserved = storage.load(run_key)
                     assert reserved is not None
                     proof = continuation.complete("executor", reserved, report)
+                    if learning_runtime is not None:
+                        learning_runtime.complete('executor', full_executor_request)
                     proof["policy_digest"] = hashlib.sha256(
                         json.dumps(
                             trusted_policy, sort_keys=True, separators=(",", ":"),
@@ -1747,6 +1794,14 @@ def run(
                     max(0.0, time.perf_counter() - gate_started), 3
                 )
                 _record_gate_evidence(evidence_state, gate_result)
+                if learning_enabled and agent_gate.is_repository_full(gate_result):
+                    reader = getattr(adapter, "learning_reader", None)
+                    if reader is None:
+                        raise OrchestrationError("LEARNING_SOURCE_INVALID")
+                    from tools.agent_learning_gate_problem import retain
+                    retain(reader, contract.issue, run_id, executor_calls,
+                           repairs, gate_result)
+                repair_gate = gate_result
                 gate_passed = (
                     agent_gate.gate_evidence_is_passing(gate_result)
                     if production_gate
@@ -1786,7 +1841,7 @@ def run(
                 evidence_state["tree_unchanged"] = True
                 _record_gate_evidence(evidence_state, gate_result)
             if (
-                quota_enabled
+                (quota_enabled or learning_enabled)
                 and production_gate
                 and (controller_boundary is not None or report["status"] == "completed")
             ):
@@ -1854,6 +1909,10 @@ def run(
                 )
             if contract.policy_sha is not None:
                 review_request["contract"]["policy_sha"] = contract.policy_sha
+            if learning_runtime is not None:
+                review_request = learning_runtime.augment(
+                    'controller', review_request, current_gate=gate_result,
+                )
             if continuation is not None:
                 continuation.preflight("controller", {
                     **review_request, "session_id": controller_session,
@@ -1883,6 +1942,11 @@ def run(
                 reserved = storage.load(run_key)
                 assert reserved is not None
                 continuation.complete("controller", reserved, verdict_payload)
+                if learning_runtime is not None:
+                    learning_runtime.complete('controller', {
+                        **review_request, 'session_id': controller_session,
+                        'trusted_policy': trusted_policy,
+                    })
             evidence_state["controller_seconds"] = round(
                 max(0.0, time.perf_counter() - controller_started), 3
             )

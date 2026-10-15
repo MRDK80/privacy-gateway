@@ -217,8 +217,10 @@ def schema(role: str, request: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class PlanningRoles:
-    def __init__(self, *, root: Path, policy_root: Path, policy_sha: str) -> None:
+    def __init__(self, *, root: Path, policy_root: Path, policy_sha: str,
+                 learning_state: Path | None = None) -> None:
         self.root, self.policy_root, self.policy_sha = root, policy_root, policy_sha
+        self.learning_state = learning_state
 
     def __call__(self, role: str, request: Mapping[str, Any]) -> Mapping[str, Any]:
         if role not in {"planner", "review"}:
@@ -237,6 +239,8 @@ class PlanningRoles:
             "--policy-sha",
             self.policy_sha,
         ]
+        if self.learning_state is not None:
+            command += ['--learning-state', str(self.learning_state)]
         try:
             completed = subprocess.run(
                 command,
@@ -266,8 +270,27 @@ class PlanningRoles:
 def adapt(args: argparse.Namespace) -> dict[str, Any]:
     raw = sys.stdin.read(1_000_001)
     request = json.loads(raw)
-    if not isinstance(request, dict) or set(request) != REQUEST_KEYS:
+    learning_state = getattr(args, 'learning_state', None)
+    allowed = REQUEST_KEYS | (
+        {'untrusted_verified_hints'} if learning_state is not None else set()
+    )
+    if not isinstance(request, dict) or set(request) != allowed:
         raise codex.AdapterError("INVALID_REQUEST")
+    if learning_state is not None:
+        from tools import agent_epic_runtime_cli as guards
+        from tools.agent_learning_hints import envelope
+        state = guards.secure_directory(guards.managed_state(learning_state), args.root)
+        config = guards.learning_private_json(state / 'epic-runtime.json')
+        mandate = guards.learning_private_json(state / 'mandate.json')
+        guards.bootstrap_authority(config, mandate, epic=True)
+        guards.managed_launch_guard(state, args.root)
+        owner = guards.learning_profile_guard(state, config, mandate)
+        if owner is None or config.get('schema_version') != '7.0':
+            raise codex.AdapterError('INVALID_REQUEST')
+        request['untrusted_verified_hints'] = envelope(
+            request['untrusted_verified_hints'], owner,
+            role='planner' if args.role == 'planner' else 'planning_review',
+        )
     limit = request["limits"]["max_input_chars"]
     if len(raw) > limit or request["identity"]["policy_sha"] != args.policy_sha:
         raise codex.AdapterError("INVALID_REQUEST")
@@ -319,6 +342,7 @@ def main() -> int:
     parser.add_argument("--role", choices=("planner", "review"), required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--policy-sha", required=True)
+    parser.add_argument("--learning-state", type=Path)
     try:
         value = adapt(parser.parse_args())
     except (

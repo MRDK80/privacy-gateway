@@ -91,3 +91,76 @@ For config7, a trusted gate observer retains normalized source evidence immediat
 MATCHED_FAILURE_AND_CORRECTION requires two distinct original terminal observations with the same rule_id, role, problem/environment/policy applicability, original approved criteria/grant identity and reproducible symptom/check identity. The failure observation must have an actual FAIL check and the matching canonical symptom. The correction must be a later separately verified successful task delivery with full gate, independent controller, exact PR/post-CI and approved demo; its corrected workspace may differ, but its initial applicability and claimed causal change must match the catalog rule and independently reviewed scope. Neither a failure alone nor a model description of a fix qualifies.
 
 RETAINED_REGRESSION_CHECK_PASS requires for every catalog regression_checks identity an original trusted FAIL outcome on the failure snapshot and an original trusted PASS/exit0 outcome on the independently reviewed correction snapshot, with matching argv/node/check identity, policy and environment. Both source invocations and source artifact digests are retained and reread. Whole-suite FULL_GATE_PASS, a boolean regression_passed, a caller-provided test result or a digest without original source cannot satisfy this predicate. Unsupported causal semantics or absent negative evidence remains candidate-only; synthetic source fixtures and actual production observations are reported separately.
+
+
+## Candidate owner decision: historical demo source after roadmap advancement
+
+Status: Accepted by owner on 2026-10-14 for this exact historical source contract.
+The owner authorized one bounded implementation repair exception; consumed
+attempts and original runtime budgets are not reset. This addendum changes only the
+internal historical `SourceReader.demo` adapter specified above. Live
+`TaskPhaseRuntime._demo(require_completion=True)` keeps its exact live-ref and
+owner-completion checks for execution, closure and original delivery observation.
+
+When the fresh actual roadmap SHA still equals the original merge, retain the exact
+original runtime._demo(require_completion=True) path, including all live-ref and
+owner checks; no new original-observation requirement is added there. This is an
+explicit identity branch, never a catch/fallback from DEMO_PENDING. A historical
+demo may remain valid after a later legitimate roadmap merge. Its
+assessment still names the original baseline and original task merge, never the
+new roadmap SHA. A dedicated historical adapter rereads the approved original
+recipe/derived admission, validates the closed demo plan and original repository,
+epic, task, roadmap ref and merge against the canonical checkpoint and contract.
+The checkpoint must record completed DEMO; checkpoint TASK_DONE alone is not
+proof. The fixed trusted proof graph remains controller/gate → unchanged six-APPLIED-effect
+delivery ledger/primary merged PR/head/merge → exact original PR/post-merge CI →
+historical demo → original workflow. Both planning `pair` and the general verifier
+retain these existing calls and their evidence bindings. The demo adapter does not
+repeat CI reads or accept caller-supplied proof arrays/booleans. Missing, pending,
+stale or conflicting source remains blocked. Own-task TASK_DONE observation may
+run before checkpoint completion only after these same six APPLIED effects exist;
+no incomplete ledger exception is added.
+
+In the advanced-roadmap branch, original baseline and merge commit objects must
+exist and validate as commits
+using fixed bounded read-only Git commands, with baseline ancestry into original
+merge. Baseline still must equal its fresh live ref, preserving the existing
+fail-closed baseline policy. The historical merge must equal or be an ancestor of
+a fresh same-repository current roadmap SHA. Obtain that lineage from one fixed
+primary GET `repos/{approved_repository}/compare/{original_merge_sha}...{current_sha}`
+under the existing wait reader. Both operands are validated lowercase40hex SHA,
+never candidate ref/URL/argv. Require status ahead for advancement, and base_commit.sha and
+merge_base_commit.sha equal original merge; equality retains the original live
+_demo branch without this comparison.
+Ref reads before and after validation must match the same baseline/current roadmap
+SHAs. No fetch, object creation, ref update, checkout or provider/model call occurs;
+missing original objects or unavailable primary proof fails closed.
+
+For consumer-visible plans reread the original owner-only demo-completion.json
+and require exact existing schema, original plan digest/SHAs/identity, current owner
+identity and completed_by_owner:true. No runtime/model generates that receipt.
+For non-visible plans retain only validated DEMO_NOT_APPLICABLE with its original
+nonempty reason. Readiness or a stored boolean/digest cannot establish observed
+owner completion. Only the advanced-roadmap historical branch rereads the original closed
+TASK_DELIVERY observation
+from an already existing secure canonical store under its task learning lock;
+missing store fails before constructor creation. It requires matching checkpoint
+repository/epic/task/policy/head/merge plus exact demo_digest of the reconstructed
+assessment. This digest is an origin link to the original successful live observer,
+not independent proof: the unchanged upstream delivery/CI/workflow/controller
+source rereads remain mandatory. Return the unchanged closed assessment and
+retain all original verification links; no observer or stored receipt is fabricated.
+
+Existing policy/config/mandate/lifecycle/private ownership, SourceReader source
+guards and trusted stage context remain required throughout. Reuse the exact
+historical stage/reader/ledger; attempts, deadlines, command limits and authority
+never reset or expand. Current relevance, paired measurement, tombstones and
+rollback keep their accepted independent predicates. No new public/receipt/CI
+schema, security permission or endpoint grammar is introduced. This explicit
+historical source-contract decision requires owner acceptance before production
+code; implementation also requires a separately bounded repair-budget exception.
+
+The comparison source uses the official GitHub compare contract, including
+base_commit and merge_base_commit fields; API origin/endpoint identity comes from
+the fixed approved primary reader, not an untrusted response URL:
+https://docs.github.com/en/rest/commits/commits#compare-two-commits

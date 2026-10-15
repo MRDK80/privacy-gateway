@@ -20,6 +20,34 @@ class ReadFailure(Exception):
         super().__init__(self.category)
 
 
+def _comparison_endpoint(endpoint: str) -> bool:
+    match = re.fullmatch(
+        r"repos/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/compare/"
+        r"([A-Za-z0-9_.%-]+)\.\.\.([A-Za-z0-9_.%-]+)",
+        endpoint,
+    )
+    if match is None or any(".." in part for part in match.groups()[:2]):
+        return False
+    for encoded in match.groups()[2:]:
+        if len(encoded) > 765:
+            return False
+        parts = encoded.split("%2F")
+        reference = "/".join(parts)
+        if (
+            not 1 <= len(reference) <= 255
+            or reference.startswith("-")
+            or any(
+                re.fullmatch(r"[A-Za-z0-9_.-]+", part) is None
+                or part.startswith(".")
+                or part.endswith((".", ".lock"))
+                or ".." in part
+                for part in parts
+            )
+        ):
+            return False
+    return True
+
+
 def read_only(argv: Sequence[str]) -> bool:
     """Accept only the concrete argument grammar used by the task read clients."""
     args = tuple(argv)
@@ -40,7 +68,17 @@ def read_only(argv: Sequence[str]) -> bool:
         )
     if args[1] != "api":
         return False
+    if (
+        len(args) == 3
+        and re.fullmatch(r"repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", args[2]) is not None
+        and ".." not in args[2]
+    ):
+        return True
     endpoints = [arg for arg in args[2:] if not arg.startswith("-")]
+    if len(endpoints) == 1 and re.match(
+        r"repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/compare(?:/|$)", endpoints[0]
+    ):
+        return len(args) == 3 and _comparison_endpoint(endpoints[0])
     return (
         len(endpoints) == 1
         and re.fullmatch(

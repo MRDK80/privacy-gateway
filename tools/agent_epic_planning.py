@@ -458,6 +458,7 @@ class Admission:
         dependencies: list[dict[str, Any]],
         invoke: Role,
         guard: Callable[[], None],
+        learning: Any = None,
     ) -> dict[str, Any]:
         if str(task) not in owner["tasks"]:
             block("PLANNING_TASK_NOT_APPROVED")
@@ -573,17 +574,23 @@ class Admission:
                     > owner["limits"]["max_input_chars"]
                 ):
                     block("PLANNING_INPUT_LIMIT")
+                if learning is not None:
+                    learning.current_context(context, guard)
+                wire_request = (learning.prepare(role, copy.deepcopy(request))
+                                if learning is not None else copy.deepcopy(request))
                 guard()
                 saved["attempts"][role] += 1
                 saved["pending"] = {
                     "role": role,
                     "attempt": saved["attempts"][role],
-                    "request_digest": canonical_digest(request),
+                    "request_digest": canonical_digest(wire_request),
                 }
                 store.save("admission", saved)
                 guard()
+                if learning is not None:
+                    learning.reserve_planning(role, wire_request, context=context)
                 # A transport exception preserves the exact unfinished reservation.
-                response = dict(invoke(role, copy.deepcopy(request)))
+                response = dict(invoke(role, wire_request))
                 # Evidence drift cannot complete this reserved request, even if
                 # the model returned a valid response. Preserve pending intent.
                 guard()
@@ -592,21 +599,32 @@ class Admission:
                     > owner["limits"]["max_output_chars"]
                 ):
                     block("PLANNING_OUTPUT_LIMIT")
-                if role == "planner":
-                    proposal = validate_proposal(
-                        response,
-                        owner=owner,
-                        mandate=mandate,
-                        context=context,
-                        root=self.root,
-                        task=task,
-                        body=body,
-                        base=base,
-                        default=default,
+                def validated_response() -> dict[str, Any]:
+                    if role == "planner":
+                        return validate_proposal(
+                            response,
+                            owner=owner,
+                            mandate=mandate,
+                            context=context,
+                            root=self.root,
+                            task=task,
+                            body=body,
+                            base=base,
+                            default=default,
+                        )
+                    return validate_review(response, proposal, len(criteria))
+
+                validated = (
+                    learning.validate_planning(
+                        role, wire_request, response, validate=validated_response,
                     )
+                    if learning is not None else validated_response()
+                )
+                if role == "planner":
+                    proposal = validated
                     request["proposal"] = proposal
                 else:
-                    response = validate_review(response, proposal, len(criteria))
+                    response = validated
                 saved["proposal" if role == "planner" else "review"] = {
                     "digest": canonical_digest(response),
                     "response": response,
@@ -618,6 +636,8 @@ class Admission:
                     )
                 store.save("admission", saved)
                 guard()
+                if learning is not None:
+                    learning.complete_planning(role, wire_request, response)
             if saved["status"] != "ADMITTED":
                 block("PLANNING_NEEDS_DECISION")
             return proposal

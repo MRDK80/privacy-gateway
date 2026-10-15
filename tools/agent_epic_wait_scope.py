@@ -66,7 +66,7 @@ class Scope:
         if not path.exists():
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") not in {"4.0", "5.0", "6.0"}:
+        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
             return None
         guards.managed_launch_guard(seed, root, read_only=read_only, allow_initial=True)
         mandate = guards.private_json(seed / "mandate.json")
@@ -105,7 +105,7 @@ class Scope:
             frames.clear(os.environ)
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") not in {"4.0", "5.0", "6.0"}:
+        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
             frames.clear(os.environ)
             return None
         mandate = guards.private_json(seed / "mandate.json")

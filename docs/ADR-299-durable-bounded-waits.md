@@ -50,3 +50,88 @@ attempt. An interruption before the assessor's own read remains unknown.
 Counters are never reset or refunded. No fields, schemas, effect permissions,
 runtime installation/activation or final main approval are added by this
 clarification.
+
+## Candidate addendum: exact repository metadata GET eligibility (#302)
+
+Status: owner-approved in operator chat on 2026-10-14 after independent design/static PASS. No installation or activation is authorized.
+The current bounded native Session reproduction reaches canonical
+`GitHubCLI.repository(read=...)` during successor branch preflight. Its exact
+`gh api repos/OWNER/repo` GET is rejected by both ADR-290 generic read grammar
+and ADR-299 repository-scope eligibility before transport or reservation. The
+synthetic primary fixture already supports this endpoint. This is an internal
+read integration gap, not evidence of successful successor delivery.
+
+Proposed security decision: add only the exact three-argument command
+`("gh", "api", "repos/<owner>/<repository>")`. Owner/repository components use
+the existing ASCII `[A-Za-z0-9_.-]+` grammar and the existing `..` exclusion.
+The durable Reader additionally requires exact case-sensitive equality to its
+already approved repository identity. No optional suffix is added to the
+existing descendant grammar; that grammar remains unchanged.
+
+The new root form permits no query, trailing slash, URL, extra endpoint,
+pagination/slurp/hostname/input flag, method override or body field. Foreign
+repositories and prefix collisions remain ineligible. This is a narrow change
+to a security read grammar and requires explicit design approval before
+production code; current issue/fixture text and the prior repair exception do
+not authorize it. It grants no Git/GitHub write, new repository scope or role
+call. Existing guards, reservations, counters, attempts, deadlines, pending
+outcomes and errors remain unchanged. A successful read is not authority.
+
+Regression-first verification requires the exact canonical client request to
+fail on the old code, then complete through the bounded Reader after approved
+application with one retained command/attempt. Negative root/foreign/query/
+flags/method/URL/traversal cases must reject before transport and reservation.
+The original actual native Session must then reach authorized successor
+execution/delivery/promotion under original budgets; fabricated completion is
+not proof. Full local gate, independent whole-task controller, exact PR and
+post-merge CI and demo remain separate requirements. No installation,
+activation, provider purchase/reset, stopped #131 or main merge is included.
+
+## Candidate addendum: closed compare reads and fresh synthetic capacity (#302)
+
+Status: owner-approved in operator chat on 2026-10-14 after independent design/static PASS, including initial200 for NEW synthetic fixtures. No installation or activation is authorized.
+The actual frozen native Session rejects canonical `gh api
+repos/OWNER/repo/compare/main...roadmap%2F294-autonomy` before transport because
+ADR-290's generic `..` prohibition also rejects the required `...` delimiter.
+Root repository metadata eligibility was separately accepted on 2026-10-14.
+
+Proposed security decision: reserve the API `compare` route for exactly three
+arguments `(gh, api, repos/<owner>/<repository>/compare/<base>...<head>)`, with
+exactly one delimiter and two nonempty canonical ASCII references. Only uppercase
+`%2F` encodes slash; every other percent encoding, query, URL, flag, method or body
+is ineligible. Decoded references are1..255 ASCII characters, each component uses
+`[A-Za-z0-9_.-]+`, and cannot start `.`, end `.`/`.lock`, contain `..` or be empty;
+a complete reference cannot start `-`. Encoded references are at most765 bytes.
+Repository components retain existing ASCII grammar and `..` refusal. Durable
+Reader retains its exact approved repository boundary, including prefix-collision
+refusal. Other non-compare descendant grammar is unchanged; malformed comparison
+routes that legacy grammar previously admitted now fail closed. The universal
+traversal prohibition is not removed. Canonical clients keep their original ref
+arguments; switching them to exact SHAs is deliberately outside this scope.
+
+Separately approve initial max_read_commands100->200 only in the NEW synthetic
+native factory, within initial wait-profile construction before dependent
+runtime-config/launch digest binding and any role/read execution. The installed
+policy candidate is constructed earlier and is not a dependent wait binding.
+Retained compare-failure state has92 completed reads; a static forecast adds
+compare1 +precreation guard5 +postcreation guard5 =103.200 provides97 finite
+slots beyond that no-dependency path for
+additional source/dependency validation. This is a conservative test allowance,
+not timing or full-run success evidence. Production limits/schemas and real
+mandates do not change. Original retained states/counters remain immutable;
+READY reads still consume slots, UNKNOWN is not replayed, and no budget is
+refunded. Original role, repair, planning, CI-poll and time budgets are unchanged.
+Exhaustion still blocks;200 is not automatically enlarged.
+
+Regression-first tests use the canonical client and unchanged source for RED,
+then bounded Reader completion after approval. Test the complete canonical read
+inventory and malformed/traversal/encoding/foreign/query/flags/method negatives.
+Actual original fresh native Session delivery/planning/promotion must pass under
+its explicitly approved initial capacity; source validation and guards cannot be
+skipped to manufacture completion. Original planning/planning_review completion
+and source-measurement accuracy remain to be demonstrated by the native run.
+Missing comparisons retain accepted UNMEASURED/NO_MEASURED_COMPARISON behavior;
+no extra baseline calls or simultaneous all-four-role pair is required. Actual
+E/C paired regression remains separate primary evidence. Full gate/controller/exact CI/demo
+and installation/main approvals remain separate. This candidate grants no
+external write, provider activation, new repository or stopped #131 permission.

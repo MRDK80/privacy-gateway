@@ -826,10 +826,12 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         state = runtime_guards.secure_directory(continuation_state, root)
         config = runtime_guards.private_json(state / "epic-runtime.json")
         mandate = runtime_guards.private_json(state / "mandate.json")
+        runtime_guards.learning_profile_guard(state, config, mandate)
         approved_profile = runtime_guards.continuation_profile_guard(
             state, config, mandate
         )
-        if config.get("schema_version") != "6.0" or approved_profile is None:
+        if (config.get("schema_version") not in {"6.0", "7.0"}
+            or approved_profile is None):
             raise AdapterError("INVALID_REQUEST")
         continuation_backend = continuation.document(
             runtime_guards.role_backend_guard(state, approved_profile, quota_owner)

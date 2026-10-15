@@ -42,7 +42,7 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
 
 def epic_config_keys(config: dict[str, Any]) -> set[str]:
     version = config.get("schema_version")
-    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0"}:
+    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0"}:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     keys = EPIC_CONFIG_KEYS | (
         {"approved_launch_digest"} if version != "1.0" else set()
@@ -51,18 +51,20 @@ def epic_config_keys(config: dict[str, Any]) -> set[str]:
         keys
         | (
             {"approved_planning_digest"}
-            if version in {"3.0", "4.0", "5.0", "6.0"}
+            if version in {"3.0", "4.0", "5.0", "6.0", "7.0"}
             else set()
         )
-        | ({"approved_wait_digest"} if version in {"4.0", "5.0", "6.0"} else set())
-        | ({"approved_quota_digest"} if version in {"5.0", "6.0"} else set())
-        | ({"approved_continuation_digest"} if version == "6.0" else set())
+        | ({"approved_wait_digest"}
+           if version in {"4.0", "5.0", "6.0", "7.0"} else set())
+        | ({"approved_quota_digest"} if version in {"5.0", "6.0", "7.0"} else set())
+        | ({"approved_continuation_digest"} if version in {"6.0", "7.0"} else set())
+        | ({"approved_learning_digest"} if version == "7.0" else set())
     )
 
 
 def planning_enabled(config: Mapping[str, Any]) -> bool:
     return config.get("schema_version") == "3.0" or (
-        config.get("schema_version") in {"4.0", "5.0", "6.0"}
+        config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}
         and config.get("approved_planning_digest") is not None
     )
 
@@ -71,7 +73,7 @@ def wait_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Validate the closed owner profile before importing candidate code."""
-    if config.get("schema_version") not in {"4.0", "5.0", "6.0"}:
+    if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
         return None
     path = state / "wait-profile.json"
     owner = private_json(path)
@@ -246,7 +248,7 @@ def recovery_config_enabled(config: Mapping[str, Any]) -> bool:
 def quota_enabled(config: Mapping[str, Any]) -> bool:
     """Config6 composes separately approved quota only through a nonnull binding."""
     return config.get("schema_version") == "5.0" or (
-        config.get("schema_version") == "6.0"
+        config.get("schema_version") in {"6.0", "7.0"}
         and config.get("approved_quota_digest") is not None
     )
 
@@ -367,11 +369,13 @@ def continuation_profile_guard(
 ) -> dict[str, Any] | None:
     """Closed owner profile binding before pinned runtime imports."""
     version = config.get("schema_version")
-    if version not in {"3.0", "6.0"} or "approved_continuation_digest" not in config:
+    if (version not in {"3.0", "6.0", "7.0"}
+        or "approved_continuation_digest" not in config):
         return None
     seed = managed_state(state)
-    epic = config if version == "6.0" else private_json(seed / "epic-runtime.json")
-    if epic.get("schema_version") != "6.0" or config.get(
+    epic = (config if version in {"6.0", "7.0"}
+            else private_json(seed / "epic-runtime.json"))
+    if epic.get("schema_version") not in {"6.0", "7.0"} or config.get(
         "approved_continuation_digest"
     ) != epic.get("approved_continuation_digest"):
         raise DeploymentError("CONTINUATION_APPROVAL_MISMATCH")
@@ -426,6 +430,170 @@ def continuation_profile_guard(
         raise DeploymentError("CONTINUATION_PROFILE_INVALID")
     quota_owner = quota_profile_guard(seed, epic, mandate)
     role_backend_guard(seed, owner, quota_owner)
+    return owner
+
+
+def learning_private_json(path: Path, cap: int = 65536) -> dict[str, Any]:
+    """Bound owner-only learning bootstrap bytes before JSON decoding."""
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = dict(items)
+        if len(result) != len(items):
+            raise DeploymentError("LEARNING_STATE_INVALID")
+        return result
+
+    try:
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise DeploymentError("LEARNING_STORAGE_UNSAFE")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != owner_uid()
+                or info.st_mode & 0o077
+                or info.st_size > cap
+            ):
+                raise DeploymentError("LEARNING_STORAGE_UNSAFE")
+            raw = stream.read(cap + 1)
+        if len(raw) > cap:
+            raise DeploymentError("LEARNING_STORAGE_UNSAFE")
+        value = json.loads(raw, object_pairs_hook=pairs)
+        if not isinstance(value, dict):
+            raise DeploymentError("LEARNING_STATE_INVALID")
+        return dict(value)
+    except (OSError, ValueError):
+        raise DeploymentError("LEARNING_STATE_INVALID") from None
+
+
+def learning_profile_document(raw: Any) -> dict[str, Any]:
+    """Closed learning owner input, usable before any candidate imports."""
+    fields = {
+        "schema_version",
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+        "catalog_digest",
+        "limits",
+    }
+    if (
+        not isinstance(raw, dict)
+        or set(raw) != fields
+        or raw["schema_version"] != "1.0"
+    ):
+        raise DeploymentError("LEARNING_PROFILE_INVALID")
+    if (
+        not isinstance(raw["repository"], str)
+        or re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*", raw["repository"]
+        )
+        is None
+        or type(raw["epic"]) is not int
+        or not 1 <= raw["epic"] <= 2147483647
+        or not isinstance(raw["roadmap_ref"], str)
+        or re.fullmatch(
+            r"roadmap/" + str(raw["epic"]) + r"-[a-z0-9-]+", raw["roadmap_ref"]
+        )
+        is None
+        or not isinstance(raw["owner_identity"], str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", raw["owner_identity"]) is None
+    ):
+        raise DeploymentError("LEARNING_PROFILE_INVALID")
+    for name, pattern in {
+        "policy_sha": r"[0-9a-f]{40}",
+        "catalog_digest": r"[0-9a-f]{64}",
+        "mandate_digest": r"sha256:[0-9a-f]{64}",
+    }.items():
+        if not isinstance(raw[name], str) or re.fullmatch(pattern, raw[name]) is None:
+            raise DeploymentError("LEARNING_PROFILE_INVALID")
+    maxima = {
+        "max_hints_per_role": 3,
+        "max_hint_bytes": 4096,
+        "max_record_bytes": 65536,
+        "max_records": 1024,
+        "max_store_bytes": 8388608,
+    }
+    limits = raw["limits"]
+    if (
+        not isinstance(limits, dict)
+        or set(limits) != set(maxima)
+        or any(
+            type(limits[k]) is not int
+            or not (0 if k == "max_hints_per_role" else 1) <= limits[k] <= maximum
+            for k, maximum in maxima.items()
+        )
+    ):
+        raise DeploymentError("LEARNING_PROFILE_INVALID")
+    return dict(raw)
+
+
+def learning_profile_guard(
+    state: Path, config: dict[str, Any], mandate: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Task3 inherits learning only through its exact verified managed config7."""
+    direct = config.get("schema_version") == "7.0"
+    child = (
+        config.get("schema_version") == "3.0"
+        and "approved_handover_digest" in config
+        and "approved_continuation_digest" in config
+    )
+    if not direct and not child:
+        return None
+    seed = managed_state(state)
+    epic = config if direct else private_json(seed / "epic-runtime.json")
+    if epic.get("schema_version") != "7.0":
+        return None
+    if set(epic) != epic_config_keys(epic):
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    if config.get("policy_root") != epic.get("policy_root") or config.get(
+        "approved_mandate_digest"
+    ) != epic.get("approved_mandate_digest"):
+        raise DeploymentError("LEARNING_APPROVAL_MISMATCH")
+    path = seed / "learning-profile.json"
+    owner = learning_profile_document(learning_private_json(path))
+    if (
+        path.stat().st_nlink != 1
+        or canonical_digest(owner) != epic.get("approved_learning_digest")
+        or owner["mandate_digest"] != epic.get("approved_mandate_digest")
+        or any(
+            owner[k] != mandate.get(k)
+            for k in (
+                "repository",
+                "epic",
+                "roadmap_ref",
+                "policy_sha",
+                "owner_identity",
+            )
+        )
+    ):
+        raise DeploymentError("LEARNING_APPROVAL_MISMATCH")
+    catalogs: dict[str, str] = {}
+    for key, name in (
+        ("workflow_catalog_digest", "agent-learning-catalog.json"),
+        ("planning_catalog_digest", "agent-learning-planning-catalog.json"),
+    ):
+        catalog_path = Path(epic["policy_root"]) / "docs/schemas" / name
+        try:
+            if (catalog_path.is_symlink()
+                or any(p.is_symlink() for p in catalog_path.parents)
+                or catalog_path.stat().st_nlink != 1
+                or catalog_path.stat().st_size > 65536):
+                raise DeploymentError("LEARNING_CATALOG_CHANGED")
+        except OSError:
+            raise DeploymentError("LEARNING_CATALOG_CHANGED") from None
+        catalog = learning_private_json(catalog_path)
+        if (set(catalog) != {"schema_version", "rules"}
+            or catalog.get("schema_version") != "1.0"
+            or not isinstance(catalog.get("rules"), list)
+            or len(catalog["rules"]) > 128):
+            raise DeploymentError("LEARNING_CATALOG_CHANGED")
+        catalogs[key] = canonical_digest(catalog).removeprefix("sha256:")
+    if canonical_digest(catalogs) != "sha256:" + owner["catalog_digest"]:
+        raise DeploymentError("LEARNING_CATALOG_CHANGED")
     return owner
 
 
@@ -926,6 +1094,7 @@ def managed_launch_guard(
         "4.0",
         "5.0",
         "6.0",
+        "7.0",
     }
     if not present and not managed:
         return
@@ -967,6 +1136,7 @@ def managed_launch_guard(
     wait_profile_guard(seed, config, mandate)
     quota_profile_guard(seed, config, mandate)
     continuation_profile_guard(seed, config, mandate)
+    learning_profile_guard(seed, config, mandate)
     if (
         any(
             value[key] != mandate.get(key)
@@ -1255,6 +1425,7 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=False)
     continuation_profile_guard(state, config, mandate)
+    learning_profile_guard(state, config, mandate)
     managed_launch_guard(state, root, read_only=read_only)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -1383,6 +1554,7 @@ def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
     wait_profile_guard(state, config, mandate)
     quota_profile_guard(state, config, mandate)
     continuation_profile_guard(state, config, mandate)
+    learning_profile_guard(state, config, mandate)
     managed_launch_guard(state, root)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
@@ -1422,6 +1594,7 @@ def build_entry(state: Path, root: Path) -> Any:
     wait_profile_guard(state, config, mandate)
     quota_profile_guard(state, config, mandate)
     continuation_profile_guard(state, config, mandate)
+    learning_profile_guard(state, config, mandate)
     policy = Path(config["policy_root"])
     verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
     existing = sys.modules.get("tools")
