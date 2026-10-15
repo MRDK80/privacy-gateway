@@ -51,7 +51,7 @@ pre-commit run --all-files
 ```
 Если gate выявил дефект, заверши repair со связанными проверками, затем повтори полный gate на итоговых исходниках.
 Scoped или прерванный прогон не считается полным PASS; успешный gate не повторяй без изменения проверенных исходников/окружения или конкретной причины недостоверности evidence.
-Exact PR/post-merge CI, controller, demo и обязательные runtime/deterministic gates сохраняются.
+Exact PR CI, controller/demo и post-merge evidence сохраняются; operator-only reuse — по CONTRIBUTING.md, runtime/deterministic gates неизменны.
 `git diff --check` — дополнительная проверка, не заменяющая четыре команды. Local gate и GitHub CI фиксируются раздельно;
 правила отчётности, Python policy и exact CI описаны в [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -129,7 +129,7 @@ roadmap-ветки; при обновлении `main` сначала обнов
 ## Запрещённые автоматические действия
 
 Без явного подтверждения владельца не выполняй merge и не закрывай issues.
-Владелец может заранее разрешить оператору task merge и закрытие дочерних задач ограниченного epic после всех gates без повторных вопросов: merge требует local gate, независимого controller и exact PR CI, закрытие — также exact post-merge CI roadmap SHA и применимой demo. Итоговый epic → main merge требует отдельного одобрения актуальных SHA и final demo. Это не runtime-мандат; scope и условия standing approval фиксируются по CONTRIBUTING.md. Прогноз ответа не создаёт approval.
+Владелец может заранее разрешить оператору task merge и закрытие дочерних задач ограниченного epic после всех gates без повторных вопросов: merge требует local gate, независимого controller и exact PR CI, закрытие — также exact post-merge CI roadmap SHA либо допустимый operator-only PR_CI_REUSED по CONTRIBUTING.md, и применимой demo. Итоговый epic → main merge требует отдельного одобрения актуальных SHA и final demo. Это не runtime-мандат; scope и условия standing approval фиксируются по CONTRIBUTING.md. Прогноз ответа не создаёт approval.
 Не делай force push, не удаляй `main` или roadmap-ветки, не создавай и не
 перемещай tags, не редактируй releases, branch protection, visibility или
 настройки репозитория. Не объявляй CI или local gate успешными без первичных
