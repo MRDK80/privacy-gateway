@@ -505,6 +505,7 @@ def run_profile(
     commands: Mapping[str, Sequence[str]] | None = None,
     timeout_seconds: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
     runner: Runner | None = None,
+    on_check: Callable[[CheckResult], None] | None = None,
 ) -> tuple[CheckResult, ...]:
     """Execute a versioned profile inside the snapshot checkout."""
     expected = PROFILES.get(profile)
@@ -540,6 +541,8 @@ def run_profile(
                 metrics=metrics,
             )
         )
+        if on_check is not None:
+            on_check(results[-1])
     return tuple(results)
 
 
@@ -635,11 +638,17 @@ def run_repository_full(
     allowed_paths: Sequence[str],
     package: str = "privacy_gateway",
     timeout_seconds: float = DEFAULT_CHECK_TIMEOUT_SECONDS,
+    observer_factory: (
+        Callable[[SnapshotSession], Callable[[CheckResult], None]] | None
+    ) = None,
 ) -> dict[str, Any]:
     """Run the mandatory profile on one trusted snapshot and return evidence."""
     with trusted_snapshot_session(
         root=root, base_sha=base_sha, allowed_paths=allowed_paths
     ) as session:
         verify_environment(session, package=package)
-        results = run_profile(session, timeout_seconds=timeout_seconds)
+        observer = observer_factory(session) if observer_factory is not None else None
+        results = run_profile(
+            session, timeout_seconds=timeout_seconds, on_check=observer
+        )
         return build_evidence(session, results)

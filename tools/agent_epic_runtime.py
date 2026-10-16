@@ -53,6 +53,8 @@ class TaskPhaseRuntime:
         self.approved_order = approved_order
         self.bootstrap = bootstrap
         self.demo_completion = demo_completion
+        self.learning_reader: Any = None
+        self.learning_verifier: Any = None
         self.continuation_enabled = False
         self.continuation_queue: Callable[[], queue.QueuePlan] | None = None
         self.recovery: Any = None
@@ -536,9 +538,31 @@ class TaskPhaseRuntime:
                 raise loop.PhaseBlocked("DEMO_COMPLETION_REQUIRED") from None
         return result
 
+    def _observe_delivery(self) -> None:
+        if self.learning_reader is None:
+            return
+        from tools.agent_learning import LearningError
+        from tools.agent_learning_observe import delivered
+
+        try:
+            task = self._checkpoint()["task"]
+            delivered(self.learning_reader, task, self)
+            if self.learning_verifier is not None:
+                self.learning_verifier.candidates(task)
+                from tools.agent_learning_planning_promotion import promote
+
+                reader = self.learning_verifier.reader
+                with reader.ownership(reader.seed):
+                    promote(reader, self.learning_verifier.session, task)
+        except LearningError as error:
+            raise loop.PhaseBlocked(error.machine_code) from None
+
     def effect(self, phase: str) -> Mapping[str, object]:
         with self._stage(phase):
-            return self._effect(phase)
+            result = self._effect(phase)
+            if phase == "TASK_DONE":
+                self._observe_delivery()
+            return result
 
     def _effect(self, phase: str) -> Mapping[str, object]:
         from tools import agent_epic_recovery as recovery
@@ -606,7 +630,10 @@ class TaskPhaseRuntime:
 
     def reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]:
         with self._stage(phase, reconcile=True):
-            return self._reconcile(phase)
+            result = self._reconcile(phase)
+            if phase == "TASK_DONE" and result[0] == "APPLIED":
+                self._observe_delivery()
+            return result
 
     def _reconcile(self, phase: str) -> tuple[str, Mapping[str, object] | None]:
         self._checkpoint(phase)

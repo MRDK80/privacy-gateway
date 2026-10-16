@@ -31,7 +31,14 @@ from tests.test_agent_epic_handover import _mandate
 SOURCE = Path.cwd()
 
 
-def build(base: Path) -> dict[str, str]:
+def build(
+    base: Path,
+    *,
+    extra_tasks: tuple[int, ...] = (),
+    delivery_enabled: bool = False,
+    with_demo: bool = False,
+    with_planning_policy: bool = False,
+) -> dict[str, str]:
     assert not base.exists() and not base.is_symlink()
     base.mkdir(mode=0o700)
     root, state = base / "repo", base / "state"
@@ -49,8 +56,15 @@ def build(base: Path) -> dict[str, str]:
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )
     shutil.copytree(SOURCE / "docs/schemas", root / "docs/schemas")
+    shutil.copytree(SOURCE / ".github/workflows", root / ".github/workflows")
     (root / "AGENTS.md").write_text("synthetic policy\n")
     (root / "CONTRIBUTING.md").write_text("synthetic process\n")
+    if with_planning_policy:
+        for name in workflow.POLICY_FILES:
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_text("Synthetic planning policy fixture.\n")
     (root / "code.py").write_text("VALUE = 1\n")
     git("init", "-b", "main")
     git("config", "user.name", "Synthetic")
@@ -82,6 +96,20 @@ def build(base: Path) -> dict[str, str]:
             "allowed_paths": ["code.py"],
         }
     }
+    for task in extra_tasks:
+        mandate["task_grants"][str(task)] = {
+            "causal_scope": ["synthetic capacity fixture"],
+            "allowed_paths": ["code.py"],
+        }
+    if delivery_enabled:
+        mandate["operations"] += [
+            "commit_task",
+            "push_task",
+            "create_task_pr",
+            "merge_task_pr",
+            "close_task",
+            "update_epic",
+        ]
     mandate["approval"]["approved_at"] = now - 10
     digest = delivery.mandate_digest(mandate)
     mandate["approval"]["mandate_digest"] = digest
@@ -112,7 +140,31 @@ def build(base: Path) -> dict[str, str]:
 
     approved = handover_digest(handover)
     handover["approval"]["plan_digest"] = approved
-    plans = {"schema_version": "1.0", "initial_handover_digest": approved, "tasks": {}}
+    plans: dict[str, Any] = {
+        "schema_version": "1.0",
+        "initial_handover_digest": approved,
+        "tasks": {},
+    }
+    if with_demo:
+        plans["tasks"]["301"] = {
+            "plan": handover,
+            "demo_plan": {
+                "schema_version": "1.0",
+                "repository": "OWNER/repo",
+                "epic": 294,
+                "task": 301,
+                "baseline_ref": "main",
+                "baseline_sha": sha,
+                "roadmap_ref": "roadmap/294-autonomy",
+                "roadmap_sha": sha,
+                "consumer_visible": False,
+                "not_applicable_reason": "Synthetic internal fixture",
+                "scenario": None,
+                "parameters": [],
+                "old_argv": [],
+                "new_argv": [],
+            },
+        }
     native = state / "native-fixture"
     native.write_text(
         "#!" + sys.executable + "\nimport sys\n"
@@ -163,7 +215,7 @@ def build(base: Path) -> dict[str, str]:
         "started_at": now,
         "task_iterations": 0,
         "follow_up_issues": 0,
-        "approved_order": [301],
+        "approved_order": [301, *extra_tasks],
         "approved_plans_digest": guards.canonical_digest(plans),
         "approved_final_digest": None,
         "approved_launch_digest": None,
@@ -238,11 +290,20 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX frozen factory
 
 
 @pytest.mark.parametrize(
-    "fault", [
-        None, "workspace", "source", "revocation", "ownership",
-        "initial_dirty", "orphan", "unknown", "receipt", "handoff",
+    "fault",
+    [
+        None,
+        "workspace",
+        "source",
+        "revocation",
+        "ownership",
+        "initial_dirty",
+        "orphan",
+        "unknown",
+        "receipt",
+        "handoff",
         "role_ownership",
-    ]
+    ],
 )
 def test_frozen_factory_retains_completed_executor_across_processes(
     tmp_path: Path,
@@ -412,7 +473,8 @@ def test_frozen_factory_retains_completed_executor_across_processes(
         assert invoke(True) == 42
         assert not calls.exists()
         assert json.loads((state / "synthetic-factory-stop.json").read_text()) == {
-            "type": "HandoverError", "code": "DIRTY_WORKTREE",
+            "type": "HandoverError",
+            "code": "DIRTY_WORKTREE",
         }
         return
     assert invoke(True) == 77
@@ -425,17 +487,21 @@ def test_frozen_factory_retains_completed_executor_across_processes(
     if fault == "orphan":
         del saved["completed_executor"]
         workflow.StateStore(state / "bounded-workflow").save(
-            workflow._run_key(contract), saved,
+            workflow._run_key(contract),
+            saved,
         )
     elif fault == "unknown":
         saved["role_pending"] = "executor"
         workflow.StateStore(state / "bounded-workflow").save(
-            workflow._run_key(contract), saved,
+            workflow._run_key(contract),
+            saved,
         )
     elif fault == "receipt":
-        (state / "role-settings" / (
-            "receipt-" + proof["invocation_digest"] + ".json"
-        )).unlink()
+        (
+            state
+            / "role-settings"
+            / ("receipt-" + proof["invocation_digest"] + ".json")
+        ).unlink()
     elif fault == "handoff":
         next((state / "continuation").glob("handoff-*.json")).unlink()
     elif fault == "workspace":
@@ -449,8 +515,9 @@ def test_frozen_factory_retains_completed_executor_across_processes(
     if fault in {"ownership", "role_ownership"}:
         from tools import agent_epic_loop as local_loop
 
-        lock_directory = (state if fault == "ownership"
-                          else state / "continuation" / "ownership")
+        lock_directory = (
+            state if fault == "ownership" else state / "continuation" / "ownership"
+        )
         with local_loop.RunnerLock(lock_directory):
             assert invoke(False) == 42
     else:
@@ -465,7 +532,8 @@ def test_frozen_factory_retains_completed_executor_across_processes(
         stop = json.loads((state / "synthetic-factory-stop.json").read_text())
         expected = {
             "workspace": {
-                "type": "ContinuationError", "code": "CONTINUATION_WORKSPACE_CHANGED",
+                "type": "ContinuationError",
+                "code": "CONTINUATION_WORKSPACE_CHANGED",
             },
             "orphan": {"type": "HandoverError", "code": "DIRTY_WORKTREE"},
             "unknown": {"type": "HandoverError", "code": "DIRTY_WORKTREE"},
@@ -474,7 +542,8 @@ def test_frozen_factory_retains_completed_executor_across_processes(
                 "code": "CONTINUATION_REASONING_UNVERIFIED",
             },
             "handoff": {
-                "type": "ContinuationError", "code": "CONTINUATION_STATE_INVALID",
+                "type": "ContinuationError",
+                "code": "CONTINUATION_STATE_INVALID",
             },
             "role_ownership": {"type": "LoopError", "code": "RUNNER_LOCKED"},
             "source": {

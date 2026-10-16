@@ -165,11 +165,218 @@ def test_cancel_during_wait_has_no_later_read(tmp_path: Path) -> None:
     assert current.inspect()["requests"]["1"]["attempts"] == 1
 
 
+def test_repository_metadata_get_uses_bounded_scoped_read(tmp_path: Path) -> None:
+    from tools import agent_coordinator_branch as branch
+
+    argv = ("gh", "api", "repos/owner/repo")
+    assert reads.read_only(argv)
+    clock = Clock()
+    calls: list[tuple[str, ...]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(command))
+        assert tuple(command) == argv
+        assert 0 < kwargs["timeout"] <= 120
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            json.dumps({"full_name": "owner/repo", "default_branch": "main"}),
+            "",
+        )
+
+    current = reader(tmp_path, clock, run)
+    assert branch.GitHubCLI(read=current.command).repository("owner/repo") == {
+        "nameWithOwner": "owner/repo",
+        "defaultBranchRef": {"name": "main"},
+    }
+    assert calls == [argv]
+    saved = current.inspect()
+    assert saved["requests"]["1"]["attempts"] == 1
+    assert saved["requests"]["1"]["status"] == "READY"
+    assert saved["deadline_at"] == 100_900
+    assert clock.elapsed == 0
+
+
+def test_canonical_comparison_uses_bounded_scoped_read(tmp_path: Path) -> None:
+    from tools import agent_coordinator_branch as branch
+
+    argv = ("gh", "api", "repos/owner/repo/compare/main...roadmap%2F294-autonomy")
+    assert reads.read_only(argv)
+    clock = Clock()
+    calls: list[tuple[str, ...]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(tuple(command))
+        assert tuple(command) == argv
+        assert 0 < kwargs["timeout"] <= 120
+        return subprocess.CompletedProcess(command, 0, '{"status":"ahead"}', "")
+
+    current = reader(tmp_path, clock, run)
+    assert (
+        branch.GitHubCLI(read=current.command).compare(
+            "owner/repo", "main", "roadmap/294-autonomy"
+        )
+        == "ahead"
+    )
+    assert calls == [argv]
+    saved = current.inspect()
+    assert saved["requests"]["1"]["attempts"] == 1
+    assert saved["requests"]["1"]["status"] == "READY"
+    assert saved["deadline_at"] == 100_900
+    assert clock.elapsed == 0
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("gh", "api", "repos/owner/repo"),
+        (
+            "gh",
+            "issue",
+            "view",
+            "303",
+            "--repo",
+            "owner/repo",
+            "--json",
+            "number,state,parent,subIssues",
+        ),
+        (
+            "gh",
+            "issue",
+            "view",
+            "303",
+            "--repo",
+            "owner/repo",
+            "--json",
+            "number,state,parent,body",
+        ),
+        (
+            "gh",
+            "issue",
+            "view",
+            "303",
+            "--repo",
+            "owner/repo",
+            "--json",
+            "number,title,state,url,parent,subIssues,blockedBy",
+        ),
+        (
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            "repos/owner/repo/branches?per_page=100",
+        ),
+        ("gh", "api", "repos/owner/repo/compare/main...roadmap%2F294-autonomy"),
+        ("gh", "api", "repos/owner/repo/compare/" + "a" * 40 + "..." + "b" * 40),
+        (
+            "gh",
+            "pr",
+            "view",
+            "7",
+            "--repo",
+            "owner/repo",
+            "--json",
+            "number,state,headRefName,baseRefName,headRefOid,baseRefOid,mergeCommit",
+        ),
+        (
+            "gh",
+            "pr",
+            "checks",
+            "7",
+            "--repo",
+            "owner/repo",
+            "--json",
+            "name,state,link",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/commits/" + "a" * 40 + "/check-runs?per_page=100",
+        ),
+        ("gh", "api", "repos/owner/repo/check-suites/42"),
+        ("gh", "api", "repos/owner/repo/actions/runs/43"),
+        ("gh", "api", "repos/owner/repo/actions/runs/43/jobs?per_page=100"),
+    ],
+)
+def test_canonical_session_read_argv_has_closed_grammar(argv: tuple[str, ...]) -> None:
+    assert reads.read_only(argv)
+
+
 @pytest.mark.parametrize(
     "argv",
     [
         ("git", "ls-remote", "origin"),
         ("gh", "api", "repos/other/repo/branches"),
+        ("gh", "api", "repos/other/repo/compare/main...roadmap%2F294-autonomy"),
+        ("gh", "api", "repos/owner/repository/compare/main...roadmap%2F294-autonomy"),
+        ("gh", "api", "repos/owner/repo-extra/compare/main...roadmap%2F294-autonomy"),
+        ("gh", "api", "repos/owner/repo/compare/main...../other"),
+        ("gh", "api", "repos/owner/repo/compare/main...%2E%2E%2Fother"),
+        ("gh", "api", "repos/owner/repo/compare/main...roadmap%2F..%2Fother"),
+        ("gh", "api", "repos/owner/repo/compare/main...roadmap%2f294-autonomy"),
+        ("gh", "api", "repos/owner/repo/compare/main...roadmap%252F294-autonomy"),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy?per_page=100",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy",
+            "--paginate",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy",
+            "--slurp",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy",
+            "--method",
+            "GET",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy",
+            "--method",
+            "POST",
+        ),
+        (
+            "gh",
+            "api",
+            "repos/owner/repo/compare/main...roadmap%2F294-autonomy",
+            "-f",
+            "body=sentinel",
+        ),
+        ("gh", "api", "https://api.github.com/repos/owner/repo/compare/main...head"),
+        ("gh", "api", "repos/owner/repo/compare/main...head...other"),
+        ("gh", "api", "repos/owner/repo/compare/main..head"),
+        ("gh", "api", "repos/owner/repo/compare/main....head"),
+        ("gh", "api", "repos/owner/repo/compare/main...head.lock"),
+        ("gh", "api", "repos/owner/repo/compare/main...%2Fhead"),
+        ("gh", "api", "repos/owner/repo/compare/main...head%2F"),
+        ("gh", "api", "repos/owner/repo/compare/main%2E%2E%2Ehead"),
+        ("gh", "api", "repos/owner/repo/compare/main..." + "h" * 256),
+        ("gh", "api", "repos/owner/repo/compare"),
+        ("gh", "api", "graphql"),
+        ("gh", "api", "repos/other/repo"),
+        ("gh", "api", "repos/owner/repository"),
+        ("gh", "api", "repos/owner/repo-extra"),
+        ("gh", "api", "repos/owner/repo?per_page=100"),
+        ("gh", "api", "repos/owner/repo/"),
+        ("gh", "api", "repos/owner/repo/../other"),
+        ("gh", "api", "https://api.github.com/repos/owner/repo"),
+        ("gh", "api", "repos/owner/repo", "--paginate"),
+        ("gh", "api", "repos/owner/repo", "--slurp"),
+        ("gh", "api", "repos/owner/repo", "--method", "GET"),
+        ("gh", "api", "repos/owner/repo", "--method", "POST"),
+        ("gh", "api", "repos/owner/repo", "-f", "body=sentinel"),
         ("gh", "api", "repos/owner/repo/issues", "--method", "POST"),
     ],
 )
@@ -182,6 +389,7 @@ def test_git_writes_and_foreign_repository_are_ineligible(
     )
     with pytest.raises(wait.WaitError, match="WAIT_READ_INELIGIBLE"):
         current.command(argv)
+    assert current.inspect()["requests"] == {}
 
 
 def test_symlink_storage_does_not_create_external_artifacts(tmp_path: Path) -> None:
