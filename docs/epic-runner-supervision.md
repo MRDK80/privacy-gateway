@@ -81,6 +81,32 @@ Goal/automation и не передавать другой chat полномоч�
 разрешения владельца. Если mechanism не настроен и не проверен, наблюдать в
 активном turn до terminal result либо конкретной блокировки.
 
+### Проверка сохранённого расписания
+
+Для отдельно разрешённого schedule после создания, изменения или подтверждения:
+
+1. Получить фактический automation ID. Suggestion card, ответ «rendered» и
+   сообщение владельца о подтверждении — отдельные факты, не receipt сохранения.
+2. Через purpose-built view планировщика (например, `automation_update` с
+   `mode=view`) прочитать сохранённую запись по этому ID. Проверить `ACTIVE`,
+   intended chat/host, полную дату, timezone и next-run; сопоставить время
+   с запросом владельца. Если view не возвращает обязательное поле, получить
+   его из проверяемого read-only источника планировщика, иначе проверка неполна.
+3. В private handover сохранить ID, client/host и target chat identity, время
+   наблюдения, фактические status/date/timezone/next-run и источник read-back.
+   Не сохранять raw prompt, payload, ключи или чувствительные логи.
+4. Если ID/сохранённая запись/обязательные поля недоступны или расходятся,
+   настройка wakeup `BLOCKED`: назвать недостающее evidence и fallback —
+   сопровождение в активном turn либо конкретный handover владельцу. Не писать
+   «wakeup настроен» и не обещать автоматическое продолжение. Отсутствие записи
+   не доказывает, что она никогда не сохранялась. При неизвестном исходе сначала
+   read-only reconciliation; не создавать дубликат из-за тишины.
+
+Read-back подтверждает настройку, а не исполнение: отдельный фактический probe
+ниже остаётся обязательным. Новое расписание или synthetic wakeup допускаются
+только при применимом разрешении на время и scope. Receipt не выдаёт полномочий,
+не продлевает deadline/мандат и не отменяет stop/expiry/revocation.
+
 Если разрешён переход, сначала на synthetic fixture проверить его фактическое
 пробуждение, получение прежней identity и восстановление read-only наблюдения.
 Записать mechanism ID, получателя, evidence последнего успешного wakeup,
@@ -160,6 +186,7 @@ reconciliation. Не запускать дополнительный #131 runner
 | Reconnect | Process/start и state identities сверены read-only; нет второго runner или повторного effect. |
 | Owner stop, expiry/revoke во время wait | Дальнейшие effects запрещены; success read/CI не открывает authority. |
 | UNKNOWN write | Только read-only reconciliation; нет фиктивного receipt или blind retry. |
+| Schedule confirmation | Есть actual ID и read-back ACTIVE с intended chat/host, датой/timezone/next-run; карточка без receipt даёт BLOCKED, без обещания wakeup и дубликата. |
 | Turn transition | Есть фактический synthetic wakeup и восстановление identity либо явно «не поддерживается/не проверено», без обещания фона. |
 
 ## Reflection, handover и применение к #131
