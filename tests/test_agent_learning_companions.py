@@ -22,6 +22,7 @@ def setup(tmp_path: Path) -> tuple[StorageReader, Path]:
     return reader, seed / "learning-invocations"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_immutable_idempotent_companion_conflict(tmp_path: Path) -> None:
     reader, directory = setup(tmp_path)
     with RunnerLock(reader.seed):
@@ -35,6 +36,7 @@ def test_immutable_idempotent_companion_conflict(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("fault", ["symlink", "hardlink", "partial", "mode"])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_bad_retained_companion_blocks_next_write(tmp_path: Path, fault: str) -> None:
     reader, directory = setup(tmp_path)
     with RunnerLock(reader.seed):
@@ -58,6 +60,7 @@ def test_bad_retained_companion_blocks_next_write(tmp_path: Path, fault: str) ->
 @pytest.mark.parametrize(
     "limit", ["max_records", "max_store_bytes", "max_record_bytes"]
 )
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_existing_caps_do_not_replace_companion(tmp_path: Path, limit: str) -> None:
     reader, directory = setup(tmp_path)
     with RunnerLock(reader.seed):

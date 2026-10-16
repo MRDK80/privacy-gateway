@@ -1,5 +1,6 @@
 """Closed companion enumeration is bounded and never invents role calls."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ def problem(value: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_companion_is_not_an_extra_call(tmp_path: Path) -> None:
     reader, directory, value = fixture(tmp_path)
     with RunnerLock(reader.seed):
@@ -62,6 +64,7 @@ def test_companion_is_not_an_extra_call(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("damage", ["orphan", "role", "unknown", "record-cap"])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_bad_companion_cannot_be_silently_skipped(tmp_path: Path, damage: str) -> None:
     reader, directory, value = fixture(tmp_path)
     binding = problem(value)
@@ -87,6 +90,7 @@ def test_bad_companion_cannot_be_silently_skipped(tmp_path: Path, damage: str) -
         _metadata(reader, directory, task=302, run_id="c" * 32)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_every_completed_invocation_requires_its_problem_companion(
     tmp_path: Path,
 ) -> None:

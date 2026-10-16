@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +25,7 @@ def runtime() -> Runtime:
     return value
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_new_invocation_cannot_exceed_record_cap(tmp_path: Path) -> None:
     value = runtime()
     value.reader.owner["limits"]["max_records"] = 1

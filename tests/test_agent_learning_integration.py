@@ -51,6 +51,9 @@ def multi(
         version_digest=hashlib.sha256(b"codex-cli 0.157.1").hexdigest(),
     )
     pinned = rule()
+    pinned["environment"]["python_minor"] = (
+        f"{sys.version_info.major}.{sys.version_info.minor}"
+    )
     pinned.update(task_class="feature")
     pinned["environment"]["backend_digest"] = digest(backend.document(owner_backend))
     pinned["regression_checks"][0]["argv_digest"] = digest(["mypy", "."])

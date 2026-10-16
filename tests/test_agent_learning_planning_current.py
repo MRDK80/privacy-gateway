@@ -1,5 +1,6 @@
 """Current planning relevance rejects unapproved request before transport."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from tests.test_agent_learning_planning_sources import (
 
 
 @pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_current_origin_before_original_reservation(
     tmp_path: Path, failure: bool
 ) -> None:
@@ -48,6 +50,7 @@ def test_current_origin_before_original_reservation(
         "request['task_profile']['task_class']='unapproved'",
     ],
 )
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_current_origin_rejects_unapproved_request_before_call(
     tmp_path: Path, mutation: str
 ) -> None:

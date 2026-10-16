@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +20,7 @@ from tests.test_agent_learning_invocation import current_gate
 from tests.test_agent_learning_records import observation
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_empty_pinned_catalog_selects_no_hints(tmp_path: Path) -> None:
     value = prepared(tmp_path)
     body = """from tools.agent_epic_runtime_cli import build_session
@@ -29,6 +31,7 @@ print(json.dumps({'hints':len(value['hints']),'role':value['role']}))"""
     assert child(value, body) == {"hints": 0, "role": "executor"}
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_empty_catalog_never_promotes_supplied_pass_flags(tmp_path: Path) -> None:
     value = prepared(tmp_path)
     state = Path(value["state"])

@@ -1,5 +1,6 @@
 """Consumed planning prefix proof preserves original counters on source loss."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from tests.test_agent_learning_planning_sources import (
 
 
 @pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_verified_original_unhinted_prefix_preserves_attempts(
     tmp_path: Path, failure: bool
 ) -> None:
@@ -32,6 +34,7 @@ def test_verified_original_unhinted_prefix_preserves_attempts(
 
 
 @pytest.mark.parametrize("artifact", ["validation", "metadata"])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_missing_original_consumed_prefix_blocks_barrier(
     tmp_path: Path, artifact: str
 ) -> None:

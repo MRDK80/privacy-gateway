@@ -1,5 +1,6 @@
 """Fresh native source-reader context and bounded planning provenance guards."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from tests.test_agent_learning_planning_sources import planning_fixture
 
 
 @pytest.mark.parametrize("boundary", ["cycle", "depth"])
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_original_replay_rejects_recursive_or_exhausted_provenance(
     tmp_path: Path, boundary: str
 ) -> None:
@@ -32,6 +34,7 @@ def test_original_replay_rejects_recursive_or_exhausted_provenance(
     assert not (Path(value["state"]) / "planning/301/admission.json").exists()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_hinted_origin_requires_actual_validated_session_context(
     tmp_path: Path,
 ) -> None:
@@ -45,6 +48,7 @@ def test_hinted_origin_requires_actual_validated_session_context(
     assert result["code"] == "LEARNING_SOURCE_INVALID"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_actual_verifier_binds_its_own_reader_for_original_proof(
     tmp_path: Path,
 ) -> None:

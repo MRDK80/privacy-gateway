@@ -1,5 +1,6 @@
 """Actual native role calls see immutable applicability before transport."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,7 @@ def checked_roles(value: dict[str, str]) -> None:
     path.write_text(original.replace(marker, marker + BEFORE_TRANSPORT))
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX private learning runtime fixture")
 def test_actual_executor_controller_receive_problem_before_native_transport(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
