@@ -150,10 +150,15 @@ def codex_role_adapter(
         assert continuation_backend is not None and continuation_state is not None
         from tools.agent_continuation_backend import SettingsAdapter
 
-        return SettingsAdapter(
+        result = SettingsAdapter(
             adapter, continuation_backend, continuation_profile,
             continuation_state, continuation_guard,
         )
+        if continuation_config.get("schema_version") == "7.0":
+            from tools.agent_learning_evidence import SourceReader
+            result.learning_enabled = True
+            result.learning_reader = SourceReader(continuation_state, root)
+        return result
 
     if quota_state is not None:
         from tools import agent_epic_runtime_cli as guards
@@ -433,6 +438,9 @@ class ReviewedWorkflow:
 
         class CaptureAdapter:
             continuation: Any = None
+            learning_enabled = getattr(delegate, "learning_enabled", False) is True
+            learning_reader = getattr(delegate, "learning_reader", None)
+            learning_runtime = getattr(delegate, "learning_runtime", None)
             backend_digest = getattr(delegate, "backend_digest", None)
             quota_resume_enabled = (
                 getattr(delegate, "quota_resume_enabled", False) is True

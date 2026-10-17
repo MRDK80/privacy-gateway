@@ -329,7 +329,10 @@ class Reader:
             not reads.read_only(argv)
             or (
                 argv[1] == "api"
-                and not any(arg.startswith(f"repos/{repo}/") for arg in argv[2:])
+                and not (
+                    (len(argv) == 3 and argv[2] == f"repos/{repo}")
+                    or any(arg.startswith(f"repos/{repo}/") for arg in argv[2:])
+                )
             )
             or (argv[1] != "api" and argv[5] != repo)
         ):

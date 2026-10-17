@@ -232,6 +232,8 @@ class SettingsAdapter(workflow.CommandAdapter):
         self.state, self.guard = state, guard
         self.backend_digest = getattr(delegate, "backend_digest", None)
         self.quota_resume_enabled = getattr(delegate, "quota_resume_enabled", False)
+        self.learning_enabled = False
+        self.learning_reader: Any = None
         self.store = SettingsStore(
             state / "role-settings",
             delegate.root,

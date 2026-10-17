@@ -24,9 +24,10 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     state = guards.secure_directory(state, root)
     installed, _ = install._validate(root, installation)
     config = guards.private_json(state / "epic-runtime.json")
-    if config.get("schema_version") not in {"2.0", "3.0", "4.0", "5.0", "6.0"} or set(
-        config
-    ) != guards.epic_config_keys(config):
+    if (config.get("schema_version") not in
+        {"2.0", "3.0", "4.0", "5.0", "6.0", "7.0"}
+        or set(config) != guards.epic_config_keys(config)):
+
         raise guards.DeploymentError("LAUNCH_PROFILE_REQUIRED")
     mandate = guards.private_json(state / "mandate.json")
     guards.bootstrap_authority(config, mandate, epic=True)
@@ -34,6 +35,7 @@ def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     guards.wait_profile_guard(state, config, mandate)
     guards.quota_profile_guard(state, config, mandate)
     guards.continuation_profile_guard(state, config, mandate)
+    guards.learning_profile_guard(state, config, mandate)
     if (
         installed["repository"] != mandate["repository"]
         or installed["policy_sha"] != mandate["policy_sha"]

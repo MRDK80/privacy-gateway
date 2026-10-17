@@ -1,0 +1,166 @@
+# ADR-302: factual terminal observations and verified bounded role hints
+
+Status: accepted by owner on 2026-10-12 after independent design PASS; implementation pending. Epic294/task302. No runtime installation, activation, mandate or final main merge is authorized by this document.
+
+## Scope and existing contracts
+
+Reuse ADR166 retrospective facts and ADR259 private lessons/tombstones. Existing public Library/pgw APIs, config1–6, task configs, mandate, gate/receipt/CI/demo schemas and installed authority retain their meanings. The new integration must not accept the existing lesson `verification` strings as proof of origin. A task, model summary or private-looking JSON cannot promote itself.
+
+Opt-in epic config7 extends the exact config6 fields with `approved_learning_digest`. A closed owner-approved learning-profile1 contains exactly schema_version, repository, epic, roadmap_ref, policy_sha, mandate_digest, owner_identity, catalog_digest and limits. Identity/digests must match the existing owner source. Limits contain exactly max_hints_per_role(0..3), max_hint_bytes(1..4096), max_record_bytes(1..65536), max_records(1..1024), max_store_bytes(1..8388608). Integers exclude booleans. Every bound is finite; exhaustion blocks the learning operation without deleting history/refunding execution budgets. No extra model-call authority is introduced. Task3 inherits the profile through the exact verified managed seed; its shape does not change.
+
+## Trust model and factual observation
+
+Untrusted sources include issue/PR/head text, candidate lessons, model findings, hints and stored summaries. Trusted code and pinned owner policy decide which canonical artifacts may be read. Owner OS-account/process compromise remains outside the baseline model. Digests bind identity, not authenticity of an attacker-owned file.
+
+For every terminal task workflow, the trusted observer rereads the original canonical workflow and independently validated private evidence. It records the observed outcome and codes, findings counts, repair_iterations, executor/controller calls, original start/duration and policy/workspace identity. Confirmed task delivery contributes a separate immutable delivery observation after actual merge, five post-merge checks and applicable demo; workflow PASS alone is not TASK_DONE. Failure/UNKNOWN remains a failure observation and is never rewritten as success. A negative wait/capacity pause is not falsely recorded as terminal completion.
+
+Closed observation1 fields: schema_version, record_id, kind, identity, outcome, metrics, source, record_digest. kind is TERMINAL_WORKFLOW or TASK_DELIVERY. identity contains exactly repository, epic, task, run_id, policy_sha, head_sha, merge_sha(nullable). outcome contains exactly status and machine_codes (bounded canonical codes, no messages). metrics contains exactly findings, repair_iterations, executor_calls, controller_calls, duration_seconds (finite nonnegative values from source). source contains exactly workflow_digest, gate_digest, controller_digest, delivery_digest, pr_ci_digest, post_ci_digest, demo_digest (nullable only when that source does not yet exist). record_id is a deterministic digest of run identity and observation kind; record_digest covers every other field. Unknown fields and inconsistent nullable/source/status combinations fail closed.
+
+Records live outside worktree in owner-only bounded append-only storage under the actual task/learning lock. Paths/parents/files reject symlinks, hardlinks, wrong owner or permissive modes. Exact duplicate content is idempotent; same identity with changed facts is a conflict. Reads are capped before decoding; malformed/partial records stop learning. Individual append/fsync is not a transaction with workflow, Git or delivery. Restart rereads canonical facts and reconciles missing append; no new invocation or budget reset follows from a missing learning record.
+
+No raw prompt, source text, tool logs, payload, key material, free-form controller note or chain-of-thought enters observations. Unrepresentable evidence remains in the original private source and cannot be promoted. All fixtures remain synthetic.
+
+## Catalog, candidate and independent verification
+
+The pinned reviewed policy includes a deterministic catalog. Each rule has a fixed rule_id, role(planner/executor/controller), task_class, problem_class, environment applicability, symptom_code, bounded diagnostic steps/minimal fix, and required reproducible evidence predicates. Catalog digest binds the actual trusted bytes. Its text receives ADR259 sanitization and injection/secret checks; it contains no shell/tool authority. Planner includes coordinator task-plan preparation; its independent planning reviewer receives controller-role hints applicable to planning, separately from patch review.
+
+The observer derives candidates only when exact observed facts match a catalog rule. Closed candidate1 contains exactly schema_version, candidate_id, rule_id, role, observation_digest, applicability_digest, evidence_digest, record_digest. No model-generated candidate text is accepted; unknown symptoms remain unpromoted factual observations. Failure may justify a diagnostic candidate, but successful verification of a resolved lesson requires separately confirmed correction/regression evidence; failure is never relabelled as a successful run.
+
+A separate read-only deterministic verifier performs source rereads. Closed verification1 contains exactly schema_version, lesson_id, candidate_digest, catalog_digest, observation_digest, evidence_digest, applicability_digest, record_digest. It proves exact policy/head/merge identity, actual full gate/snapshot, original independently produced controller receipt, five successful exact PR checks, five successful actual post-merge checks, applicable demo and the catalog's reproducible predicates. Stored booleans and an internally consistent forged digest cannot substitute for source origin. Old source facts are retained for historical provenance; current selection additionally checks policy/environment/task applicability and revocation/tombstone. Missing/stale/conflicting provenance rejects promotion or selection. A producer/model does not review its own generated semantic lesson: semantics are the separately reviewed pinned catalog, and every live promotion is mechanically checked against independent source evidence.
+
+Verified is a provenance/safety statement, not proof of performance improvement. The verifier does not execute inferred commands, trigger model inference, buy quota or expand a task grant. Potential general lessons outside the pinned catalog are proposals for a separate reviewed PR and owner decision.
+
+## Role selection and prompt integration
+
+Every role call selects from source-verified records with exact role/task_class/problem_class/environment/policy applicability and current tombstones. Environment is a closed tuple of supported OS, Python minor, gate profile, role backend digest and relevant tool version digests; no arbitrary host/path values. Candidate/task/model cannot choose a more permissive environment. Selection is deterministic by lesson_id, at most three hints and at most the approved UTF-8 envelope size.
+
+`UNTRUSTED_VERIFIED_HINT` appears only as separately labelled data after trusted policy and task contract. Planner, independent reviewer/controller and executor receive their own selections. Neither hint nor candidate changes permissions, acceptance criteria, scope, tools, budgets, owner receipts, gate commands or controller independence. The full actual prompt including hints enters the existing capacity preflight; review diff is never truncated to make room. If bounded hints alone exceed their limit, no invocation starts; do not silently omit evidence or claim evaluation of a different prompt.
+
+The trusted transport captures the actual selected hint digest in private invocation metadata; selection is reserved before the call and reread on continuation. Task/hint drift cannot replace hints halfway through a pending UNKNOWN call. Legacy no-learning configs retain their current request/transport schemas. Native App Server response/settings contracts remain unchanged.
+
+## Measurements and rollback
+
+Closed measurement1 contains exactly schema_version, measurement_id, source_run_digest, applicability_digest, hint_set_digest(nullable for baseline), outcome, iterations, calls, duration_seconds, record_digest. Metrics and outcome must match independently observed source runs. Closed evaluation1 contains exactly schema_version, evaluation_id, baseline_digest, hinted_digest, comparison, record_digest. Paired comparison requires matching task/problem/environment/policy and equivalent approved task/initial-workspace/criteria inputs; otherwise NO_MEASURED_COMPARISON. Missing baseline yields UNMEASURED, not claimed improvement. No hidden extra baseline model calls are made: only already authorized observed runs or separately approved bounded synthetic evaluation runs qualify, each preserving its own original consumed budgets.
+
+Improvement requires no outcome regression, no worse iterations/calls/duration, and at least one measured improvement. Worse outcome or any measured metric regression writes an append-only tombstone for the applied lesson IDs before future selection. Tombstone1 contains exactly schema_version, lesson_id, reason_code, evaluation_digest, record_digest. Explicit owner disable may use a separately bound owner source in place of evaluation; arbitrary model text cannot disable/promote another role's lesson. Identical tombstones are idempotent; no deletion/rewrite/reactivation of old records. Consumer rereads current tombstones before each new invocation. Conflicts/read failures fail closed instead of re-enabling hints.
+
+## What changes a skill
+
+Runtime adaptation changes only the bounded untrusted hint set. It never edits trusted skill/role instructions, AGENTS, policy, gates or validators. Gate/supervisor improvements are candidate tests/validators; permanent policy/skill/code changes require a separate causal reviewed owner-approved PR. No automatic self-modification or fine-tuning is claimed.
+
+## Required verification
+
+Regression/failure tests cover terminal success/failure/UNKNOWN without false success, duplicate/conflicting/partial records, missing original artifact, forged lesson/status/digest, stale policy/CI/head/merge/demo, privacy/injection, role/environment mismatch, bounds, tombstones/rollback and unchanged budgets/permissions. Frozen two-task Session tests prove terminal observation → independently verified catalog lesson → next role-specific prompt metadata, and that no nonverified/failure-only lesson reaches a consumer. Baseline/hinted measurements use actual observed synthetic calls, with outcome/metric regression disabling future hints. Source-only/frozen tests and optional real pilot evidence remain distinct.
+
+Implementation must fix exact bounded shapes and evidence-reader adapters in contract tests before production wiring; deviations from this decision require owner approval before code. Full local gate, independent controller, exact PR/post-merge CI and actual merge demo remain mandatory.
+
+## Exact source adapters and invocation bindings
+
+The new trusted `agent_learning_evidence.SourceReader` accepts only the verified managed state root and repository root. It derives task directories through Session.task_store, never from a candidate path. All readers use owner-only capped file opens under the canonical task/learning lock and verify installed policy bytes first. Input digests are expectations, not source objects. Reader methods and their source are fixed:
+
+- `workflow(task, run_key)`: bounded-workflow/<24hex>.json through WorkflowStore, validated terminal run identity and original contract. The key is derived with existing workflow._run_key, not supplied by a model.
+- `controller(task, invocation)`: continuation/reservation-<digest>.json, checkpoint-<digest>.json, review-<digest>.json and role-settings receipt-<digest>.json through the existing closed source stores. Reread completed reservation, requested/effective settings, original output digest and full call chain; only the actual controller role counts. `controller_boundary.gate` in the original checkpoint supplies retained gate bytes, verified with existing gate/snapshot validators. Historical artifacts are retained in their original private source; observing a hash alone is insufficient. Missing retained gate bytes means no promotion.
+- `delivery(task)`: original delivery-ledger.json through Ledger.load and canonical request/receipt validators, bound to task checkpoint PR/head/merge, commit/push/createPR/merge/check effects. A stored task status alone cannot prove applied effects; UNKNOWN blocks promotion.
+- `ci(task, phase)`: fixed primary GitHub reader through the existing bounded wait scope and source CI assessment, deriving PR/head or actual merge only from validated delivery facts. Read original run/job/check IDs, actual head SHA, workflow names, latest required attempts and successful conclusions; preserve a closed private normalized source receipt with those facts. No caller-provided checks array qualifies. Historical receipt is reread and current applicability/identity is separately checked. A newer failed/stale attempt invalidates promotion.
+- `demo(task)`: original phase-bound demo completion/assessment through TaskPhaseRuntime._demo(require_completion=True) and approved demo plan source, checking actual merge SHA and receipt mode. Synthetic and real owner receipts remain distinct; no model may supply owner observation.
+
+No source adapter follows arbitrary URLs, paths, commands or external IDs from a candidate. A verifier's reproducibility check validates the retained trusted full-gate check outcomes and the exact catalog predicate against those artifacts; it does not run a model-invented command. Extra read calls consume existing finite wait limits/deadlines.
+
+Before any opted-in role starts, a new private hint-invocation1 record contains exactly schema_version, invocation_key, identity, role, ordinal, repair_iteration, catalog_digest, selection_digest, lesson_ids, input_digest, prompt_digest, status, record_digest. All digests are lowercase64hex; lesson_ids is sorted unique0..3 digest IDs. role is planner/planning_review/executor/controller. identity contains repository, epic, task, policy_sha, owner_profile_digest, original_run_id. ordinal is consumed role ordinal1..existing role budget; repair_iteration0..2. status is RESERVED/COMPLETED/UNKNOWN. Original_run_id is the actual source run identity, never generated to refund consumed calls. input_digest hashes the complete original role input before adding hints; selection_digest hashes exact bounded hint bytes; prompt_digest hashes the full UTF-8 prompt actually handed to the trusted adapter. Prompt text itself is never stored here.
+
+Record RESERVED is durably attempted before starting the provider; if saving fails, do not invoke. Executor/controller metadata binds the same invocation digest/source settings receipt/reservation as Continuation. Planner/planning_review metadata binds existing PlanningRoles request identity, plan/admission digest, original planning ordinal/deadline and trusted adapter's observed exit/result validation. Planning transport/model settings are not upgraded or falsely reported as verified by this feature; unavailable backend facts cannot satisfy catalog rules requiring them. Replay/UNKNOWN never chooses new hint bytes or starts another role. Completed metadata is accepted only from that adapter's observed result, not a model return field.
+
+Config7 is resolved by managed_state plus exact bootstrap profile/config/mandate/launch verification before factories import candidate code. Generated task3 keeps its exact legacy fields, references the same managed seed and inherits learning solely when seed config is7 and the learning digest/profile/catalog still match. Planner and planning_review remain distinct invocation roles/counters despite controller-class catalog applicability. Profile1–6 calls receive no new request fields. For config7 the trusted wrapper appends one closed `untrusted_verified_hints` envelope with exactly schema_version, role, catalog_digest, selection_digest, hints; each hint contains exactly lesson_id, trust(UNTRUSTED_VERIFIED_HINT), problem_class, symptom_code, diagnostic_steps, minimal_fix, applicability, permissions(null). No owner/profile fields are supplied by this envelope.
+
+## Exact catalog and measurement contracts
+
+Catalog1 contains exactly schema_version and rules(0..128). Each rule contains exactly rule_id, role, task_class, problem_class, environment, symptom_code, diagnostic_steps, minimal_fix, applicability, predicates. role is planner/executor/controller; planning_review selects controller rules only for planning problem classes. Identifier fields match lowercase bounded ADR259 identifiers; symptom_code is uppercase canonical code1..64; texts use existing ADR259 ASCII/sanitization limits160, steps0..4. Environment contains exactly os(linux/windows), python_minor(3.11/3.12), gate_profile(repository-full), backend_digest(nullable only when the rule explicitly accepts unavailable observed settings), tool_digests(sorted unique0..8 SHA256). No user path/host/string labels. Predicates is a nonempty unique subset of the fixed enum FULL_GATE_PASS, INDEPENDENT_CONTROLLER_PASS, EXACT_PR_CI_PASS, EXACT_POST_CI_PASS, APPROVED_DEMO_PASS, MATCHED_FAILURE_AND_CORRECTION, RETAINED_REGRESSION_CHECK_PASS. A successful promotion always requires the first five plus the rule's correction/regression predicates; unsupported semantic claims cannot be expressed. Diagnostic texts are reviewed catalog data, not commands to execute.
+
+Measurement outcome is one of PASS/PASS_WITH_NOTES/FAIL_ESCALATE/STOPPED/EXPIRED/UNKNOWN, derived from terminal source. iterations is the observed workflow controller_calls, integer0..3. calls contains exactly planner, planning_review, executor, controller, each nonnegative finite integer bounded by its original approved role budget. duration_seconds is nonnegative integer from source, capped by original run duration bound. applicability_digest includes role/problem/environment/policy/catalog plus the original criteria digest, approved contract/grant digest and initial workspace HEAD/tree; a same-class different input cannot qualify as paired baseline.
+
+Evaluation comparison contains exactly status, outcome_regressed, iteration_delta, call_delta, duration_delta_seconds. status is UNMEASURED/NO_MEASURED_COMPARISON/NO_MEASURED_CHANGE/MEASURED_IMPROVEMENT/ROLLBACK_REQUIRED. outcome_regressed is a boolean derived by the fixed success ordering: PASS/PASS_WITH_NOTES both success, any hinted non-success when baseline success is regression; UNKNOWN is never improvement. Deltas are finite signed integers calculated from source measurements; call_delta compares total observed calls and also rejects any individual role increase for improvement. Nonmatching applicability never yields improvement or a fabricated zero delta: comparison status NO_MEASURED_COMPARISON, all deltas null and outcome_regressed null. No baseline: UNMEASURED with nullable baseline_digest and nullable comparison values. Those nullable combinations are exact schema alternatives.
+
+Rollback is a persistent fail-closed barrier. On a comparable regression, under the learning lock first persist a separate owner-only bounded negative `learning-blocked` latch bound to evaluation/lesson IDs, then append tombstones, then clear the latch only after source rereads prove every required tombstone exists. The latch file has an independent fixed4096-byte bound, not the append-store cap; it contains exactly schema_version, evaluation_digest, lesson_ids, reason_code, record_digest. If latch/tombstone write fails or store is full, the current call fails and all future opted-in hint selection is BLOCKED: no fallback to old active hints. A retained failed evaluation without complete tombstones also blocks after restart, even if the latch is missing. Pending rollback state is reconciled read-only before a new role; owner disable uses the same fail-closed barrier. No history truncation, silent dropped tombstone or automatic re-enable is allowed.
+
+## Reproducible correction and regression predicates
+
+Each catalog rule additionally contains `regression_checks`, a nonempty1..4 list of closed identities: gate_profile, check_name, argv_digest, test_identity(nullable). Values are from pinned trusted gate definitions, never candidate commands. check_name refers to the existing exact CheckResult name; argv_digest binds its actual canonical argv. If test_identity is nonnull, that exact normalized node/check ID and outcome must be retained by the actual trusted checker. Aggregate pytest success cannot stand in for a named regression test. Rules with unavailable original evidence remain unpromoted.
+
+For config7, a trusted gate observer retains normalized source evidence immediately after an actual gate checker finishes and before workflow overwrites that attempt. Fixed location is managed task `learning-source/gate/<gate-invocation-digest>.json`; the closed1.0 record contains exactly schema_version, invocation_digest, run_id, policy_sha, snapshot_digest, environment_digest, checks, record_digest. Each check contains exactly gate_profile, check_name, argv_digest, test_identity, outcome(PASS/FAIL), exit_code, evidence_digest. No stdout/stderr, arbitrary node name or message is retained; node identities must match the pinned catalog allowlist. The observer copies facts from actual trusted CheckResult execution, not supplied JSON. It does not change canonical gate commands, run extra processes or refund duration. SourceReader.gate rereads these capped owner-only records and verifies their exact gate/snapshot/source bindings; missing source means no promotion.
+
+MATCHED_FAILURE_AND_CORRECTION requires two distinct original terminal observations with the same rule_id, role, problem/environment/policy applicability, original approved criteria/grant identity and reproducible symptom/check identity. The failure observation must have an actual FAIL check and the matching canonical symptom. The correction must be a later separately verified successful task delivery with full gate, independent controller, exact PR/post-CI and approved demo; its corrected workspace may differ, but its initial applicability and claimed causal change must match the catalog rule and independently reviewed scope. Neither a failure alone nor a model description of a fix qualifies.
+
+RETAINED_REGRESSION_CHECK_PASS requires for every catalog regression_checks identity an original trusted FAIL outcome on the failure snapshot and an original trusted PASS/exit0 outcome on the independently reviewed correction snapshot, with matching argv/node/check identity, policy and environment. Both source invocations and source artifact digests are retained and reread. Whole-suite FULL_GATE_PASS, a boolean regression_passed, a caller-provided test result or a digest without original source cannot satisfy this predicate. Unsupported causal semantics or absent negative evidence remains candidate-only; synthetic source fixtures and actual production observations are reported separately.
+
+
+## Candidate owner decision: historical demo source after roadmap advancement
+
+Status: Accepted by owner on 2026-10-14 for this exact historical source contract.
+The owner authorized one bounded implementation repair exception; consumed
+attempts and original runtime budgets are not reset. This addendum changes only the
+internal historical `SourceReader.demo` adapter specified above. Live
+`TaskPhaseRuntime._demo(require_completion=True)` keeps its exact live-ref and
+owner-completion checks for execution, closure and original delivery observation.
+
+When the fresh actual roadmap SHA still equals the original merge, retain the exact
+original runtime._demo(require_completion=True) path, including all live-ref and
+owner checks; no new original-observation requirement is added there. This is an
+explicit identity branch, never a catch/fallback from DEMO_PENDING. A historical
+demo may remain valid after a later legitimate roadmap merge. Its
+assessment still names the original baseline and original task merge, never the
+new roadmap SHA. A dedicated historical adapter rereads the approved original
+recipe/derived admission, validates the closed demo plan and original repository,
+epic, task, roadmap ref and merge against the canonical checkpoint and contract.
+The checkpoint must record completed DEMO; checkpoint TASK_DONE alone is not
+proof. The fixed trusted proof graph remains controller/gate → unchanged six-APPLIED-effect
+delivery ledger/primary merged PR/head/merge → exact original PR/post-merge CI →
+historical demo → original workflow. Both planning `pair` and the general verifier
+retain these existing calls and their evidence bindings. The demo adapter does not
+repeat CI reads or accept caller-supplied proof arrays/booleans. Missing, pending,
+stale or conflicting source remains blocked. Own-task TASK_DONE observation may
+run before checkpoint completion only after these same six APPLIED effects exist;
+no incomplete ledger exception is added.
+
+In the advanced-roadmap branch, original baseline and merge commit objects must
+exist and validate as commits
+using fixed bounded read-only Git commands, with baseline ancestry into original
+merge. Baseline still must equal its fresh live ref, preserving the existing
+fail-closed baseline policy. The historical merge must equal or be an ancestor of
+a fresh same-repository current roadmap SHA. Obtain that lineage from one fixed
+primary GET `repos/{approved_repository}/compare/{original_merge_sha}...{current_sha}`
+under the existing wait reader. Both operands are validated lowercase40hex SHA,
+never candidate ref/URL/argv. Require status ahead for advancement, and base_commit.sha and
+merge_base_commit.sha equal original merge; equality retains the original live
+_demo branch without this comparison.
+Ref reads before and after validation must match the same baseline/current roadmap
+SHAs. No fetch, object creation, ref update, checkout or provider/model call occurs;
+missing original objects or unavailable primary proof fails closed.
+
+For consumer-visible plans reread the original owner-only demo-completion.json
+and require exact existing schema, original plan digest/SHAs/identity, current owner
+identity and completed_by_owner:true. No runtime/model generates that receipt.
+For non-visible plans retain only validated DEMO_NOT_APPLICABLE with its original
+nonempty reason. Readiness or a stored boolean/digest cannot establish observed
+owner completion. Only the advanced-roadmap historical branch rereads the original closed
+TASK_DELIVERY observation
+from an already existing secure canonical store under its task learning lock;
+missing store fails before constructor creation. It requires matching checkpoint
+repository/epic/task/policy/head/merge plus exact demo_digest of the reconstructed
+assessment. This digest is an origin link to the original successful live observer,
+not independent proof: the unchanged upstream delivery/CI/workflow/controller
+source rereads remain mandatory. Return the unchanged closed assessment and
+retain all original verification links; no observer or stored receipt is fabricated.
+
+Existing policy/config/mandate/lifecycle/private ownership, SourceReader source
+guards and trusted stage context remain required throughout. Reuse the exact
+historical stage/reader/ledger; attempts, deadlines, command limits and authority
+never reset or expand. Current relevance, paired measurement, tombstones and
+rollback keep their accepted independent predicates. No new public/receipt/CI
+schema, security permission or endpoint grammar is introduced. This explicit
+historical source-contract decision requires owner acceptance before production
+code; implementation also requires a separately bounded repair-budget exception.
+
+The comparison source uses the official GitHub compare contract, including
+base_commit and merge_base_commit fields; API origin/endpoint identity comes from
+the fixed approved primary reader, not an untrusted response URL:
+https://docs.github.com/en/rest/commits/commits#compare-two-commits
