@@ -62,6 +62,8 @@ Exact PR CI, controller/demo и post-merge evidence сохраняются; oper
 - До пяти автоматических repair-циклов/повышений суммарно на issue; новый blocker, Low, подагент или restart не сбрасывают consumed attempts. После исчерпания бюджета, неудачного повтора на максимуме или недоступного следующего повышения требуется решение владельца с blocker и уровнем. Owner exception может разрешать Low для новой механической правки после Ultra, но не восстанавливает бюджет и не меняет прежние точные approvals.
 - Падение gate/окружения/capacity само по себе не доказывает ошибку модели. Фиксируй причину, blocker, цепочку уровней, общий бюджет и возврат Low; различай client dispatch и подтверждение backend по CONTRIBUTING.md. Меньшие runtime budgets, scope и независимость ролей сохраняются.
 
+- Конечный owner-approved mechanical packet и fixture preflight — по CONTRIBUTING.md; пакет сам не выдаётся policy и не сбрасывает budgets.
+
 ## Security invariants
 
 - Ключи, исходные и восстановленные значения не логируются, не включаются в
