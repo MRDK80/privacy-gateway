@@ -73,6 +73,10 @@ Scope и permissions сохраняются; неполное обязатель
 
 ## Операторские проверки во время repair
 
+Узкие задания и компактный handoff следуют CONTRIBUTING.md / supervision
+runbook без потери обязательного role input, independent review и primary
+evidence. Формат не выдаёт новый model call, chat или permission.
+
 Конечный owner-approved mechanical packet и fixture preflight определены в
 CONTRIBUTING.md. Пакет не создаётся этой policy автоматически, не расширяет
 runtime/task contract и его меньшие budgets; executor не становится controller.
