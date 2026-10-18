@@ -73,6 +73,10 @@ Scope и permissions сохраняются; неполное обязатель
 
 ## Операторские проверки во время repair
 
+Конечный owner-approved mechanical packet и fixture preflight определены в
+CONTRIBUTING.md. Пакет не создаётся этой policy автоматически, не расширяет
+runtime/task contract и его меньшие budgets; executor не становится controller.
+
 Промежуточные исправления проверяются связанными regression/integration tests
 и быстрыми lint/type/hooks проверками по CONTRIBUTING.md. В отчёте указываются
 выбор тестов, проверенные исходники и первичные результаты; scoped PASS не

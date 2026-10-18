@@ -186,6 +186,48 @@ machine-readable schemas и runtime-мандаты не расширяются. 
 циклов не заменяют меньшие budgets исполняемого task contract или runtime;
 их исчерпание сохраняет соответствующий stop.
 
+## Конечный пакет механических исправлений
+
+После исчерпания issue-wide budget владелец может явно разрешить конечный
+пакет связанных механических repairs. Это конкретный owner exception:
+issue/план, новый blocker, Low или принятие этой policy сами по себе пакет
+не разрешают и consumed attempts не сбрасывают. Прежние approvals и меньшие
+runtime/task budgets сохраняются; для #303 эта policy не создаёт grant.
+
+До запроса объедините уже найденные связанные дефекты в один reviewable scope.
+Запрос и receipt задают issue/blocker, exact baseline, файлы/границы,
+разрешённые категории и исключения, model/reasoning, конечное число раундов,
+deadline, проверки и их лимиты, число дорогих запусков и STOP-условия.
+Раунд — ограниченные исправление → независимый review → validation;
+внутренние повторы тоже имеют конечный предел. Failed/прерванный раунд
+учитывается по approval, а не исчезает из истории. «До PASS» не является
+конечным лимитом. Раунды исключения учитываются отдельно и не восстанавливают
+исчерпанный автоматический бюджет.
+
+В пакете можно перечислить format/import/local typing. Fixture setup,
+factory defaults, capacity, ожидаемые codes и ownership не являются
+автоматически format-only: допустимы только явно перечисленные изменения
+с сохранением assertions, реального entry point и source/fail-closed guards.
+Для capacity укажите точное начальное значение старое → новое; это не
+разрешение продлевать живой deadline, сбрасывать счётчик или изменять старое
+bound state. Production behavior, новый security/source/trust contract,
+ослабление теста/детекции/guard и неперечисленные лимиты требуют отдельного
+решения до изменения, независимо от остатка пакета.
+
+Внутри уже разрешённых файлов/категорий/раундов не спрашивайте заново за
+каждую строку. Новый finding за границами, exhausted rounds/deadline/runtime
+budget, revoke/expiry, UNKNOWN effect или нарушение preservation — STOP;
+применяются прежние reconciliation и owner-decision правила. Failure evidence,
+независимость ролей, regression proof, итоговый gate/CI/demo и отдельный
+approval epic → main сохраняются. Новая issue или UUID не обновляют лимиты.
+
+Пример конкретного запроса (не действующий grant): один synthetic test-файл
+на baseline X, только format/import/local typing, максимум два раунда,
+deadline T, scoped Ruff/mypy и независимый review; максимум один fresh
+behavioral run после принятия statics. Выход за эти категории — STOP.
+«Все fixture failures до green» или «любые capacity/ownership изменения»
+такой пакет не определяют. Молчание владельца не добавляет раунд/срок.
+
 ## Security-sensitive изменения
 
 - Threat model и контрактное решение фиксируются документально до production-кода.
@@ -218,6 +260,17 @@ regression/failure-path tests, затронутые integration-сценарии
 scope проверки, если затронуты его потребители. В handover фиксируются причина
 выбора, команды, проверенные исходники и фактические результаты. Scoped PASS
 не объявляется успешным полным gate или готовностью задачи.
+
+Перед дорогим genuine/full прогоном выполните связный preflight изменённой
+fixture и её прямых consumers: actual builder/defaults, imports/format/types,
+начальные budgets и полный prompt overhead, platform/toolchain assumptions,
+ownership и self-acquiring entry boundaries. Для генерируемого кода проверяйте
+будущие decoded bytes с тем же config/path context, а не только контейнер строк.
+Набор scoped checks и исходники фиксируются кратко. Preflight не выдаёт новых
+model calls, установки или validation rounds; принятые неизменные проверки
+не повторяются без основания. Он не заменяет behavioral/regression proof,
+не гарантирует обнаружение всех дефектов и не подтверждает genuine/READY.
+Исходные prerequisites дорогого запуска и обязательный итоговый gate остаются.
 
 После завершения всех исправлений и review полный gate из четырёх команд
 выполняется на итоговых исходниках перед `READY FOR REVIEW` и завершением
