@@ -40,6 +40,35 @@
    наблюдения фиксировать конкретную блокировку и владельца следующего действия.
    Не продлевать deadline или мандат. Не останавливать чужой действующий runner.
 
+## Короткий handoff и узкое задание
+
+Нормативные условия компактного контекста, bounded polling и reuse operator/checks
+определены в CONTRIBUTING.md. Примеры ниже не являются runtime schema или
+новым grant. Существующие supervision, reconnect и schedule-read-back guards
+остаются; полный raw хранится приватно и проверяется при необходимости.
+
+```text
+Цель/фаза/blocker: task N → roadmap R; scoped checks приняты, genuine не начат.
+Refs: source S, base B, approval A, checks receipt Q, operator O.
+Budget: consumed issue attempts K; exception E: static 1/1, genuine 0/1; deadline T.
+Process/progress: session нет по terminal Q; последнее доказательство — scoped PASS.
+Pending/next: effects нет по receipt; дождаться P, затем fresh operator admission.
+```
+
+Для работающего процесса вместо «session нет» обязательны его фактическая
+identity, last observation и отдельно последнее доказанное progress. Ссылка Q
+должна сохранять все нужные evidence; UNKNOWN не превращается в «effects нет».
+
+```text
+Задача: read-only review operator O относительно принятого B.
+Прочитай source/authority Q,A; проверь bindings, supervisor/caps и STOP.
+Не запускай target, не меняй source/output; один внешний report с findings.
+PASS касается только review; fresh identity/admission остаются prerequisites.
+```
+
+Нужные прошлые решения и ограничения передаются вместе с refs; сокращение
+не удаляет существенный контекст и не меняет требуемый role input/permissions.
+
 ## Exit, CI_PENDING и решения владельца
 
 Exit code и terminal output процесса проверяются вместе с canonical state.

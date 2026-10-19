@@ -572,6 +572,55 @@ ADR-290 transport retries учитываются отдельно: deadline и a
 local/CI evidence, последнее наблюдение, reconciliation и порядок продолжения.
 Проверяемые сценарии и ограничения: [supervision runbook](docs/epic-runner-supervision.md).
 
+## Компактный контекст и сопровождение
+
+Ведите один короткий актуальный handoff: цель/фаза/blocker, exact source/base
+refs, approvals и consumed budgets, принятые checks с receipt refs,
+process/session identity, last observation и отдельно доказанное progress,
+pending effects и следующий шаг. История остаётся в неизменяемых evidence;
+ссылки не заменяют нужного чтения источников и не удаляют обязательные поля
+PR/handover. Обновляйте сводку при значимом переходе вместо копии transcript.
+Private raw/payload не переносится в публичный отчёт.
+
+Разрешённому подагенту передавайте узкое задание: цель, нужные refs/paths,
+ограничения, необходимый контекст решений и DoD. Полный transcript не нужен,
+если его исключение не теряет существенных условий. Обязательный полный input
+роли и STOP при overflow не сокращаются вопреки контракту. Такой формат сам
+не разрешает новый chat/agent/model call или messaging; роли и независимость
+controller сохраняются.
+
+Начинайте чтение логов с компактной сводки, затем проверяйте нужные primary
+ranges/files. Не выводите заключение из усечённого output; whole-evidence
+review остаётся обязательным, когда требуется контрактом. Hash/index связывает
+источники, но не заменяет проверку смысла. Не копируйте огромные maps,
+descendants и raw payload в контекст без необходимости.
+
+Для тихих локальных процессов выбирайте bounded wait обычно 30–60 секунд,
+в пределах deadline и возможностей клиента; CI_PENDING проверяется primary
+read примерно раз в минуту. Соблюдайте обязательный user-facing cadence;
+сообщайте фактический progress/blocker кратко, не пересказывайте пустые polls.
+Срочный stop/expiry/новый input требуют более ранней реакции. Liveness и
+тишина не являются progress; сопровождение до terminal/blocker и проверка
+wakeup/handoff сохраняются.
+
+Переиспользуйте проверенный operator в пределах прежнего контракта вместо
+нового supervisor на каждый запуск: выделите changed bindings, проверьте
+exact inputs/argv/schema/caps, once/deadline, authority/preservation и fresh
+output/session identity. Старый PASS не разрешает новый effect. Изменённые
+source/security/process-signal semantics требуют применимого review заново;
+unchecked universal executable framework не вводится.
+
+Принятые checks не повторяются без changes/failure или конкретной причины
+недостоверности/freshness. Сохраняйте primary receipt и основание применимости;
+при source/base/input/environment drift его перепроверьте. Это не отменяет
+итоговый полный gate, controller, exact CI/demo и обязательные runtime checks.
+ADR-356 operator reuse не выдаётся за actual post-merge CI и не подменяет
+runtime source evidence. UNKNOWN/once/attempt/stop guards сохраняются.
+
+Экономия без сопоставимых фактических usage/временных данных остаётся
+ожиданием, а не измеренным процентом. Не добавляйте model calls только ради
+отчётности. Короткие примеры — в [supervision runbook](docs/epic-runner-supervision.md).
+
 ## Статусы
 
 - `TASK READY FOR REVIEW` — task-изменения применены, локальный gate зелёный,
