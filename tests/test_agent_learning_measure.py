@@ -12,12 +12,14 @@ from tools import agent_epic_runtime_cli as guards
 from tools.agent_orchestrate import StateStore
 
 from tests import test_agent_continuation_factory as factory
+from tests.learning_progress import Progress, timed
 from tests.test_agent_learning_evidence import child
 from tests.test_agent_learning_integration import DELIVERY, SETUP, multi, roles
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX frozen sources")
 
 
+@timed("fixture")
 def fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, cap: int = 100, repairs: int = 1
 ) -> dict[str, str]:
@@ -605,6 +607,7 @@ print(json.dumps({'calls':[pause_at,pause_at-1],'completed':len(metadata)}))
 )
 
 
+@timed("active_setup")
 def active_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pause_at: int = 1
 ) -> dict[str, str]:
@@ -835,14 +838,16 @@ print(json.dumps({'failures':failures,'calls':[3,2]}))"""
     )
     if role == "controller":
         cases += ("missing_review",)
-    for requested in cases:
+    progress = Progress()
+    for index, requested in enumerate(cases, 1):
         # Each independent fault probe starts a new bounded read invocation;
         # original task state, consumed role calls and all source guards persist.
-        result = child(
-            value,
-            "requested=" + repr(requested) + "\n" + body,
-            timeout_seconds=600,
-        )
+        with progress.phase("probe_total", index, len(cases)):
+            result = child(
+                value,
+                "requested=" + repr(requested) + "\n" + body,
+                timeout_seconds=600,
+            )
         assert result["calls"] == [3, 2]
         assert set(result["failures"]) == {requested}
         assert all(
