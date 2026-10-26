@@ -54,6 +54,7 @@ Scoped или прерванный прогон не считается полн
 Exact PR CI, controller/demo и post-merge evidence сохраняются; operator-only reuse — по CONTRIBUTING.md, runtime/deterministic gates неизменны.
 `git diff --check` — дополнительная проверка, не заменяющая четыре команды. Local gate и GitHub CI фиксируются раздельно;
 правила отчётности, Python policy и exact CI описаны в [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Opt-in составной local gate разрешён только по принятому exact-контракту [ADR-384](docs/ADR-384-resumable-local-gate.md) и условиям `CONTRIBUTING.md`. Без проверенного inventory/partition и terminal receipts сохраняются четыре исходные команды; snapshots и partial PASS не создают разрешения на retry.
 
 ## Reasoning при repair retry
 

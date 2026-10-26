@@ -1,0 +1,97 @@
+# #384 — возобновляемый local gate и периодические snapshots
+
+Статус: дизайн v2 одобрен владельцем 2026-10-26 после независимого BOUNDED PASS; реализация и её приёмка ещё не завершены. Источники: issue #384; ADR-163; CONTRIBUTING актуального 303-final-owner-aligned, раздел проверок; фактический STOP finalgate-v4. Этот документ не объявляет действующим новое правило gate.
+
+## Результат и границы
+
+Opt-in локальный инструмент сохраняет точные результаты pytest и завершённых quality commands, позволяет повторять только ещё не доказанные безопасные группы на том же неизменном candidate. Legacy agent_verify.py/schema1.0/четыре команды, PGW API, runtime-мандаты, CI и main approvals не меняются. Новый самостоятельный формат evidence не выдаётся за agent_verify OK. До принятия policy в causal PR #384 составной результат не заменяет обязательный полный gate. Старые точки stdout не импортируются; 303-v4 не получает выдуманный список PASS.
+
+## Две разные вещи: наблюдение и переиспользование
+
+Pytest plugin сообщает точный nodeid, начало и setup/call/teardown reports, duration, outcome, session finish. PASS call сохраняется немедленно как provisional. Reusable PASS появляется только для завершённой execution unit: все обязательные nodes/фазы завершены, sessionfinish без ошибки, child exit0, закрыты потоки, проверены исходники/окружение и нет UNKNOWN ownership. Поздний teardown/session error инвалидирует всю unit. Exit0 сам по себе недостаточен. Предусмотренный skip/xfail допустим только по заранее закреплённому coverage policy; обязательный genuine/другой обязательный node не может быть skipped/xfail. Неизвестный node, duplicate, лишняя попытка, неполный inventory, malformed report дают BLOCKED. Xpass вне заранее явной policy — отказ.
+
+## Execution units: честное ограничение V1
+
+По умолчанию весь pytest inventory — одна unit. Для практической экономии нужен проверенный versioned partition manifest: ordered точное разбиение полного collection inventory и явный аргумент изоляции каждой группы. Manifest закрепляется до запуска и проходит независимый source review. Автоматически выводить независимость по filename/AST/fixture scope запрещено: conftest, autouse, hooks, import/global state, order dependencies, external resources и session fixtures проверяются явно. Общие зависимости объединяются в одну unit; неизвестность требует объединения вплоть до whole suite. Один child pytest session на unit, исходный порядок внутри unit, без parallel/xdist в V1. Одна session fixture может повториться между доказанно независимыми units; это сознательное изменение процесса, которое должно быть проверено сравнением с непрерывным baseline. Collection hooks/deselection/unit selection входят в утверждённый manifest; никакого произвольного -k/--lf. Перед началом и resume полная collection сверяется; collection сама исполняет Python и выполняется в том же утверждённом synthetic/local test окружении, не считается read-only анализом.
+
+Checkpoint сохраняет результаты отдельных nodes даже внутри незавершённой unit, но после crash их можно использовать только для диагностики, не для пропуска. Живые fixtures, процессы и середина долгого genuine не сериализуются. Если для #303 не удастся доказать полезный partition, V1 честно сохранит список результатов, но не обещает пропуск уже завершённых nodes этой общей unit. Эта граница видна оператору до дорогого запуска.
+
+## Идентичность и приватность
+
+Fingerprint: полный проверяемый source inventory включая dirty/untracked public files и modes, head/base/worktree identity, executable/toolchain hashes, Python/OS, dependencies/plugins/code, pytest config/conftests, partition/coverage manifests, commands, закрытая allowlist environment projection и generator/config inputs. Source set не ограничивается diff. Untracked/ignored входы: только явные разрешённые inputs; private journal/cache/output исключаются из source identity, но не могут быть скрытым test input. Неизвестный input/окружение => reuse запрещён. V1 Linux/POSIX; другая платформа UNSUPPORTED с legacy fallback, не PASS. Необходимые caches объявляются и проверяются как окружение; если их влияние нельзя обосновать, reuse BLOCKED.
+
+Свежая сверка до/после каждой unit и при resume; любой drift отвергает весь reuse V1, без выборочной инвалидации и без reset исходной истории. Transient source/environment ABA между проверками не обнаруживается; нет обещания immutable execution или защиты от concurrent same-owner edits. Оператор обязан исключить writers на время validation; неизвестная конкуренция блокирует принятие. Глобальная инвалидация не является автоматическим разрешением нового запуска.
+
+Exact nodeids допускаются только для reviewed synthetic test collection: nodeids/parameter labels могут содержать secrets. До записи whitelist-safe inventory проверяется и закрепляется. Если безопасность nodeid не доказана, STOP без его записи; report содержит только ordinal+digest, это не разрешает затем угадывать exact ID. Raw prompts, env, locals, traceback messages и test payload не собираются. Private directory0700/files0600 вне public Git paths; no symlinks/nonregular paths. Публичный отчёт содержит counts/digests, не private IDs/paths. Hash не объявляется анонимизацией.
+
+## Journal и snapshot каждые 15 минут
+
+Один supervisor-владелец writer lock. Plugin передаёт bounded typed events по локальному каналу; supervisor валидирует seq/unit/node/phase и пишет append-only журнал. Event write синхронно подтверждается reporter, journal fsync перед ack; ошибка записи/переполнение/потеря канала — STOP, не безмолвная потеря PASS. Backpressure bounded, timeout не продлевает test budget. Изменение timing/failure modes plugin — явная цена инструмента; непрерывный baseline использует тот же observer.
+
+Snapshot timer supervisor работает независимо от pytest child: целевой interval900с по monotonic clock, первый snapshot до dispatch; затем по фиксированным due points без накопления дрейфа, плюс перед pause и terminal. Сохраняются run/source/manifest digests, journal committed prefix seq/hash, node phase outcomes/durations, unit terminal receipts, current IN_PROGRESS, attempted counts, remaining budget, actual wall/monotonic observation, last successful save. Если за15 минут нет завершения теста, snapshot всё равно создаётся. Scheduler не hard real-time: lateness явно сообщается; проверенный overdue/error прекращает следующий dispatch и инициирует bounded safe stop, а не замалчивается. Не обещать hard maximum15 минут при OS freeze/power loss.
+
+Snapshot immutable generation: bounded temporary file O_EXCL/no-follow в private dir, content validation/hash, fsync file, rename same directory, fsync directory. Два последних подтверждённых поколения и bounded journal достаточного retention; новый валидный durable checkpoint подтверждается до удаления старого. Reader не доверяет mutable latest-pointer, выбирает только валидную связку generation+committed journal prefix и непротиворечивые receipts. Неисправимый tail/corrupt committed prefix/пропущенный dispatch/неизвестный writer => BLOCKED, не восстановление PASS. Crash после child exit до terminal commit => unit UNKNOWN. Torn temporary snapshot не заменяет последний валидный; если snapshot lagged, journal можно replay только по полностью проверенной цепочке/структуре. При недоказанной записи/синхронизации нет обещания durability; same OS owner может подделать весь store и находится вне гарантии.
+
+Prospective V1 bounds: inventory <=20000 nodes; ID <=4096 UTF-8 bytes; event <=16KiB; snapshot<=32MiB; journal<=256MiB; два snapshots, один journal, <=384MiB total private evidence с резервом; stderr/stdout не входят и не собираются этим механизмом. Превышение закрывает запись/дальнейший dispatch без удаления недоказанных records; настройка до launch, не увеличение live quota. Точный accounting временного snapshot/rotation должен укладываться в quota; implementation не может полагаться только на free disk. После завершения explicit operator archival, не автоматическое удаление evidence незавершённого run.
+
+## Pause, clock и recovery
+
+Pause запрашивает остановку перед следующей unit. Текущая unit может закончиться в исходном deadline; emergency stop фиксирует interrupted/UNKNOWN и требует reconciliation имеющихся processes до resume. Нельзя запускать второй worker по тишине, сигналить неизвестному PID или объявлять cleanup CLEAN по exit parent. Lifecycle operator должен быть независимо проверен; применять старый census, давший RETAINED_LIVE_IDENTITY_CHANGED, без проверки запрещено.
+
+V1 не замораживает clocks: исходный абсолютный expiry и consumed active counters/attempts сохраняются. Pause не выдаёт новый budget, не продлевает approval/runtime/provider сроки. Across restart monotonic identity проверяется по boot identity; новый boot/неоднозначное elapsed => BLOCKED. Для длинного перерыва может потребоваться отдельное новое owner решение, но прежние receipts/counters не стираются. Новая попытка failed/interrupted unit всегда видна и разрешается только действующим retry authority; успешные units не повторяются без причины.
+
+## Aggregation и policy
+
+Aggregate PASS требует exact inventory union, каждый node ровно в одной принятой unit с полными phases и допустимым outcome, все unit terminal receipts, неизменный fingerprint, непротиворечивую историю dispatch/attempts, проверенную финализацию/ownership и четыре quality components. Ruff/mypy/pre-commit имеют отдельные исходные команды, receipts, source checks и exit0; их mutating hooks/formatters, изменившие candidate, инвалидируют evidence. Нельзя смешивать разные candidates/toolchains. Нет компенсации failed unit количеством PASS. Report явно называет составной gate, число sessions, reused/new units, skips/xfails и ограничения. GitHub CI/Post-merge доказательства независимы.
+
+В том же causal PR #384 policy явно разрешает данный exact aggregate вместо одного pytest invocation только для opt-in принятого partition/format/version и тех же quality obligations. agent_verify1.0 остаётся legacy; не fabricate его check list/OK. Нельзя закрывать #303 по новому aggregate до утверждения policy и покрытия полного нынешнего inventory.
+
+## Проверки и применение
+
+Bounded pure/synthetic tests с fake clock: timer900 при idle/long node; immediate event ack; normal final/pause flush; callPASS→teardownERROR; sessionfinish failure; childexit mismatch; crash до/во время/после checkpoint/fsync/terminal commit; torn latest+valid previous; corrupt committed journal; concurrentwriter; duplicate/missing/deselected nodes; unsafe IDs; source/env/base/manifest drift; expired budget; unknown liveworker; quota bound/rotation peak; whole-suite fallback; forbidden cross-unit fixture; exact aggregate vs uninterrupted instrumented baseline на одинаковом synthetic inventory. Fault injection только synthetic, no realprovider/network. Подтвердить CPU/I/O/timer overhead измерением, не выдуманным процентом.
+
+После design approval: отдельный task worktree от свежей roadmap (не dirty #303), narrow implementation+policy/test diff; related tests/fast checks, независимый controller, применимый full gate самой #384 на финальных исходниках и exactCI по действующим правилам. Никакого retroactive reuse #303-v4. Очередь владельца: #384 → #303 → #383 → #359 → #360 → #304. Реальные hooks/боты/provider/runtime install/activation/main merge исключены.
+
+## Первичные технические ссылки
+
+- https://docs.pytest.org/en/stable/reference/reference.html — pytest_runtest_logreport, pytest_sessionfinish и TestReport; implementation закрепляет фактически проверенную установленную версию, а не считает latest docs доказательством её поведения.
+- https://docs.pytest.org/en/stable/how-to/fixtures.html — lifecycle/scopes/teardown fixtures; setup/call результат не доказывает завершение общей session.
+
+## Обязательные уточнения независимого review
+
+1. Dispatch intent с unit/attempt/source identity и consumed allowance сохраняется и fsync-подтверждается ДО spawn. Любая неопределённость spawn/exit/cleanup остаётся UNKNOWN; запрещено возвращать attempt или повторять его по старому snapshot. Terminal receipt связывается с этим точным intent, child identity и всей unit.
+2. Recovery проверяет ВСЮ имеющуюся journal chain и её durable committed boundaries, включая всё после snapshot. Snapshot — ускорение чтения, не граница игнорирования поздних dispatch/failures. При повреждённом/пропавшем committed tail, противоречии поколений или недоказанном результате последнего intent — BLOCKED; нельзя откатиться на старый PASS/непотраченный бюджет. Старый snapshot допустим при torn новом temporary только если полная сохранённая цепочка цела и replay не теряет ни одной попытки. Произвольное удаление/подделка всех артефактов тем же OS owner не обнаруживается и не входит в обещанную защиту; отсутствие исходного launch-store никогда не трактуется как zero/new run.
+3. До dispatch делается encoded-size preflight реального inventory, полного worst-case phase/outcome envelope и journal event capacity в пределах заявленных лимитов. 20000 nodes и4096bytes ID — отдельные максимумы, не обещание их совместной вместимости в32MiB snapshot. Если реальная композиция не вмещается — отказ до тестов. Peak quota включает два retained snapshot, строящийся temp, current journal и metadata/rotation reserve; во время compact/rotation запрещена неучтённая вторая journal copy. Переполнение не лечится удалением несверенной истории.
+4. Для #303 полезный partition ещё не принят. Реализация snapshot сама по себе не разрешает пропуск её1909 наблюдённых точек или новых provisional nodes общей незавершённой session. Перед запуском #303 оператор должен показать принятые units и ожидаемый уровень reuse; при whole-suite fallback явно сообщить отсутствие ускорения после прерывания внутри unit.
+5. Genesis закрепляет original launch ID/source/manifest и начальные budgets; неизменяемые sequential commit receipts задают highest committed frontier. Reader сверяет genesis, все доступные commit receipts, journal chain и каждый snapshot frontier, не выбирает меньший frontier из-за удобного старого PASS. Missing referenced segment/receipt, gap sequence, hash mismatch, higher committed frontier без исходных bytes — BLOCKED. Последний недописанный uncommitted event также не допускает автоматический повтор: исходный dispatch receipt и ownership сначала reconciled. Схема anchor/commit записи не обещает независимый hardware anti-rollback; повреждение/потеря всех local anchors не даёт разрешения создать zero.
+
+
+## Принятое дополнение: аварийное продолжение
+
+# #384 — конкретный источник разрешения аварийного продолжения
+
+Статус: дизайн v2 одобрен владельцем 2026-10-26 после независимого BOUNDED PASS; реализация требует отдельной приёмки. Закрывает B1 whole review, не отменяя исходный UNKNOWN stop.
+
+Исходный дизайн разрешает повтор незавершённой unit только после reconciliation и по применимому разрешению/budget, но не определяет источник нового разрешения и доказательства cleanup. Полагаться на новый UUID, профиль с новым сроком или JSON-флаг CLEAN нельзя. Автоматическое расследование всей Linux process tree в V1 не добавляется: group-empty не доказывает отсутствие escaped descendants.
+
+Предлагается явная owner-run recovery disposition, отдельная от обычного resume. Владелец после read-only reconciliation исходного child/процессов и pending effects принимает конкретное решение для одного interrupted/failed scope. Система не обещает сама распознавать человеческое намерение или защититься от подделки тем же OS owner; owner действие — внешний trust source, а не вычисленный факт.
+
+## Точный контракт
+
+- Изначально до spawn durable intent фиксирует unit/index/attempt и original bindings. После spawn отдельный record содержит фактические direct-child PID/process-group и исходный boot; это наблюдение, не вечное ownership proof. При crash между spawn и записью PID outcome остаётся UNKNOWN.
+- При обычной контролируемой ошибке сохраняется typed failure/cleanup observation, если journal ещё writable. При power loss остаётся исходный unresolved intent; отсутствие failure record не разрешает повтор.
+- Обычный resume сохраняет BLOCKED для unresolved unit/inventory/quality. Запрос pause не выдаёт recovery authority.
+- Отдельный приватный owner disposition version1 связывает digest genesis/plan/profile/source, точный высший committed frontier/sequence, scope/index/current consumed attempt, исходный boot/clock/deadline, digest исходного read-only reconciliation evidence, owner decision `retry_once`, абсолютный срок не позже исходного и один следующий attempt. Никаких raw process messages/argv/env/payload или секретов.
+- Решение не является automatic proof cleanup. Ответственность утверждения cleanup/pending-effects reconciliation прямо принадлежит владельцу. При отсутствии проверяемого внешнего owner действия, reconciliation evidence или при UNKNOWN оператор не применяет disposition. Заявлять computed CLEAN запрещено. Snapshot никогда не является источником authority.
+- Применение — отдельный локальный operator entry с точным утверждённым SHA disposition и явной owner authorization этого вызова, вне автономного `resume`. Агент не создаёт и не применяет такие решения по одной только вероятности согласия. Receipt внешнего решения и его consumption фиксируются до нового dispatch.
+- Использованная попытка остаётся в append-only history; предыдущие успешные unit receipts сохраняются при том же fingerprint. Новый переход помечает только конкретный unresolved intent как `OWNER_RECONCILED_FOR_RETRY`, не как PASS/NOT_APPLIED. Выдаётся максимум один новый attempt, ограниченный исходным оставшимся execution/read/storage/event бюджетом. При недостатке capacity/deadline/expiry — BLOCKED, без расширения quota.
+- Inventory retry расходует следующий исходный max_collections slot; он не пополняется. Для unit/quality owner disposition является отдельным finite разрешением одной попытки, consumed attempts не обнуляются. Повторный отказ снова блокирует; автоматических retries нет.
+- Disposition одноразовый: exact frontier binding, digest и consumed record запрещают replay/conflict/применение к другому run. Пауза, stop/revoke/expiry, другая identity/boot или изменённые source/env/plan дают отказ. В V1 это не путь переноса PASS на новый candidate.
+
+## Проверки до принятия реализации
+
+Pure replay и synthetic operator tests: completed unitA → interrupted unitB → resumeBLOCKED → точный owner disposition после synthetic read-only reconciliation → один retryB без повторенияA; без receipt/неверный digest/frontier/scope/attempt/старый boot/expired/replayed owner decision — BLOCKED; failing retry не создаёт новый бюджет. Analogous inventory и quality failures. Дополнительно crash перед consumption/после consumption/до dispatch не разрешает дублировать действие.
+
+Это новый конкретный owner-source контракт; до реализации нужен независимый design review и решение владельца. Никакого применения recovery к #303-v4, provider/runtime activation, main merge или нового #303/genuine/full gate в этом пакете нет.
+
+Обязательное уточнение независимого review: проверка exact frontier, одноразовое consumption disposition и резервирование конкретной следующей попытки — один durable transition под writer lock, завершающийся ДО spawn. Crash после consumption не оставляет свободного grant/попытки; обычный resume остаётся BLOCKED до нового применимого решения. Раздельные события consume/grant/dispatch с промежуточным состоянием, позволяющим повтор, запрещены.

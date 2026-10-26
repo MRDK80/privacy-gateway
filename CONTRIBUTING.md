@@ -279,6 +279,21 @@ model calls, установки или validation rounds; принятые не�
 gate повторяется на новом итоговом состоянии. Failed или прерванный прогон
 не считается PASS, а набор частичных результатов не заменяет полный прогон.
 
+Opt-in исключение к запрету на составные partial результаты определено
+[ADR-384](docs/ADR-384-resumable-local-gate.md) и
+[runbook](docs/resumable-local-gate.md): только exact aggregate нового
+`agent_resumable_gate` version1 на одном неизменном candidate/environment,
+по заранее принятому полному inventory и независимо проверенному partition.
+Нужны terminal setup/call/teardown/session/child receipts каждой unit и три
+отдельных успешных quality components. Call PASS/точки stdout/прерванная unit
+не переиспользуются. Shared fixtures/order/global dependencies с неизвестной
+изоляцией требуют объединения units вплоть до всей suite. Journal/snapshots
+не выдают authority и не пополняют clocks/budgets; аварийный retry требует
+точного отдельного owner disposition после reconciliation. Exact GitHub CI
+этим результатом не заменяется; legacy agent_verify schema1.0 не меняется.
+Сам инструмент #384 проходит исходные четыре полные команды при приёмке,
+а не объявляет себя проверенным собственным aggregate.
+
 Успешный полный local gate без изменения проверенных исходников и окружения
 повторно не запускается, если нет конкретной причины недостоверности evidence.
 В отчёте сохраняются проверенные source tree/diff и SHA, окружение, команды
