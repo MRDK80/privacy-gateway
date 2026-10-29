@@ -38,6 +38,7 @@ def build(
     delivery_enabled: bool = False,
     with_demo: bool = False,
     with_planning_policy: bool = False,
+    initial_adapter_timeout: int = 120,
 ) -> dict[str, str]:
     assert not base.exists() and not base.is_symlink()
     base.mkdir(mode=0o700)
@@ -237,7 +238,7 @@ def build(
         "live_command": command,
         "phase_commands": {p: command for p in loop.PHASES[1:]},
         "reconcile_commands": {p: command for p in loop.PHASES[1:]},
-        "timeout_seconds": 120,
+        "timeout_seconds": initial_adapter_timeout,
         "output_limit": 100000,
         "epic_command": command
         + ["epic_resume", "--state-dir", str(state), "--repository-root", str(root)],

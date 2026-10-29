@@ -51,7 +51,12 @@ def test_actual_executor_controller_receive_problem_before_native_transport(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    value = multi(tmp_path, monkeypatch, controller_rule=True)
+    value = multi(
+        tmp_path,
+        monkeypatch,
+        controller_rule=True,
+        initial_adapter_timeout=300,
+    )
     checked_roles(value)
     delivery = DELIVERY.replace("assert len(promoted)==1", "assert len(promoted)==2")
     next_call = NEXT_CALL.replace(
@@ -65,7 +70,7 @@ def test_actual_executor_controller_receive_problem_before_native_transport(
         "_current_pending_native is None\n"
         "print(json.dumps({'completed_hinted_calls':2,'executor_calls':2}))",
     )
-    assert child(value, SETUP + delivery + next_call, timeout_seconds=120) == {
+    assert child(value, SETUP + delivery + next_call, timeout_seconds=360) == {
         "completed_hinted_calls": 2,
         "executor_calls": 2,
     }

@@ -43,7 +43,7 @@ class SessionRuntime:
         self.config = config
         self.wait_scope = wait_scope
         if (
-            config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}
+            config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0", "8.0"}
             and wait_scope is None
         ):
             raise loop.PhaseBlocked("WAIT_FRAME_REQUIRED")
@@ -67,6 +67,31 @@ class SessionRuntime:
         self.issues = queue.GhClient(read=read)
         self.github: branch.GitHubClient = branch.GitHubCLI(read=read)
 
+    @classmethod
+    def owner_original(cls, state: Path, root: Path) -> SessionRuntime:
+        """Construct the real Session only in the fixed no-create owner context."""
+        from tools.agent_owner_final_admission import _current_sources
+
+        source = _current_sources(state, root)
+        if source.frames is None or getattr(source, "session", None) is not None:
+            raise loop.PhaseBlocked("FINAL_APPROVAL_INVALID")
+        scope = Scope.owner_original(state, root)
+        result = cls(state, root, source.frames.sources["config"], wait_scope=scope)
+        source.session = result
+        return result
+
+    def _borrow_owner_scope(self) -> None:
+        from tools.agent_owner_final_admission import _current_sources
+
+        source = _current_sources(self.state, self.root)
+        if (
+            source.normal_session is not self
+            or getattr(source, "session", None) is not None
+        ):
+            raise loop.PhaseBlocked("FINAL_APPROVAL_INVALID")
+        self.wait_scope = Scope.owner_original(self.state, self.root)
+        source.session = self
+
     def _provenance_client(self) -> handover.GitHubCLI:
         if getattr(self, "wait_scope", None) is None:
             return handover.GitHubCLI()
@@ -74,9 +99,18 @@ class SessionRuntime:
 
     def _github_read(self, argv: Sequence[str]) -> str:
         assert self.wait_scope is not None
-        return self.wait_scope.reader(
-            self._read_stage or self._current_stage()
-        ).command(argv)
+        stage = self._read_stage or self._current_stage()
+        active = self.wait_scope.active_stage
+        if active is not None and active.startswith("FINAL:"):
+            if stage != active:
+                raise loop.PhaseBlocked("SESSION_SCOPE_CHANGED")
+            return self.wait_scope._active_reader().command(argv)
+        return self.wait_scope.reader(stage).command(argv)
+
+    def _historical_read(self, consumer: Any, argv: Sequence[str]) -> str:
+        from tools.agent_final_preparation_sources import _read_historical
+
+        return _read_historical(self, consumer, argv)
 
     @contextmanager
     def _stage(self, stage: str) -> Iterator[None]:
@@ -152,7 +186,7 @@ class SessionRuntime:
         options: dict[str, Any] = {}
         if guards.quota_enabled(self.config):
             options = {"quota_state": self.state, "wait_scope": self.wait_scope}
-        if self.config.get("schema_version") in {"6.0", "7.0"}:
+        if self.config.get("schema_version") in {"6.0", "7.0", "8.0"}:
             options["continuation_state"] = self.state
         result = codex_role_adapter(
             policy_root=Path(self.config["policy_root"]),
@@ -160,7 +194,7 @@ class SessionRuntime:
             policy_sha=self.identity["policy_sha"],
             **options,
         )
-        if self.config.get("schema_version") == "7.0":
+        if self.config.get("schema_version") in {"7.0", "8.0"}:
             from tools.agent_learning_evidence import SourceReader
             from tools.agent_learning_invocation import Runtime
 
@@ -304,7 +338,7 @@ class SessionRuntime:
     def _continuation_task_config(
         self, store: loop.CheckpointStore, approved: str, iterations: int
     ) -> None:
-        if self.config.get("schema_version") not in {"6.0", "7.0"}:
+        if self.config.get("schema_version") not in {"6.0", "7.0", "8.0"}:
             return
         mandate, digest, _ = self._fresh_authority(iterations)
         expected = {
@@ -477,7 +511,7 @@ class SessionRuntime:
             approved_order=tuple(self.config["approved_order"]),
             wait_scope=getattr(self, "wait_scope", None),
         )
-        if self.config.get("schema_version") == "7.0":
+        if self.config.get("schema_version") in {"7.0", "8.0"}:
             from tools.agent_learning_evidence import SourceReader
 
             engine.learning_reader = SourceReader(
@@ -586,9 +620,9 @@ class SessionRuntime:
         store: loop.CheckpointStore,
         iterations: int,
     ) -> None:
-        if self.config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}:
+        if self.config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0", "8.0"}:
             with self._stage(f"SUCCESSOR:{previous['task']}:{task}"):
-                if self.config.get("schema_version") == "7.0":
+                if self.config.get("schema_version") in {"7.0", "8.0"}:
                     from tools.agent_learning_evidence import SourceReader
 
                     reader = SourceReader(self.state, self.root, read=self._github_read)
@@ -652,7 +686,7 @@ class SessionRuntime:
                     raise loop.PhaseBlocked("PLANNING_EVIDENCE_CHANGED")
 
             learning = None
-            if self.config.get("schema_version") == "7.0":
+            if self.config.get("schema_version") in {"7.0", "8.0"}:
                 from tools.agent_learning_evidence import SourceReader
                 from tools.agent_learning_planning import Planning
 
@@ -916,6 +950,10 @@ class SessionRuntime:
             return self._final_resume(iterations)
 
     def _final_resume(self, iterations: int) -> Mapping[str, Any]:
+        if self.config.get("schema_version") == "8.0":
+            from tools.agent_final_preparation_driver import PreparationDriver
+
+            return PreparationDriver(self, iterations).resume()
         approved_final = self.config["approved_final_digest"]
         if (
             not isinstance(approved_final, str)
@@ -975,6 +1013,12 @@ class SessionRuntime:
         *,
         supervisor_lock: loop.RunnerLock | None = None,
     ) -> dict[str, Any]:
+        if self.wait_scope is not None and self.wait_scope._owner_original:
+            raise loop.PhaseBlocked("FINAL_APPROVAL_INVALID")
+        if self.wait_scope is not None and self.wait_scope._retained_owner:
+            from tools.agent_owner_final_admission import _resume_retained
+
+            return _resume_retained(self, supervisor_lock)
         return Session(
             store=self.store,
             adapter=self.task_adapter,

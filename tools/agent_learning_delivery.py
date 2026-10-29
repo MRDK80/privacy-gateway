@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import fields
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
@@ -127,13 +127,140 @@ class DeliverySources:
             "definition_digest": hashlib.sha256(definition).hexdigest(),
         }
 
+    def _event_checks(self, sha: str, event: str) -> dict[str, Any]:
+        """Select only an unambiguous original event below both source horizons."""
+        repo = self.reader.owner["repository"]
+
+        def invalid() -> NoReturn:
+            raise c.LearningError("LEARNING_CI_SOURCE_INVALID")
+
+        suites = self.api(f"commits/{sha}/check-suites?per_page=100")
+        if not isinstance(suites, dict):
+            invalid()
+        listing = suites.get("check_suites")
+        if (
+            not isinstance(listing, list) or len(listing) > 100
+            or type(suites.get("total_count")) is not int
+            or suites["total_count"] != len(listing)
+        ):
+            invalid()
+        suite_ids: dict[int, dict[str, Any]] = {}
+        for item in listing:
+            if not isinstance(item, dict) or item.get("head_sha") != sha:
+                invalid()
+            identifier = c.integer(item.get("id"), 2**63 - 1, 1)
+            app = item.get("app")
+            if not isinstance(app, dict):
+                invalid()
+            c.integer(app.get("id"), 2**63 - 1, 1)
+            if identifier in suite_ids:
+                invalid()
+            suite_ids[identifier] = item
+        raw = self.api(f"commits/{sha}/check-runs?filter=all&per_page=100")
+        if not isinstance(raw, dict):
+            invalid()
+        rows = raw.get("check_runs")
+        if (
+            not isinstance(rows, list) or len(rows) > 100
+            or type(raw.get("total_count")) is not int
+            or raw["total_count"] != len(rows)
+        ):
+            invalid()
+        selected: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        runs: dict[int, dict[str, Any]] = {}
+        workflows: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                invalid()
+            identifier = c.integer(row.get("id"), 2**63 - 1, 1)
+            if identifier in seen:
+                invalid()
+            seen.add(identifier)
+            name = row.get("name")
+            if type(name) is not str:
+                invalid()
+            if name not in REQUIRED_CHECKS:
+                continue
+            suite, app = row.get("check_suite"), row.get("app")
+            if not isinstance(suite, dict) or not isinstance(app, dict):
+                invalid()
+            sid = c.integer(suite.get("id"), 2**63 - 1, 1)
+            app_id = c.integer(app.get("id"), 2**63 - 1, 1)
+            details = row.get("details_url")
+            match = re.fullmatch(
+                re.escape(f"https://github.com/{repo}/actions/runs/")
+                + r"([1-9][0-9]*)/job/([1-9][0-9]*)",
+                details if type(details) is str and len(details) <= 512 else "",
+            )
+            if (
+                row.get("head_sha") != sha or app_id != 15368
+                or app.get("slug") != "github-actions" or sid not in suite_ids
+                or suite_ids[sid]["app"]["id"] != app_id or match is None
+            ):
+                invalid()
+            assert match is not None
+            rid, jid = map(int, match.groups())
+            c.integer(rid, 2**63 - 1, 1)
+            c.integer(jid, 2**63 - 1, 1)
+            if jid != identifier:
+                invalid()
+            if name not in workflows:
+                workflows[name] = self.workflow(name)
+            expected = workflows[name]
+            if rid not in runs:
+                value = self.api(f"actions/runs/{rid}")
+                if not isinstance(value, dict):
+                    invalid()
+                runs[rid] = value
+            run = runs[rid]
+            c.integer(run.get("id"), 2**63 - 1, 1)
+            c.integer(run.get("workflow_id"), 2**63 - 1, 1)
+            c.integer(run.get("check_suite_id"), 2**63 - 1, 1)
+            c.integer(run.get("run_attempt"), 1000, 1)
+            repository = run.get("repository")
+            if (
+                run["id"] != rid or run.get("head_sha") != sha
+                or not isinstance(repository, dict)
+                or repository.get("full_name") != repo
+                or type(run.get("event")) is not str
+                or run.get("event") not in {"push", "pull_request"}
+                or run["check_suite_id"] != sid
+            ):
+                invalid()
+            if (
+                run["workflow_id"] != expected["id"]
+                or run.get("path") != expected["path"]
+                or run.get("name") != expected["name"]
+            ):
+                invalid()
+            status = run.get("status")
+            if type(status) is not str or status not in {
+                "queued", "in_progress", "completed",
+            }:
+                invalid()
+            conclusion = run.get("conclusion")
+            if status == "completed":
+                if type(conclusion) is not str or conclusion not in {
+                    "success", "failure", "neutral", "cancelled", "skipped",
+                    "timed_out", "action_required", "stale", "startup_failure",
+                }:
+                    invalid()
+            elif conclusion is not None:
+                invalid()
+            if run["event"] == event:
+                selected.append(row)
+        # The unchanged successful normalizer rejects missing/duplicate names,
+        # unsuccessful selected rows and ambiguous same-event generations.
+        return {"total_count": len(selected), "check_runs": selected}
+
     def ci(self, sha: str, *, event: str) -> dict[str, Any]:
         c.hash_value(sha, size=40)
         if event not in {"pull_request", "push"}:
             raise c.LearningError("LEARNING_CI_SOURCE_INVALID")
         repo = self.reader.owner["repository"]
         checks = normalize_checks(
-            self.api(f"commits/{sha}/check-runs?per_page=100"), repo, sha
+            self._event_checks(sha, event), repo, sha
         )
         runs: dict[int, dict[str, Any]] = {}
         suites: dict[int, dict[str, Any]] = {}
@@ -216,7 +343,7 @@ class DeliverySources:
             ),
         }
 
-    def ledger(self, task: int) -> dict[str, Any]:
+    def _ledger_local(self, task: int) -> tuple[Any, dict[str, Any]]:
         reader = self.reader
         reader.guard()
         contract = reader.contract(task)
@@ -319,6 +446,17 @@ class DeliverySources:
             }.items()
         ):
             raise c.LearningError("LEARNING_DELIVERY_SOURCE_INVALID")
+        return contract, {
+            "head_sha": head,
+            "merge_sha": receipt["merge_sha"],
+            "pr": pr,
+            "source_digest": digest(rows),
+        }
+
+    def ledger(self, task: int) -> dict[str, Any]:
+        contract, source = self._ledger_local(task)
+        head, pr = source["head_sha"], source["pr"]
+        receipt = {"merge_sha": source["merge_sha"]}
         actual = self.api(f"pulls/{pr}")
         if (
             not isinstance(actual, dict)
@@ -332,9 +470,4 @@ class DeliverySources:
             or actual["base"].get("ref") != contract.base_ref
         ):
             raise c.LearningError("LEARNING_DELIVERY_SOURCE_INVALID")
-        return {
-            "head_sha": head,
-            "merge_sha": receipt["merge_sha"],
-            "pr": pr,
-            "source_digest": digest(rows),
-        }
+        return source

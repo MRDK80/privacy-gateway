@@ -160,7 +160,7 @@ class Primary:
         assert sha is not None
         # Unique immutable IDs for each actual task and phase; names are pinned.
         prefix = pull.task * 1000 + (100 if post else 0)
-        rows = []
+        rows: list[dict[str, Any]] = []
         for index, name in enumerate(sorted(REQUIRED_CHECKS), 1):
             pre = name == "pre-commit"
             run = prefix + (20 if pre else 10)
@@ -183,6 +183,10 @@ class Primary:
         self._retain(
             f"commits/{sha}/check-runs?per_page=100",
             {"total_count": 5, "check_runs": rows},
+        )
+        self._retain(
+            f"commits/{sha}/check-runs?filter=all&per_page=100",
+            {"total_count": len(rows), "check_runs": rows},
         )
         for pre in (False, True):
             run = prefix + (20 if pre else 10)
@@ -232,6 +236,17 @@ class Primary:
                 {"total_count": len(jobs), "jobs": jobs},
             )
 
+        # This producer retains one immutable generation per SHA; a conflicting
+        # generation still fails _retain rather than overwriting old originals.
+        suite_rows = [
+            self.sources[f"check-suites/{identifier}"]
+            for identifier in sorted({row["check_suite"]["id"] for row in rows})
+        ]
+        self._retain(
+            f"commits/{sha}/check-suites?per_page=100",
+            {"total_count": len(suite_rows), "check_suites": suite_rows},
+        )
+
     def owner_close_failed(self, task: int) -> None:
         """Synthetic external owner disposition, never Admission state recovery."""
         assert task in {302, 304} and self.issues[task]["state"] == "OPEN"
@@ -244,7 +259,11 @@ class Primary:
                 "number": 294,
                 "title": "Synthetic epic",
                 "state": "OPEN",
-                "subIssues": {"nodes": [{"number": n} for n in self.tasks]},
+                "subIssues": {
+                    "nodes": [{"number": n} for n in self.tasks],
+                    "totalCount": len(self.tasks),
+                    "pageInfo": {"hasNextPage": False},
+                },
             }
         return copy.deepcopy(self.issues[task])
 

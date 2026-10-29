@@ -5,7 +5,8 @@ from __future__ import annotations
 import copy
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from typing import Any
 
@@ -212,6 +213,28 @@ class HistoricalDemoRuntime:
         return value
 
 
+class _FinalHistoricalTaskRuntime(TaskPhaseRuntime):
+    def __init__(
+        self, reader: SourceReader, session: SessionRuntime, **options: Any,
+    ) -> None:
+        self._historical_reader, self._historical_session = reader, session
+        super().__init__(**options)
+
+    @contextmanager
+    def _stage(
+        self, phase: str | None = None, *, reconcile: bool = False,
+    ) -> Iterator[None]:
+        from tools.agent_final_preparation_sources import _historical_demo_stage
+
+        if phase is not None or reconcile:
+            raise c.LearningError("LEARNING_DEMO_SOURCE_INVALID")
+        with _historical_demo_stage(self._historical_reader, self._historical_session):
+            yield
+
+    def _github_read(self, argv: Sequence[str]) -> str:
+        return self._historical_session._historical_read(self._historical_reader, argv)
+
+
 def historical_runtime(
     reader: SourceReader, session: SessionRuntime, task: int
 ) -> HistoricalDemoRuntime:
@@ -234,14 +257,32 @@ def historical_runtime(
         value["roadmap_sha"] = saved["merge_sha"]
         return value
 
-    runtime = TaskPhaseRuntime(
-        store=store,
-        authority=lambda: session._fresh_authority(session.config["task_iterations"]),
-        artifacts=lambda: {},
-        demo_plan=plan,
-        demo_completion=lambda: reader._json(directory / "demo-completion.json"),
-        approved_order=tuple(reader.config["approved_order"]),
-        wait_scope=session.wait_scope,
-    )
+    from tools.agent_final_preparation_sources import _is_final_historical_reader
+
+    if _is_final_historical_reader(reader, session):
+        runtime: TaskPhaseRuntime = _FinalHistoricalTaskRuntime(
+            reader, session,
+            store=store,
+            authority=lambda: session._fresh_authority(
+                session.config["task_iterations"],
+            ),
+            artifacts=lambda: {},
+            demo_plan=plan,
+            demo_completion=lambda: reader._json(directory / "demo-completion.json"),
+            approved_order=tuple(reader.config["approved_order"]),
+            wait_scope=session.wait_scope,
+        )
+    else:
+        runtime = TaskPhaseRuntime(
+            store=store,
+            authority=lambda: session._fresh_authority(
+                session.config["task_iterations"],
+            ),
+            artifacts=lambda: {},
+            demo_plan=plan,
+            demo_completion=lambda: reader._json(directory / "demo-completion.json"),
+            approved_order=tuple(reader.config["approved_order"]),
+            wait_scope=session.wait_scope,
+        )
     runtime.continuation_enabled = True
     return HistoricalDemoRuntime(reader, runtime, task)

@@ -33,7 +33,8 @@ class WorkflowStore(workflow.StateStore):
             return None
         info = path.lstat()
         if (
-            not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
             or info.st_mode & 0o077
             or info.st_uid != self.directory.stat().st_uid
             or info.st_size > self.cap
@@ -56,9 +57,13 @@ class Store:
         self.storage = workflow.StateStore(self.directory)
 
     def load(self, key: str, *, cap: int = 65536) -> dict[str, Any] | None:
-        if re.fullmatch(
-            r"(?:handoff|reservation|receipt|review|checkpoint)-[0-9a-f]{64}", key
-        ) is None:
+        if (
+            re.fullmatch(
+                r"(?:handoff|reservation|receipt|review|checkpoint|environment)-[0-9a-f]{64}",
+                key,
+            )
+            is None
+        ):
             raise contract.ContinuationError("CONTINUATION_STORAGE_INVALID")
         path = self.directory / (key + ".json")
         if not path.exists() and not path.is_symlink():
@@ -201,9 +206,7 @@ class Store:
             GIT_INDEX_FILE=str(target / "index"),
         )
 
-        def git(
-            args: list[str], *, private: bool = False
-        ) -> bytes:
+        def git(args: list[str], *, private: bool = False) -> bytes:
             try:
                 result = subprocess.run(
                     ["git", *args],
@@ -224,12 +227,16 @@ class Store:
 
         snapshot = workspace["snapshot_sha"]
         actual_head = git(["rev-parse", "HEAD"]).decode("ascii").strip()
-        parent = git(["show", "-s", "--format=%P", snapshot], private=True).decode(
-            "ascii"
-        ).strip()
-        tree = git(["rev-parse", snapshot + "^{tree}"], private=True).decode(
-            "ascii"
-        ).strip()
+        parent = (
+            git(["show", "-s", "--format=%P", snapshot], private=True)
+            .decode("ascii")
+            .strip()
+        )
+        tree = (
+            git(["rev-parse", snapshot + "^{tree}"], private=True)
+            .decode("ascii")
+            .strip()
+        )
         if (
             workspace["base_sha"] != task.base_sha
             or actual_head != workspace["head_sha"]
@@ -238,9 +245,11 @@ class Store:
             != contract.digest({"tree": tree, "commit": snapshot, "base_sha": parent})
         ):
             raise contract.ContinuationError("CONTINUATION_WORKSPACE_CHANGED")
-        captured = git(
-            ["diff", "--name-only", "-z", task.base_sha, snapshot], private=True
-        ).decode("utf-8", "strict").split("\0")
+        captured = (
+            git(["diff", "--name-only", "-z", task.base_sha, snapshot], private=True)
+            .decode("utf-8", "strict")
+            .split("\0")
+        )
         current = workflow._snapshot_changed_paths(self.root, task.base_sha)
         if set(current) != set(filter(None, captured)):
             raise contract.ContinuationError("CONTINUATION_WORKSPACE_CHANGED")

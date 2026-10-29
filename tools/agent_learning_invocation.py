@@ -25,8 +25,41 @@ from tools.agent_learning_verify import Verifier
 class Runtime:
     def __init__(self, reader: SourceReader, session: SessionRuntime) -> None:
         self.reader, self.verifier = reader, Verifier(reader, session)
+        self._workflow_binding: Any = None
+
+    def writer_context(self, context: Any, neutral: dict[str, Any]) -> None:
+        if self.reader.config["schema_version"] != "8.0":
+            return
+        from tools.agent_learning_workflow_binding import Binding
+
+        if self._workflow_binding is None:
+            self._workflow_binding = Binding(self)
+        self._workflow_binding.context_from_orchestrator(context, neutral)
+
+    def writer_begin(self) -> None:
+        if self.reader.config["schema_version"] == "8.0":
+            if self._workflow_binding is None:
+                raise c.LearningError("LEARNING_SOURCE_MISSING")
+            self._workflow_binding.begin()
+
+    def writer_invalidate(self) -> None:
+        if self._workflow_binding is not None:
+            self._workflow_binding.invalidate()
 
     def augment(
+        self,
+        role: str,
+        payload: dict[str, Any],
+        *,
+        current_gate: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return self._augment_original(role, payload, current_gate=current_gate)
+        except BaseException:
+            self.writer_invalidate()
+            raise
+
+    def _augment_original(
         self,
         role: str,
         payload: dict[str, Any],
@@ -41,12 +74,22 @@ class Runtime:
         task = c.integer(contract.get("issue"), 2147483647, 1)
         previous = canonical(self.reader, task)
         problem, origin = source(self.reader, task, role, previous, current_gate)
-        envelope = self.verifier.selection(contract["task_class"], role, problem)
+        references: list[dict[str, Any]] = []
+        if self.reader.config["schema_version"] == "8.0":
+            envelope, references = self.verifier.selection_proof(
+                contract["task_class"], role, problem
+            )
+        else:
+            envelope = self.verifier.selection(contract["task_class"], role, problem)
         augmented = {**payload, "untrusted_verified_hints": envelope}
         original = {
             key: value for key, value in augmented.items() if key != "contract_object"
         }
         self._workflow_prepared = (role, digest(original), previous, problem, origin)
+        if self.reader.config["schema_version"] == "8.0":
+            if self._workflow_binding is None:
+                raise c.LearningError("LEARNING_SOURCE_MISSING")
+            self._workflow_binding.capture(role, augmented, previous, references)
         return augmented
 
     def _directory(self, task: int) -> Path:
@@ -108,6 +151,13 @@ class Runtime:
                     pass
 
     def reserve(self, role: str, payload: dict[str, Any]) -> None:
+        try:
+            self._reserve_original(role, payload)
+        except BaseException:
+            self.writer_invalidate()
+            raise
+
+    def _reserve_original(self, role: str, payload: dict[str, Any]) -> None:
         reader = self.reader
         safe = {
             key: value for key, value in payload.items() if key != "contract_object"
@@ -167,8 +217,19 @@ class Runtime:
             from tools.agent_learning_workflow_companions import retain
 
             retain(reader, value, safe, self._workflow_prepared)
+        if self.reader.config["schema_version"] == "8.0":
+            if self._workflow_binding is None:
+                raise c.LearningError("LEARNING_SOURCE_MISSING")
+            self._workflow_binding.reserve(role, safe)
 
     def complete(self, role: str, payload: dict[str, Any]) -> None:
+        try:
+            self._complete_original(role, payload)
+        except BaseException:
+            self.writer_invalidate()
+            raise
+
+    def _complete_original(self, role: str, payload: dict[str, Any]) -> None:
         reader = self.reader
         safe = {
             key: value for key, value in payload.items() if key != "contract_object"
@@ -227,3 +288,7 @@ class Runtime:
             validators=records.VALIDATORS,
         ) as store:
             store.append("invocation", value, "invocation_key")
+        if self.reader.config["schema_version"] == "8.0":
+            if self._workflow_binding is None:
+                raise c.LearningError("LEARNING_SOURCE_MISSING")
+            self._workflow_binding.complete(role, safe)

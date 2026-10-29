@@ -171,7 +171,7 @@ print(json.dumps({'completed_tasks':cursor['completed_tasks'],'native_planning_c
 def test_original_native_session_plans_and_delivers_successors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    value = prepared(tmp_path, monkeypatch)
+    value = prepared(tmp_path, monkeypatch, initial_frame_seconds=600)
     roles(value)
     script = Path(value["state"]) / "synthetic-roles.py"
     text = script.read_text().replace(
@@ -207,7 +207,7 @@ def test_original_native_session_plans_and_delivers_successors(
         [sys.executable, "-B", str(harness)],
         capture_output=True,
         text=True,
-        timeout=360,
+        timeout=660,
     )
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout) == {

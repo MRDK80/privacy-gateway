@@ -22,12 +22,18 @@ def _lock_directory(state: Path, root: Path, name: str) -> Path:
 def prepare(root: Path, installation: Path, state: Path) -> dict[str, str]:
     """Materialize a reviewable candidate without signing or activating it."""
     state = guards.secure_directory(state, root)
+    guards.final_preseed_guard(state, root)
     installed, _ = install._validate(root, installation)
     config = guards.private_json(state / "epic-runtime.json")
-    if (config.get("schema_version") not in
-        {"2.0", "3.0", "4.0", "5.0", "6.0", "7.0"}
-        or set(config) != guards.epic_config_keys(config)):
-
+    if config.get("schema_version") not in {
+        "2.0",
+        "3.0",
+        "4.0",
+        "5.0",
+        "6.0",
+        "7.0",
+        "8.0",
+    } or set(config) != guards.epic_config_keys(config):
         raise guards.DeploymentError("LAUNCH_PROFILE_REQUIRED")
     mandate = guards.private_json(state / "mandate.json")
     guards.bootstrap_authority(config, mandate, epic=True)
@@ -110,6 +116,8 @@ def control(
         generation = previous["generation"] if previous is not None else -1
         if expected_generation is not None and expected_generation != generation:
             raise guards.DeploymentError("OWNER_CONTROL_CHANGED")
+        if desired == "RUNNING":
+            guards.final_preseed_guard(state, root)
         value = {
             "schema_version": "1.0",
             "launch_digest": guards.private_json(state / "epic-runtime.json")[
@@ -305,15 +313,31 @@ def status(root: Path, state: Path) -> dict[str, Any]:
     ]
     if saved["pr"] is not None:
         links.append(f"https://github.com/{launch['repository']}/pull/{saved['pr']}")
+    final_wait = None
+    config = guards.private_json(state / "epic-runtime.json")
+    if config.get("schema_version") == "8.0":
+        from tools.agent_final_preparation_driver import read_wait_status
+
+        final_wait = read_wait_status(state, root)
+        if final_wait is not None:
+            link = (
+                f"https://github.com/{launch['repository']}/pull/{final_wait['pr']}"
+            )
+            if link not in links:
+                links.append(link)
     return {
         "schema_version": "1.0",
         "status": "STATUS",
-        "machine_code": "OK",
+        "machine_code": "WAITING_OWNER_FINAL_APPROVAL" if final_wait else "OK",
         "repository": launch["repository"],
         "epic": launch["epic"],
         "task": saved["task"],
-        "phase": saved["phase"],
-        "checkpoint_status": saved["status"],
+        "phase": (
+            "FINAL:WAITING_OWNER_FINAL_APPROVAL" if final_wait else saved["phase"]
+        ),
+        "checkpoint_status": (
+            "WAITING_OWNER_FINAL_APPROVAL" if final_wait else saved["status"]
+        ),
         "control_state": mode,
         "links": links,
     }
@@ -339,6 +363,7 @@ def run(root: Path, state: Path, action: str) -> dict[str, Any]:
             )
         if action == "resume" and mode == "NOT_STARTED":
             raise guards.DeploymentError("LAUNCH_NOT_STARTED")
+        guards.final_preseed_guard(state, root)
         config = guards.private_json(state / "epic-runtime.json")
         mandate = guards.private_json(state / "mandate.json")
         guards.bootstrap_authority(config, mandate, epic=True)
@@ -395,6 +420,8 @@ def execute(
 ) -> dict[str, Any]:
     if background:
         raise guards.DeploymentError("BACKGROUND_WAKEUP_UNVERIFIED")
+    if action in {"start", "resume"}:
+        guards.final_preseed_guard(state, root)
     if action == "discover":
         if repository is None or epic is None or registry is None:
             raise guards.DeploymentError("DISCOVERY_BINDING_REQUIRED")

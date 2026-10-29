@@ -79,7 +79,24 @@ def ci_reader(*, change: str | None = None) -> tuple[Any, list[str]]:
         suffix = argv[-1].removeprefix("repos/synthetic/repo/")
         seen.append(suffix)
         if suffix.startswith("commits/"):
-            return json.dumps(checks(sha))
+            if suffix.endswith("/check-suites?per_page=100"):
+                return json.dumps({
+                    "total_count": 2,
+                    "check_suites": [
+                        {
+                            "id": identifier, "head_sha": sha,
+                            "app": {"id": 15368},
+                            "repository": {"full_name": "synthetic/repo"},
+                        }
+                        for identifier in (50, 51)
+                    ],
+                })
+            if suffix.endswith((
+                "/check-runs?per_page=100",
+                "/check-runs?filter=all&per_page=100",
+            )):
+                return json.dumps(checks(sha))
+            raise AssertionError("unsupported synthetic commit endpoint")
         if suffix.startswith("check-suites/"):
             suite = int(suffix.split("/")[1])
             return json.dumps(
@@ -160,6 +177,7 @@ def ci_reader(*, change: str | None = None) -> tuple[Any, list[str]]:
         )
 
     reader = SimpleNamespace(
+        config={"schema_version": "7.0"},
         guard=lambda: None,
         read=read,
         _git=git,
@@ -200,5 +218,10 @@ def test_exact_ci_rejects_success_from_other_workflow(change: str) -> None:
     from tools.agent_learning_delivery import DeliverySources
 
     reader, _ = ci_reader(change=change)
-    with pytest.raises(c.LearningError, match="LEARNING_CI_SOURCE_INVALID"):
+    expected = (
+        "LEARNING_INVALID"
+        if change == "missing-workflow-id"
+        else "LEARNING_CI_SOURCE_INVALID"
+    )
+    with pytest.raises(c.LearningError, match=expected):
         DeliverySources(reader).ci("a" * 40, event="push")
