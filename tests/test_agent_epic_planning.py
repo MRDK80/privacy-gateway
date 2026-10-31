@@ -303,6 +303,7 @@ def test_symlinked_admission_directory_has_no_external_effect(
 ) -> None:
     external = tmp_path / "external"
     external.mkdir(mode=0o755)
+    external.chmod(0o755)
     (facts["state"] / "planning").symlink_to(external, target_is_directory=True)
     calls: list[str] = []
     with pytest.raises((loop.PhaseBlocked, loop.LoopError)):
@@ -359,6 +360,7 @@ def test_unsafe_admission_files_have_no_effect(
 def test_unsafe_existing_directory_is_not_chmodded(facts: dict[str, Any]) -> None:
     directory = facts["state"] / "planning"
     directory.mkdir(mode=0o755)
+    directory.chmod(0o755)
     calls: list[str] = []
     with pytest.raises((loop.PhaseBlocked, loop.LoopError)):
         planning.Admission(facts["state"], facts["root"]).admit(

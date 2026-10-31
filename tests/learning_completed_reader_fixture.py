@@ -74,10 +74,24 @@ def completed_reader_case(tmp_path: Path) -> dict[str, str]:
             + '\nOBSERVATION=' + repr(canonical.OBSERVATION) + '\n'
         )
         harness = state / 'completed-reader-originals.py'
-        harness.write_text(header + history)
-        completed = subprocess.run(
-            [sys.executable, '-B', str(harness)], capture_output=True,
-            text=True, timeout=3600,
+        diagnostic_fd, diagnostic_path, diagnostic_identity = (
+            canonical._malformed_sink_file(state)
+        )
+        try:
+            harness.write_text(canonical._malformed_harness(
+                header + history, diagnostic_fd, Path(value['installed']) / 'policy',
+            ))
+            completed = subprocess.run(
+                [sys.executable, '-B', str(harness)], capture_output=True,
+                text=True, timeout=3600, pass_fds=(diagnostic_fd,),
+            )
+        finally:
+            try:
+                os.close(diagnostic_fd)
+            except Exception:
+                pass
+        diagnostic_report = canonical._malformed_readback(
+            diagnostic_path, diagnostic_identity, failed=completed.returncode != 0,
         )
         # Private synthetic raw capture retained on failure; no external export.
         for name, stream in (
@@ -89,7 +103,7 @@ def completed_reader_case(tmp_path: Path) -> dict[str, str]:
             path = state / ('completed-reader-' + name)
             path.write_bytes(raw)
             path.chmod(0o600)
-        assert completed.returncode == 0, completed.stderr[-8000:]
+        assert completed.returncode == 0, completed.stderr[-8000:] + diagnostic_report
         lines = completed.stdout.splitlines()
         assert len(lines) == 1
         result = json.loads(lines[0])

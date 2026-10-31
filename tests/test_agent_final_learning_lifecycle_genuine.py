@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -34,6 +35,127 @@ from tests.test_agent_learning_planning_catalog import sample
 from tests.test_agent_learning_workflow_binding import initial_config8
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX original sources")
+
+
+def _malformed_sink_file(state: Path) -> tuple[int, Path, tuple[int, int]]:
+    """Own one fresh, private, content-free diagnostic sink before spawn."""
+    fd: int | None = None
+    try:
+        if not state.is_absolute() or state.resolve(strict=True) != state:
+            raise ValueError
+        info = state.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != getattr(os, "getuid")():
+            raise ValueError
+        directory = state / "malformed-role-diagnostic"
+        directory.mkdir(mode=0o700, exist_ok=False)
+        info = directory.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o700
+                or info.st_uid != getattr(os, "getuid")() or directory.is_symlink()):
+            raise ValueError
+        path = directory / "first.jsonl"
+        fd = os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
+            0o600,
+        )
+        info = os.fstat(fd)
+        named = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != getattr(os, "getuid")()
+                or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                or info.st_size != 0
+                or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+            raise ValueError
+        return fd, path, (info.st_dev, info.st_ino)
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        raise RuntimeError("DIAGNOSTIC_SETUP_STOP") from None
+
+
+def _malformed_harness(body: str, fd: int, policy: Path) -> str:
+    # Compile the EXACT original body: indenting triple-quoted literals would
+    # alter synthetic fixture values. This adds a lexical diagnostic scope only.
+    return (
+        "import os as _diagnostic_os\n"
+        f"_diagnostic_fd={fd!r}\ntry:\n"
+        "    import sys as _diagnostic_sys\n"
+        "    from pathlib import Path as _DiagnosticPath\n"
+        f"    _diagnostic_policy=_DiagnosticPath({str(policy)!r})\n"
+        "    _diagnostic_sys.path.insert(0,str(_diagnostic_policy))\n"
+        "    from tools import agent_quota_role as _diagnostic_role\n"
+        "    if (_DiagnosticPath(_diagnostic_role.__file__).resolve(strict=True)\n"
+        "            != _diagnostic_policy/'tools'/'agent_quota_role.py'):\n"
+        "        raise RuntimeError('DIAGNOSTIC_SETUP_STOP')\n"
+        "    with _diagnostic_role._malformed_diagnostic(_diagnostic_fd):\n"
+        f"        exec(compile({body!r},__file__,'exec'),globals(),globals())\n"
+        "finally:\n    try:_diagnostic_os.close(_diagnostic_fd)\n"
+        "    except Exception:pass\n"
+    )
+
+
+def _malformed_readback(
+    path: Path, identity: tuple[int, int], *, failed: bool,
+) -> str:
+    """Return only validated metadata on failure, never captured content."""
+    fd: int | None = None
+    try:
+        def check(info: os.stat_result) -> None:
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != getattr(os, "getuid")()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+                    or (info.st_dev, info.st_ino) != identity or info.st_size > 512):
+                raise ValueError
+
+        check(path.lstat())
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW"))
+        before = os.fstat(fd)
+        check(before)
+        raw = os.read(fd, 513)
+        after = os.fstat(fd)
+        check(after)
+        check(path.lstat())
+        if before.st_size != after.st_size or len(raw) != after.st_size:
+            raise ValueError
+        if not raw and not failed:
+            return ""
+        if (not raw or len(raw) > 512 or not raw.isascii()
+                or not raw.endswith(b"\n") or raw.count(b"\n") != 1):
+            raise ValueError
+
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            value: dict[str, Any] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise ValueError
+                value[key] = item
+            return value
+
+        record = json.loads(raw, object_pairs_hook=unique)
+        if (type(record) is not dict or set(record) != {
+            "schema_version", "role", "returncode", "stdout_bytes", "parse_stage",
+        } or record["schema_version"] != "diagnostic1"
+                or record["role"] not in ("executor", "controller")
+                or record["parse_stage"] != "JSON_LOAD_VALUE_ERROR"
+                or type(record["stdout_bytes"]) is not int
+                or not 0 <= record["stdout_bytes"] <= sys.maxsize):
+            raise ValueError
+        code = record["returncode"]
+        if not (code == "OTHER" or type(code) is int and -255 <= code <= 255):
+            raise ValueError
+        return ("\nMALFORMED_ROLE_METADATA=" + json.dumps(record, sort_keys=True)
+                if failed else "")
+    except Exception:
+        if failed:
+            return "\nDIAGNOSTIC_UNAVAILABLE_OR_INCOMPLETE"
+        raise RuntimeError("DIAGNOSTIC_VALIDATION_STOP") from None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+
 
 CONFTEST = (
     'import sys\nfrom pathlib import Path\n\nsys.path.inse'
@@ -612,6 +734,22 @@ ADAPTER_DIAGNOSTIC = (
 )
 
 
+_SYNTHETIC_DIAGNOSTIC_STATE_RESOLVER = (
+    'def _synthetic_diagnostic_state(adapter_file: Path) -> Path:\n'
+    '    adapter_file = Pa'
+    'th(adapter_file).resolve(strict=True)\n    if adapter_file.name != "c'
+    'odex_adapter.py" or adapter_file.parent.name != "tools":\n        rai'
+    'se ValueError("SYNTHETIC_DIAGNOSTIC_LAYOUT_STOP")\n    policy = adapt'
+    'er_file.parent.parent\n    if policy.name == "repo":\n        fixture '
+    '= policy.parent\n    elif policy.name == "policy" and policy.parent.n'
+    'ame in {"candidate", "installed"}:\n        fixture = policy.parent.p'
+    'arent\n    else:\n        raise ValueError("SYNTHETIC_DIAGNOSTIC_LAYOU'
+    'T_STOP")\n    state = fixture / "state"\n    if state.is_symlink() or '
+    'not state.is_dir():\n        raise ValueError("SYNTHETIC_DIAGNOSTIC_L'
+    'AYOUT_STOP")\n    return state\n'
+)
+
+
 def _instrument_synthetic_adapter(root: Path, state: Path) -> None:
     """Bind only this synthetic policy to its existing diagnostic insertion."""
     import ast
@@ -653,10 +791,14 @@ def _instrument_synthetic_adapter(root: Path, state: Path) -> None:
     assert original.count(marker) == 1
     diagnostic = state / "aggregate-adapter-diagnostic.json"
     assert not diagnostic.exists() and not diagnostic.is_symlink()
-    state_text = str(state)
-    parts = [state_text[i:i + 42] for i in range(0, len(state_text), 42)]
-    state_literal = "\n" + "".join("    " + repr(p) + "\n" for p in parts)
-    child = ADAPTER_DIAGNOSTIC.replace("DIAGNOSTIC_STATE_LITERAL", state_literal)
+    # Closed synthetic fixture layouts only; no dynamic path enters source.
+    assert state.name == "state" and not state.is_symlink()
+    assert root.resolve(strict=True) == (state.parent / "repo").resolve(strict=True)
+    assert (root.resolve(strict=True).parent / "state") == state.resolve(strict=True)
+    child = _SYNTHETIC_DIAGNOSTIC_STATE_RESOLVER + ADAPTER_DIAGNOSTIC.replace(
+        "DIAGNOSTIC_STATE_LITERAL",
+        "_synthetic_diagnostic_state(Path(__file__))",
+    )
     instrumented = original.replace(marker, child + marker, 1)
     instrumented_digest = hashlib.sha256(instrumented.encode("utf-8")).hexdigest()
     assert instrumented_digest != expected["codex_adapter.py"]
@@ -2238,11 +2380,24 @@ def test_original_FINAL_learning_request_completion_and_observation(
         + "reader=SourceReader(state,root)\nREMOTE=" + repr(value["remote"]) + "\n"
         + "OBSERVATION=" + repr(OBSERVATION) + "\n"
     )
-    harness.write_text(
-        header + HISTORY + _FINAL_ROADMAP_FIXTURE + WAIT_LAYOUT_DIAGNOSTIC + LIFECYCLE
+    diagnostic_fd, diagnostic_path, diagnostic_identity = _malformed_sink_file(state)
+    try:
+        harness.write_text(_malformed_harness(
+            header + HISTORY + _FINAL_ROADMAP_FIXTURE
+            + WAIT_LAYOUT_DIAGNOSTIC + LIFECYCLE,
+            diagnostic_fd, Path(value["installed"]) / "policy",
+        ))
+        run = subprocess.run([sys.executable,"-B",str(harness)],capture_output=True,
+                             text=True,timeout=_initial_fixture_resources(True)[0],
+                             pass_fds=(diagnostic_fd,))
+    finally:
+        try:
+            os.close(diagnostic_fd)
+        except Exception:
+            pass
+    diagnostic_report = _malformed_readback(
+        diagnostic_path, diagnostic_identity, failed=run.returncode != 0,
     )
-    run = subprocess.run([sys.executable,"-B",str(harness)],capture_output=True,
-                         text=True,timeout=_initial_fixture_resources(True)[0])
     # Ordinary-test reporting: preserve the already captured result before
     # the original diagnostic assertion can hide its primary evidence.
     capture_failed = False
@@ -2344,7 +2499,7 @@ def test_original_FINAL_learning_request_completion_and_observation(
         'VERSION_PROBE_FAILED',
     }
     assert metadata["machine_code"] in allowed_codes
-    assert run.returncode == 0, run.stderr
+    assert run.returncode == 0, run.stderr + diagnostic_report
     result = json.loads(run.stdout)
     assert result["owner_tail"]["status"] == "ROADMAP_DONE"
     assert result["owner_tail"]["ci_attempts"] == 8
@@ -2510,3 +2665,27 @@ def test_initial_full_owner_write_failure_primary_restore(
     assert admission.read_bytes() == before
     assert stat.S_IMODE(admission.stat().st_mode) == mode == 0o444
     assert not (state / "aggregate-adapter-diagnostic.json").exists()
+
+
+@pytest.mark.parametrize(
+    "layout", ["repo", "candidate/policy", "installed/policy", "unknown/policy"],
+)
+def test_synthetic_diagnostic_state_closed_copy_layouts(
+    tmp_path: Path, layout: str,
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    adapter = tmp_path / layout / "tools/codex_adapter.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("# synthetic fixture only\n")
+    namespace: dict[str, Any] = {"Path": Path}
+    exec(
+        compile(_SYNTHETIC_DIAGNOSTIC_STATE_RESOLVER, "<synthetic-layout>", "exec"),
+        namespace,
+    )
+    resolve = namespace["_synthetic_diagnostic_state"]
+    if layout == "unknown/policy":
+        with pytest.raises(ValueError, match="SYNTHETIC_DIAGNOSTIC_LAYOUT_STOP"):
+            resolve(adapter)
+    else:
+        assert resolve(adapter) == state
