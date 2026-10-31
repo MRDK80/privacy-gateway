@@ -285,7 +285,7 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         guards.bootstrap_authority(config, mandate, epic=True)
         guards.managed_launch_guard(state, args.root)
         owner = guards.learning_profile_guard(state, config, mandate)
-        if owner is None or config.get('schema_version') != '7.0':
+        if owner is None or config.get('schema_version') not in {'7.0', '8.0'}:
             raise codex.AdapterError('INVALID_REQUEST')
         request['untrusted_verified_hints'] = envelope(
             request['untrusted_verified_hints'], owner,

@@ -86,6 +86,22 @@ def pair(
     after: dict[str, Any],
     rule: dict[str, Any],
 ) -> dict[str, Any] | None:
+    original = _pair_inputs(reader, session, before, after, rule)
+    if original is None:
+        return None
+    before, after, role = original
+    first = replay(reader, before["identity"]["task"], role, before["ordinal"])
+    last = replay(reader, after["identity"]["task"], role, after["ordinal"])
+    return _pair_complete(reader, session, before, after, rule, first, last)
+
+
+def _pair_inputs(
+    reader: SourceReader,
+    session: SessionRuntime,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    rule: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], str] | None:
     reader.guard()
     if (
         not isinstance(session, SessionRuntime)
@@ -108,8 +124,19 @@ def pair(
         or rule["environment"] != environment(reader, planning=True)
     ):
         return None
-    first = replay(reader, before["identity"]["task"], role, before["ordinal"])
-    last = replay(reader, after["identity"]["task"], role, after["ordinal"])
+    return before, after, role
+
+
+def _pair_complete(
+    reader: SourceReader,
+    session: SessionRuntime,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    rule: dict[str, Any],
+    first: dict[str, Any],
+    last: dict[str, Any],
+) -> dict[str, Any] | None:
+    role = "planner" if rule["role"] == "planner" else "planning_review"
     if observation(first) != before or observation(last) != after:
         raise core.LearningError("LEARNING_SOURCE_MISMATCH")
     if (

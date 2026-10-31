@@ -95,7 +95,9 @@ def test_actual_recovery_keeps_completed_unit_and_consumes_retry(
     root = tmp_path / "synthetic"
     root.mkdir()
     (root / "test_synthetic.py").write_text(
-        "def test_one():\n    assert True\n\ndef test_two():\n    assert True\n"
+        "import sys\n\n"
+        "def test_one():\n    assert sys.dont_write_bytecode\n    assert True\n\n"
+        "def test_two():\n    assert sys.dont_write_bytecode\n    assert True\n"
     )
     value = fixture_plan()
     expiry, deadline = time.time() + 60, time.monotonic() + 60
@@ -105,6 +107,7 @@ def test_actual_recovery_keeps_completed_unit_and_consumes_retry(
         "LANG": "C.UTF-8",
         "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     evidence = tmp_path / "store"
     with Journal.create(
@@ -341,7 +344,9 @@ def test_new_explicit_owner_attempt_can_replace_expired_retry_lease(
     root = tmp_path / "synthetic"
     root.mkdir()
     (root / "test_synthetic.py").write_text(
-        "def test_one():\n    assert True\n\ndef test_two():\n    assert True\n"
+        "import sys\n\n"
+        "def test_one():\n    assert sys.dont_write_bytecode\n    assert True\n\n"
+        "def test_two():\n    assert sys.dont_write_bytecode\n    assert True\n"
     )
     value = fixture_plan()
     now = [time.time()]
@@ -422,6 +427,7 @@ def test_new_explicit_owner_attempt_can_replace_expired_retry_lease(
             "LANG": "C.UTF-8",
             "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
         }
         runner.recover(
             permit,

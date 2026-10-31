@@ -121,7 +121,8 @@ def codex_role_adapter(
         if continuation_profile is None:
             raise loop.LoopError("CONTINUATION_PROFILE_REQUIRED")
         continuation_backend = guards.role_backend_guard(
-            seed, continuation_profile,
+            seed,
+            continuation_profile,
             guards.quota_profile_guard(seed, continuation_config, continuation_mandate),
         )
 
@@ -132,13 +133,16 @@ def codex_role_adapter(
             fresh_profile = guards.continuation_profile_guard(
                 seed, fresh_config, fresh_mandate
             )
-            if (fresh_config != continuation_config
+            if (
+                fresh_config != continuation_config
                 or fresh_mandate != continuation_mandate
                 or fresh_profile != continuation_profile
                 or guards.role_backend_guard(seed, continuation_profile, None)
-                != continuation_backend):
+                != continuation_backend
+            ):
                 raise loop.LoopError("CONTINUATION_BINDING_CHANGED")
             _pinned(continuation_backend["source"])
+
         guards.continuation_transport_guard(continuation_backend)
         continuation_guard()
         for index in range(2):
@@ -151,11 +155,15 @@ def codex_role_adapter(
         from tools.agent_continuation_backend import SettingsAdapter
 
         result = SettingsAdapter(
-            adapter, continuation_backend, continuation_profile,
-            continuation_state, continuation_guard,
+            adapter,
+            continuation_backend,
+            continuation_profile,
+            continuation_state,
+            continuation_guard,
         )
-        if continuation_config.get("schema_version") == "7.0":
+        if continuation_config.get("schema_version") in {"7.0", "8.0"}:
             from tools.agent_learning_evidence import SourceReader
+
             result.learning_enabled = True
             result.learning_reader = SourceReader(continuation_state, root)
         return result
@@ -268,16 +276,18 @@ def codex_role_adapter(
                 "--approved-quota-digest",
                 config["approved_quota_digest"],
             )
-        return continued(transport.CommandAdapter(
-            commands[0],
-            commands[1],
-            root=root,
-            timeout_seconds=3600,
-            output_limit=200_000,
-            backend_digest=bare_digest(owner_profile["source"]),
-            guard=guard,
-            on_interruption=on_interruption,
-        ))
+        return continued(
+            transport.CommandAdapter(
+                commands[0],
+                commands[1],
+                root=root,
+                timeout_seconds=3600,
+                output_limit=200_000,
+                backend_digest=bare_digest(owner_profile["source"]),
+                guard=guard,
+                on_interruption=on_interruption,
+            )
+        )
     if continuation_profile is not None:
         from tools.agent_quota_role import CommandAdapter
 
@@ -286,10 +296,14 @@ def codex_role_adapter(
 
         assert continuation_backend is not None
         fixed = CommandAdapter(
-            commands[0], commands[1], root=root, timeout_seconds=3600,
+            commands[0],
+            commands[1],
+            root=root,
+            timeout_seconds=3600,
             output_limit=200_000,
             backend_digest=bare_digest(continuation_backend["source"]),
-            guard=continuation_guard, on_interruption=unsupported_quota,
+            guard=continuation_guard,
+            on_interruption=unsupported_quota,
         )
         fixed.quota_resume_enabled = False
         return continued(fixed)
@@ -348,8 +362,11 @@ class ReviewedWorkflow:
     @staticmethod
     def _controller_ready(continuation: Any) -> bool:
         saved = continuation.workflow.load(workflow._run_key(continuation.contract))
-        if (saved is None or saved.get("terminal") is not False
-            or saved.get("role_pending") is not None):
+        if (
+            saved is None
+            or saved.get("terminal") is not False
+            or saved.get("role_pending") is not None
+        ):
             return False
         continuation.validate_state(saved)
         if continuation.resume_executor(saved) is None:
@@ -358,7 +375,8 @@ class ReviewedWorkflow:
         return True
 
     def _validated(
-        self, ownership: ExitStack,
+        self,
+        ownership: ExitStack,
     ) -> tuple[handover.ValidatedHandover, Any]:
         from tools.agent_continuation_backend import SettingsAdapter
 
@@ -368,10 +386,14 @@ class ReviewedWorkflow:
         def open_continuation(contract: workflow.TaskContract) -> Any:
             from tools.agent_continuation_runtime import Continuation
 
-            return ownership.enter_context(Continuation(
-                adapter=self.adapter, contract=contract,
-                directory=self.directory, root=self.root,
-            ))
+            return ownership.enter_context(
+                Continuation(
+                    adapter=self.adapter,
+                    contract=contract,
+                    directory=self.directory,
+                    root=self.root,
+                )
+            )
 
         def verify_dirty_recovery(contract: workflow.TaskContract) -> None:
             nonlocal continuation
@@ -380,7 +402,9 @@ class ReviewedWorkflow:
                 raise handover.HandoverError("DIRTY_WORKTREE")
 
         validated = handover.validate_handover(
-            self.value, root=self.root, approved_digest=self.approved_digest,
+            self.value,
+            root=self.root,
+            approved_digest=self.approved_digest,
             github=handover.GitHubCLI(),
             verify_dirty_recovery=verify_dirty_recovery if enabled else None,
         )
@@ -399,20 +423,29 @@ class ReviewedWorkflow:
                     validated, continuation = self._validated(ownership)
                     if self._controller_ready(continuation):
                         return True
-                    return (
-                        getattr(self.adapter, "quota_resume_enabled", False) is True
-                        and workflow.controller_resume_available(
-                            validated.contract, root=self.root,
-                            storage=continuation.workflow,
-                        )
+                    return getattr(
+                        self.adapter, "quota_resume_enabled", False
+                    ) is True and workflow.controller_resume_available(
+                        validated.contract,
+                        root=self.root,
+                        storage=continuation.workflow,
                     )
-            except (workflow.OrchestrationError, loop.LoopError,
-                    handover.HandoverError, OSError, ValueError, TypeError, KeyError):
+            except (
+                workflow.OrchestrationError,
+                loop.LoopError,
+                handover.HandoverError,
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+            ):
                 return False
         if getattr(self.adapter, "quota_resume_enabled", False) is not True:
             return False
         validated = handover.validate_handover(
-            self.value, root=self.root, approved_digest=self.approved_digest,
+            self.value,
+            root=self.root,
+            approved_digest=self.approved_digest,
             github=handover.GitHubCLI(),
         )
         return workflow.controller_resume_available(
@@ -430,7 +463,9 @@ class ReviewedWorkflow:
             return self._run_validated(validated, continuation)
 
     def _run_validated(
-        self, validated: handover.ValidatedHandover, continuation: Any,
+        self,
+        validated: handover.ValidatedHandover,
+        continuation: Any,
     ) -> Mapping[str, Any]:
         captured: dict[str, Any] = {}
         delegate = self.adapter
@@ -501,8 +536,11 @@ class ReviewedWorkflow:
             result = workflow.run(
                 contract,
                 root=self.root,
-                storage=(continuation.workflow if continuation is not None else
-                         workflow.StateStore(self.directory / "bounded-workflow")),
+                storage=(
+                    continuation.workflow
+                    if continuation is not None
+                    else workflow.StateStore(self.directory / "bounded-workflow")
+                ),
                 adapter=wrapped,
             )
         except loop.QuotaPaused as error:

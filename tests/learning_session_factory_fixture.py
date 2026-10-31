@@ -35,6 +35,8 @@ def build(
     delivery_enabled: bool = False,
     with_demo: bool = False,
     with_planning_policy: bool = False,
+    with_local_gate_sut: bool = False,
+    initial_frame_seconds: int = 300,
 ) -> dict[str, str]:
     assert not base.exists() and not base.is_symlink()
     base.mkdir(mode=0o700)
@@ -69,6 +71,30 @@ def build(
                 path.write_text("Synthetic planning policy fixture.\n")
     shutil.copyfile(Path.cwd() / "pyproject.toml", root / "pyproject.toml")
     (root / "code.py").write_text("VALUE = 1\n")
+    if with_local_gate_sut:
+        from tests.test_agent_final_learning_lifecycle_genuine import (
+            CONFTEST,
+            SMOKE,
+        )
+
+        shutil.copytree(
+            Path.cwd() / "src/privacy_gateway", root / "src/privacy_gateway"
+        )
+        for relative in (
+            ".pre-commit-config.yaml",
+            ".secrets.baseline",
+            ".gitignore",
+            "README.md",
+            "LICENSE",
+            *workflow.POLICY_FILES,
+        ):
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(Path.cwd() / relative, target)
+        tiny = root / "tests"
+        tiny.mkdir()
+        (tiny / "conftest.py").write_text(CONFTEST)
+        (tiny / "test_snapshot_smoke.py").write_text(SMOKE)
     git("init", "-b", "main")
     git("config", "user.name", "Synthetic")
     git("config", "user.email", "synthetic@example.invalid")
@@ -204,7 +230,7 @@ def build(
         },
         "mandate_digest": digest,
         "limits": {
-            "max_phase_seconds": 300,
+            "max_phase_seconds": initial_frame_seconds,
             "max_read_attempts": 2,
             "max_ci_polls": 8,
             "max_read_commands": 512,
@@ -240,7 +266,7 @@ def build(
         "live_command": command,
         "phase_commands": {p: command for p in loop.PHASES[1:]},
         "reconcile_commands": {p: command for p in loop.PHASES[1:]},
-        "timeout_seconds": 300,
+        "timeout_seconds": initial_frame_seconds,
         "output_limit": 100000,
         "epic_command": command
         + ["epic_resume", "--state-dir", str(state), "--repository-root", str(root)],

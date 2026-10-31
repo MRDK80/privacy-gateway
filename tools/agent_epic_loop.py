@@ -368,7 +368,10 @@ class CommandRuntimeAdapter:
             set(value) != {"schema_version", "status", "machine_code", "result"}
             or value["schema_version"] != "1.0"
             or value["status"]
-            not in {"ROADMAP_DONE", "BLOCKED", "ESCALATE", "PAUSED_RATE_LIMIT"}
+            not in {
+                "ROADMAP_DONE", "BLOCKED", "ESCALATE", "PAUSED_RATE_LIMIT",
+                "WAITING_OWNER_FINAL_APPROVAL",
+            }
             or not isinstance(value["machine_code"], str)
             or MACHINE_CODE_RE.fullmatch(value["machine_code"]) is None
             or (
@@ -376,6 +379,15 @@ class CommandRuntimeAdapter:
             )
         ):
             raise LoopError("RUNTIME_ADAPTER_INVALID")
+        if value["status"] == "WAITING_OWNER_FINAL_APPROVAL":
+            from tools.agent_epic_runtime_cli import private_json
+            from tools.agent_final_preparation_driver import validate_wait_result
+
+            if self.state_directory is None or private_json(
+                self.state_directory / "epic-runtime.json"
+            ).get("schema_version") != "8.0":
+                raise LoopError("RUNTIME_ADAPTER_INVALID")
+            validate_wait_result(value["result"])
         return value
 
     def _run(self, command: Sequence[str]) -> Mapping[str, Any]:
@@ -436,12 +448,26 @@ class CommandRuntimeAdapter:
 
             frames.clear(child_environment)
             inherited_fds: tuple[int, ...] = ()
+            retained = False
+            if command == self.epic_command and self.state_directory is not None:
+                from tools.agent_owner_final_admission import _normal_retained_command
+
+                retained = _normal_retained_command(
+                    self.state_directory, self.root, command, child=False,
+                )
+                if retained:
+                    if self.supervisor_lock is None:
+                        raise LoopError("LOCK_FAILED")
+                    # Existing-only canonical probe before exporting the FD.
+                    self.supervisor_lock._assert_existing_owned(
+                        self.state_directory / "session-control",
+                    )
             if self.supervisor_lock is not None and command == self.epic_command:
                 descriptor = self.supervisor_lock.descriptor()
                 inherited_fds = (descriptor,)
                 child_environment[SUPERVISOR_LOCK_FD_ENV] = str(descriptor)
-            budget = self.wait_scope
-            if budget is None and self.state_directory is not None:
+            budget = None if retained else self.wait_scope
+            if not retained and budget is None and self.state_directory is not None:
                 budget = Scope.for_root(
                     self.state_directory,
                     self.root,
@@ -812,6 +838,125 @@ class RunnerLock:
         self._stream: BinaryIO | None = None
         self._inherited_fd = inherited_fd
         self._owner_pid: int | None = None
+        self._existing_only = False
+        self._normal_retained_child = False
+        self._existing_directory_identity: tuple[int, int] | None = None
+
+    @classmethod
+    def owner_existing(cls, directory: Path, repository_root: Path) -> RunnerLock:
+        """Physical existing ownership only, never source/owner authority.
+
+        The fixed installed owner admission derives the canonical directory.
+        No inherited descriptor, missing namespace or reentrant takeover exists.
+        """
+        from tools.agent_epic_runtime_cli import DeploymentError, secure_directory
+
+        try:
+            directory = secure_directory(directory, repository_root)
+            if SUPERVISOR_LOCK_FD_ENV in os.environ or directory in cls._held:
+                raise LoopError("LOCK_FAILED")
+            result = cls(directory)
+            result._existing_only = True
+            return result
+        except (OSError, ValueError, RuntimeError, DeploymentError):
+            raise LoopError("LOCK_FAILED") from None
+
+    def _open_existing(self) -> BinaryIO:
+        """Open a private existing lock through a rechecked directory descriptor."""
+        descriptor = parent = -1
+        stream: BinaryIO | None = None
+        failure: BaseException | None = None
+        try:
+            parent = os.open(
+                self.directory,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY")
+                | getattr(os, "O_NOFOLLOW") | getattr(os, "O_NONBLOCK"),
+            )
+            directory = os.fstat(parent)
+            current = self.directory.lstat()
+            identity = (directory.st_dev, directory.st_ino)
+            if (
+                os.name != "posix" or not stat.S_ISDIR(directory.st_mode)
+                or directory.st_uid != getattr(os, "getuid")()
+                or stat.S_IMODE(directory.st_mode) != 0o700
+                or (current.st_dev, current.st_ino) != identity
+                or (self._existing_directory_identity is not None
+                    and self._existing_directory_identity != identity)
+            ):
+                raise LoopError("LOCK_FAILED")
+            before = os.stat("epic-loop.lock", dir_fd=parent, follow_symlinks=False)
+            descriptor = os.open(
+                "epic-loop.lock", os.O_RDWR | getattr(os, "O_NOFOLLOW")
+                | getattr(os, "O_NONBLOCK"), dir_fd=parent,
+            )
+            opened = os.fstat(descriptor)
+            after = os.stat("epic-loop.lock", dir_fd=parent, follow_symlinks=False)
+            for item in (before, opened, after):
+                if (
+                    not stat.S_ISREG(item.st_mode) or item.st_nlink != 1
+                    or item.st_uid != getattr(os, "getuid")()
+                    or stat.S_IMODE(item.st_mode) != 0o600
+                    or (item.st_dev, item.st_ino) != (opened.st_dev, opened.st_ino)
+                ):
+                    raise LoopError("LOCK_FAILED")
+            latest = self.directory.lstat()
+            if (latest.st_dev, latest.st_ino) != identity:
+                raise LoopError("LOCK_FAILED")
+            self._existing_directory_identity = identity
+            stream = os.fdopen(descriptor, "r+b")
+            descriptor = -1
+        except BaseException as error:
+            failure = error
+        # A stream is transferred only after every raw descriptor cleanup has
+        # completed. Each close is attempted even if an earlier close fails.
+        for value in (descriptor, parent):
+            if value >= 0:
+                try:
+                    os.close(value)
+                except BaseException as error:
+                    if failure is None:
+                        failure = error
+        if failure is not None:
+            if stream is not None:
+                try:
+                    stream.close()
+                except BaseException:
+                    # Preserve the first failure, particularly an interruption.
+                    pass
+            if isinstance(failure, (OSError, AttributeError, ValueError, RuntimeError)):
+                raise LoopError("LOCK_FAILED") from None
+            raise failure
+        if stream is None:
+            raise LoopError("LOCK_FAILED")
+        return stream
+
+    def _assert_existing_owned(self, directory: Path) -> None:
+        try:
+            if (
+                self._stream is None or directory.resolve() != self.directory
+                or self._owner_pid != os.getpid()
+                or self._held.get(self.directory) is not self
+                or (self._inherited_fd is not None
+                    and not self._normal_retained_child)
+            ):
+                raise LoopError("LOCK_FAILED")
+            with self._open_existing() as probe:
+                owned = os.fstat(self._stream.fileno())
+                canonical = os.fstat(probe.fileno())
+                if (owned.st_dev, owned.st_ino) != (canonical.st_dev, canonical.st_ino):
+                    raise LoopError("LOCK_FAILED")
+                try:
+                    self._lock(probe)
+                except BlockingIOError:
+                    pass
+                else:
+                    self._unlock(probe)
+                    raise LoopError("LOCK_FAILED")
+            self._lock(self._stream)
+        except LoopError:
+            raise
+        except (OSError, ValueError, AttributeError, RuntimeError):
+            raise LoopError("LOCK_FAILED") from None
 
     @classmethod
     def current_owned(cls, directory: Path) -> RunnerLock:
@@ -834,6 +979,9 @@ class RunnerLock:
 
     def assert_owned(self, directory: Path) -> None:
         """Reuse a real held supervisor lock; an object or open file is insufficient."""
+        if self._existing_only:
+            self._assert_existing_owned(directory)
+            return
         if (
             os.name == "nt" or self._stream is None
             or self.directory != directory.resolve()
@@ -862,6 +1010,89 @@ class RunnerLock:
             self._lock(self._stream)
         except OSError:
             raise LoopError("LOCK_FAILED") from None
+
+    @classmethod
+    def normal_retained_child(cls, state: Path, root: Path) -> RunnerLock:
+        """Consume only the source-qualified configured retained epic child FD."""
+        from tools.agent_owner_final_admission import _normal_retained_command
+
+        command = (str(Path(sys.executable)), *sys.argv)
+        if not _normal_retained_command(state, root, command, child=True):
+            raise LoopError("LOCK_FAILED")
+        from tools.agent_epic_runtime_cli import secure_directory
+
+        directory = secure_directory(state / "session-control", root)
+        if directory in cls._held:
+            raise LoopError("LOCK_FAILED")
+        marker = os.environ.pop(SUPERVISOR_LOCK_FD_ENV, None)
+        if (
+            os.name != "posix" or type(marker) is not str
+            or not 1 <= len(marker) <= 10
+            or not marker.isascii() or not marker.isdecimal()
+        ):
+            raise LoopError("LOCK_FAILED")
+        descriptor = int(marker)
+        if descriptor < 3:
+            raise LoopError("LOCK_FAILED")
+        try:
+            os.set_inheritable(descriptor, False)
+            result = cls(directory, inherited_fd=descriptor)
+            result._existing_only = True
+            result._normal_retained_child = True
+            return result
+        except BaseException as error:
+            try:
+                os.close(descriptor)
+            except BaseException:
+                # Only this consumed duplicate is owned; never unlock its OFD.
+                pass
+            if isinstance(error, (OSError, ValueError, RuntimeError)):
+                raise LoopError("LOCK_FAILED") from None
+            raise
+
+    def _enter_retained_child(self) -> RunnerLock:
+        if (
+            self._stream is not None or self._owner_pid is not None
+            or self.directory in self._held or self._inherited_fd is None
+        ):
+            raise LoopError("LOCK_FAILED")
+        # Consume the raw integer before transfer. This object can never adopt
+        # it again, even if stream transfer fails and the OS later reuses its FD.
+        descriptor = self._inherited_fd
+        self._inherited_fd = None
+        stream: BinaryIO | None = None
+        try:
+            # fdopen does not create a pathname. Never unlock this shared OFD.
+            stream = os.fdopen(descriptor, "r+b")
+            descriptor_info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(descriptor_info.st_mode)
+                or descriptor_info.st_uid != getattr(os, "getuid")()
+                or stat.S_IMODE(descriptor_info.st_mode) != 0o600
+                or descriptor_info.st_nlink != 1
+            ):
+                raise LoopError("LOCK_FAILED")
+            fcntl = importlib.import_module("fcntl")
+            access = fcntl.fcntl(stream.fileno(), fcntl.F_GETFL)
+            if access & getattr(os, "O_ACCMODE") != os.O_RDWR:
+                raise LoopError("LOCK_FAILED")
+            self._stream = stream
+            self._register()
+            self._assert_existing_owned(self.directory)
+            return self
+        except BaseException as error:
+            try:
+                if stream is None:
+                    os.close(descriptor)
+            except BaseException:
+                pass
+            try:
+                self._clear_existing(stream)
+            except BaseException:
+                pass
+            if isinstance(error, (OSError, ValueError, AttributeError, RuntimeError)):
+                raise LoopError("LOCK_FAILED") from None
+            raise
 
     @classmethod
     def supervisor(cls, directory: Path) -> RunnerLock:
@@ -937,7 +1168,66 @@ class RunnerLock:
         fcntl = importlib.import_module("fcntl")
         fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
+    def _clear_existing(self, stream: BinaryIO | None) -> None:
+        try:
+            if stream is not None:
+                stream.close()
+        finally:
+            if self._held.get(self.directory) is self:
+                del self._held[self.directory]
+            self._owner_pid = None
+            self._stream = None
+
+    def _enter_existing(self) -> RunnerLock:
+        # Reject reentry before this attempt owns any resource. Its cleanup must
+        # never unregister or clear a legitimate outer acquisition of this object.
+        if (
+            self._stream is not None or self._owner_pid is not None
+            or self._inherited_fd is not None or self.directory in self._held
+            or SUPERVISOR_LOCK_FD_ENV in os.environ
+        ):
+            raise LoopError("LOCK_FAILED")
+        stream: BinaryIO | None = None
+        try:
+            stream = self._open_existing()
+            self._lock(stream)
+            self._stream = stream
+            self._register()
+            self._assert_existing_owned(self.directory)
+            return self
+        except BaseException as error:
+            try:
+                self._clear_existing(stream)
+            except BaseException:
+                # Cleanup must not replace the primary failure or interruption.
+                pass
+            if isinstance(error, (OSError, ValueError, AttributeError, RuntimeError)):
+                raise LoopError("LOCK_FAILED") from None
+            raise
+
+    def _exit_existing(self) -> None:
+        stream = self._stream
+        failure: BaseException | None = None
+        try:
+            if stream is not None:
+                self._unlock(stream)
+        except BaseException as error:
+            failure = error
+        try:
+            self._clear_existing(stream)
+        except BaseException as error:
+            if failure is None:
+                failure = error
+        if failure is not None:
+            if isinstance(failure, (OSError, ValueError, AttributeError, RuntimeError)):
+                raise LoopError("LOCK_FAILED") from None
+            raise failure
+
     def __enter__(self) -> RunnerLock:
+        if self._normal_retained_child:
+            return self._enter_retained_child()
+        if self._existing_only:
+            return self._enter_existing()
         stream: BinaryIO | None = None
         try:
             if self._inherited_fd is not None:
@@ -962,6 +1252,18 @@ class RunnerLock:
         return self
 
     def __exit__(self, *_args: object) -> None:
+        if self._normal_retained_child:
+            try:
+                self._clear_existing(self._stream)
+            except BaseException as error:
+                if not _args or _args[0] is None:
+                    if isinstance(error, (OSError, ValueError, RuntimeError)):
+                        raise LoopError("LOCK_FAILED") from None
+                    raise
+            return
+        if self._existing_only:
+            self._exit_existing()
+            return
         if self._held.get(self.directory) is self:
             del self._held[self.directory]
         self._owner_pid = None
@@ -1356,7 +1658,10 @@ def main() -> int:
             return 0
         return (
             0
-            if value["status"] in {"TASK_DONE", "CONTINUE", "NO_OP", "ROADMAP_DONE"}
+            if value["status"] in {
+                "TASK_DONE", "CONTINUE", "NO_OP", "ROADMAP_DONE",
+                "WAITING_OWNER_FINAL_APPROVAL",
+            }
             else 2
         )
     except LoopError as error:

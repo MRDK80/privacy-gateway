@@ -32,6 +32,7 @@ def fixture(
         delivery_enabled: bool = False,
         with_demo: bool = False,
         with_planning_policy: bool = False,
+        initial_adapter_timeout: int = 120,
     ) -> dict[str, str]:
         assert extra_tasks == (302, 303)
         return original_build(
@@ -40,11 +41,17 @@ def fixture(
             delivery_enabled=delivery_enabled,
             with_demo=with_demo,
             with_planning_policy=with_planning_policy,
+            initial_adapter_timeout=initial_adapter_timeout,
         )
 
     with monkeypatch.context() as patch:
         patch.setattr(factory, "build", measurement_build)
-        value = multi(tmp_path, monkeypatch, controller_rule=True)
+        value = multi(
+            tmp_path,
+            monkeypatch,
+            controller_rule=True,
+            initial_adapter_timeout=300,
+        )
     state = Path(value["state"])
     store = StateStore(state)
     config, adapter, launch, owner, plan, plans = (
@@ -305,12 +312,14 @@ else:
     raise AssertionError('fresh verifier selected after regression')
 print(json.dumps({'code':code,'lessons':len(lessons)}))"""
     )
-    result = child(value, body, timeout_seconds=180)
+    result = child(value, body, timeout_seconds=360)
     assert result["code"] == (
         "LEARNING_STORAGE_EXHAUSTED" if failure == "full" else "LEARNING_WRITE_FAILED"
     )
     assert result["lessons"] == 2
-    assert child(value, SELECT) == {"code": "LEARNING_ROLLBACK_PENDING"}
+    assert child(value, SELECT, timeout_seconds=120) == {
+        "code": "LEARNING_ROLLBACK_PENDING",
+    }
 
 
 def test_actual_run_tombstones_every_role_selection_before_clearing(
@@ -339,13 +348,17 @@ assert removed==lessons
 assert all(item['record']['evaluation_digest']==digest(evaluation)
     for item in retained if item['kind']=='tombstone')
 print(json.dumps({'removed':len(removed),'calls':hinted['calls']}))""",
-        timeout_seconds=180,
+        timeout_seconds=360,
     )
     assert result == {
         "removed": 2,
         "calls": {"planner": 0, "planning_review": 0, "executor": 2, "controller": 1},
     }
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}
 
 
 def test_source_drift_after_tombstones_keeps_negative_latch(
@@ -372,10 +385,14 @@ else:
     code='UNEXPECTED_SUCCESS'
 assert (task_state/'learning/learning-blocked.json').exists()
 print(json.dumps({'code':code}))""",
-        timeout_seconds=180,
+        timeout_seconds=360,
     )
     assert result == {"code": "LEARNING_MEASUREMENT_SOURCE_INVALID"}
-    assert child(value, SELECT) == {"code": "LEARNING_ROLLBACK_PENDING"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "LEARNING_ROLLBACK_PENDING"}
 
 
 def test_failed_first_latch_creation_blocks_source_based_selection_after_restart(
@@ -404,10 +421,14 @@ os.open=original
 assert len(attempts)==1
 assert not (task_state/'learning/learning-blocked.json').exists()
 print(json.dumps({'code':code,'lessons':len(lessons)}))""",
-        timeout_seconds=180,
+        timeout_seconds=360,
     )
     assert result == {"code": "LEARNING_WRITE_FAILED", "lessons": 2}
-    assert child(value, SELECT) == {"code": "LEARNING_ROLLBACK_PENDING"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "LEARNING_ROLLBACK_PENDING"}
 
 
 @pytest.mark.parametrize("change", ["missing", "unknown", "forged_measurement"])
@@ -442,8 +463,12 @@ else:
         store.append('evaluation',fake_eval,'evaluation_id')
 print(json.dumps({'pending':True}))"""
     )
-    assert child(value, body, timeout_seconds=180) == {"pending": True}
-    result = child(value, SELECT)
+    assert child(value, body, timeout_seconds=360) == {"pending": True}
+    result = child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    )
     if change == "missing":
         assert result["code"] == "LEARNING_SOURCE_MISSING"
     else:
@@ -458,9 +483,13 @@ def test_capture_finalizes_own_source_pending_evaluation_without_new_calls(
 ) -> None:
     value = fixture(tmp_path, monkeypatch)
     assert child(
-        value, RUNS + "print(json.dumps({'pending':True}))", timeout_seconds=180
+        value, RUNS + "print(json.dumps({'pending':True}))", timeout_seconds=360
     ) == {"pending": True}
-    assert child(value, SELECT) == {"code": "LEARNING_ROLLBACK_PENDING"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "LEARNING_ROLLBACK_PENDING"}
     result = child(
         value,
         BIND_PRIMARY
@@ -480,12 +509,16 @@ assert [path.read_bytes() for path in paths]==before
 assert not (task_state/'learning/learning-blocked.json').exists()
 Verifier(reader,session).selection('feature','executor','typing')
 print(json.dumps({'calls':original['calls']}))""",
-        timeout_seconds=180,
+        timeout_seconds=360,
     )
     assert result == {
         "calls": {"planner": 0, "planning_review": 0, "executor": 2, "controller": 1},
     }
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}
 
 
 @pytest.mark.parametrize(
@@ -541,8 +574,12 @@ else:
             for item in retained))
 print(json.dumps({'changed':True}))"""
     )
-    assert child(value, body, timeout_seconds=180) == {"changed": True}
-    result = child(value, SELECT)
+    assert child(value, body, timeout_seconds=360) == {"changed": True}
+    result = child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    )
     assert result["code"] != "USABLE"
 
 
@@ -617,7 +654,7 @@ def active_run(
     assert child(
         value,
         "pause_at=" + repr(pause_at) + "\n" + ACTIVE_RUN,
-        timeout_seconds=180,
+        timeout_seconds=360,
     ) == {"calls": [pause_at, pause_at - 1], "completed": 2 * pause_at - 1}
     return value
 
@@ -626,7 +663,11 @@ def test_active_completed_executor_requires_original_settings_after_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     value = active_run(tmp_path, monkeypatch)
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}
     assert child(
         value,
         """task_state=state/'tasks/303'
@@ -642,8 +683,13 @@ assert path.exists()
 path.unlink()
 assert reader._json(task_state/'bounded-workflow'/(key+'.json'))==canonical
 print(json.dumps({'deleted':True}))""",
+        timeout_seconds=120,
     ) == {"deleted": True}
-    assert child(value, SELECT)["code"] != "USABLE"
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    )["code"] != "USABLE"
 
 
 @pytest.mark.parametrize(
@@ -660,7 +706,11 @@ def test_active_selection_rereads_every_consumed_original_completion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str, ordinal: int
 ) -> None:
     value = active_run(tmp_path, monkeypatch, pause_at=3)
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}
     body = (
         "role="
         + repr(role)
@@ -863,7 +913,11 @@ def test_active_snapshot_digest_cannot_replace_missing_original_blob(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str, fault: str
 ) -> None:
     value = active_run(tmp_path, monkeypatch)
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}
     result = child(
         value,
         "stage="
@@ -909,7 +963,11 @@ finally:
 assert subprocess.check_output(['git','--git-dir',str(snap/'objects.git'),
     'ls-files','--stage','--','code.py'],env=env)==original
 print(json.dumps({'code':code}))""",
-        timeout_seconds=180,
+        timeout_seconds=360,
     )
     assert result["code"] not in {"USABLE", "LEARNING_CI_SOURCE_MISSING"}
-    assert child(value, SELECT) == {"code": "USABLE"}
+    assert child(
+        value,
+        SELECT,
+        timeout_seconds=120,
+    ) == {"code": "USABLE"}

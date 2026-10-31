@@ -78,9 +78,8 @@ class Session:
             raise loop.LoopError("UNSAFE_STORAGE")
         return loop.CheckpointStore(directory, self.seed.repository_root)
 
-    def _validate_cursor(
-        self, value: Mapping[str, Any], seed: Mapping[str, Any]
-    ) -> None:
+    @staticmethod
+    def _validate_cursor(value: Mapping[str, Any], seed: Mapping[str, Any]) -> None:
         if set(value) != {
             "schema_version",
             "repository",

@@ -330,6 +330,28 @@ def _contract_fields(contract: TaskContract) -> dict[str, Any]:
     return value
 
 
+def _controller_contract_fields(contract: TaskContract, repairs: int) -> dict[str, Any]:
+    value = {
+        "issue": contract.issue,
+        "epic": contract.epic,
+        "acceptance_criteria": list(contract.acceptance_criteria),
+        "base_ref": contract.base_ref,
+        "base_sha": contract.base_sha,
+        "head_ref": contract.head_ref,
+        "allowed_paths": list(contract.allowed_paths),
+        "permissions": asdict(contract.permissions),
+        "max_repair_iterations": contract.max_repair_iterations,
+        "remaining_repair_iterations": contract.max_repair_iterations - repairs,
+        "max_minutes": contract.max_minutes,
+        "task_class": contract.task_class,
+    }
+    if contract.delivery_criterion_indices:
+        value["delivery_criterion_indices"] = list(contract.delivery_criterion_indices)
+    if contract.policy_sha is not None:
+        value["policy_sha"] = contract.policy_sha
+    return value
+
+
 def _run_key(contract: TaskContract) -> str:
     payload = f"{contract.issue}\0{contract.base_sha}\0{contract.head_ref}"
     if contract.delivery_criterion_indices:
@@ -1605,6 +1627,36 @@ def run(
     learning_runtime = getattr(adapter, "learning_runtime", None)
     resume_executor = False
 
+    def binding_runtime() -> Any:
+        if learning_runtime is None:
+            return None
+        reader = getattr(learning_runtime, "reader", None)
+        config = getattr(reader, "config", None)
+        if not isinstance(config, dict) or config.get("schema_version") != "8.0":
+            return None
+        from tools.agent_learning_invocation import Runtime
+        if type(learning_runtime) is not Runtime:
+            raise OrchestrationError("LEARNING_SOURCE_INVALID")
+        return learning_runtime
+
+    def binding_prepare() -> None:
+        context = binding_runtime()
+        if context is not None:
+            context.writer_context(
+                continuation,
+                {
+                    "run_id": run_id,
+                    "started": started,
+                    "repair_iterations": repairs,
+                    "executor_calls": executor_calls,
+                    "controller_calls": controller_calls,
+                    "findings": findings,
+                    "verdicts": verdicts,
+                    "failures": failures,
+                    **continuation_fields(),
+                },
+            )
+
     def reserve_role(role: str, payload: dict[str, Any]) -> None:
         # Persist consumption before the provider starts. An orphaned call is
         # not proof of completion and cannot be refunded on process restart.
@@ -1689,6 +1741,7 @@ def run(
         _assert_scope(paths, contract)
         trusted_policy = _load_trusted_policy(root, contract)
         production_gate = gate is None
+
         def observed_gate(value: TaskContract) -> dict[str, Any]:
             reader = getattr(adapter, "learning_reader", None)
             if not learning_enabled or reader is None:
@@ -1700,6 +1753,7 @@ def run(
                     reader, value.issue, run_id, executor_calls, repairs, snapshot,
                 ),
             )
+
         gate_runner = gate or observed_gate
         repair_gate: dict[str, Any] | None = None
         while True:
@@ -1735,12 +1789,15 @@ def run(
                 if repair_feedback is not None:
                     executor_request["repair_feedback"] = repair_feedback
                 if learning_runtime is not None and not resume_executor:
+                    binding_prepare()
                     executor_request = learning_runtime.augment(
                         'executor', executor_request, current_gate=repair_gate,
                     )
                 full_executor_request = {
                     **executor_request, "session_id": executor_session
                 }
+                if not resume_executor and binding_runtime() is not None:
+                    binding_runtime().writer_begin()
                 if continuation is not None and not resume_executor:
                     continuation.preflight("executor", full_executor_request)
                 if not resume_executor:
@@ -1866,21 +1923,7 @@ def run(
             review_request: dict[str, Any] = {
                 "issue": contract.issue,
                 "acceptance_criteria": list(contract.acceptance_criteria),
-                "contract": {
-                    "issue": contract.issue,
-                    "epic": contract.epic,
-                    "acceptance_criteria": list(contract.acceptance_criteria),
-                    "base_ref": contract.base_ref,
-                    "base_sha": contract.base_sha,
-                    "head_ref": contract.head_ref,
-                    "allowed_paths": list(contract.allowed_paths),
-                    "permissions": asdict(contract.permissions),
-                    "max_repair_iterations": contract.max_repair_iterations,
-                    "remaining_repair_iterations": contract.max_repair_iterations
-                    - repairs,
-                    "max_minutes": contract.max_minutes,
-                    "task_class": contract.task_class,
-                },
+                "contract": _controller_contract_fields(contract, repairs),
                 "diff": diff,
                 "gate_evidence": gate_result,
                 "reviewed_state": {
@@ -1904,15 +1947,13 @@ def run(
                     for index, item in enumerate(contract.acceptance_criteria, 1)
                     if index in delivery
                 ]
-                review_request["contract"]["delivery_criterion_indices"] = list(
-                    contract.delivery_criterion_indices
-                )
-            if contract.policy_sha is not None:
-                review_request["contract"]["policy_sha"] = contract.policy_sha
             if learning_runtime is not None:
+                binding_prepare()
                 review_request = learning_runtime.augment(
                     'controller', review_request, current_gate=gate_result,
                 )
+            if binding_runtime() is not None:
+                binding_runtime().writer_begin()
             if continuation is not None:
                 continuation.preflight("controller", {
                     **review_request, "session_id": controller_session,
@@ -2035,6 +2076,10 @@ def run(
         return finish("FAIL_ESCALATE", error.machine_code)
     except Exception:
         return finish("FAIL_ESCALATE", "INTERNAL_ERROR")
+    finally:
+        context = binding_runtime()
+        if context is not None:
+            context.writer_invalidate()
 
 
 ADAPTER_MACHINE_CODES: frozenset[str] = frozenset(
