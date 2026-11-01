@@ -251,6 +251,40 @@ pre-commit run --all-files
 - `git diff --check` — полезная дополнительная проверка, но она не заменяет ни одну из четырёх обязательных команд.
 - Если любая из четырёх команд не выполнена или падает, используется `BLOCKED` либо `READY FOR REVIEW WITH EXCEPTIONS` с явным перечислением непройденного.
 
+### Приватный hook-cache для POSIX genuine-теста
+
+Перед `pytest` подготовьте свежий приватный `PRE_COMMIT_HOME` в том же
+активном developer-окружении. Genuine-тест использует реальные закреплённые
+hooks из `.pre-commit-config.yaml`; внутри теста установка и сеть запрещены.
+Linux CI выполняет эту подготовку отдельным шагом до pytest. На Windows
+сохраняется существующий пропуск POSIX genuine-сценария.
+
+```bash
+umask 077
+export PRE_COMMIT_HOME="$(mktemp -d)"
+python - <<'PYSETUP'
+import os
+import stat
+from pathlib import Path
+
+root = Path(os.environ["PRE_COMMIT_HOME"])
+assert root.is_absolute() and root.resolve(strict=True) == root
+info = root.lstat()
+assert stat.S_ISDIR(info.st_mode) and not root.is_symlink()
+assert info.st_uid == os.geteuid()
+assert stat.S_IMODE(info.st_mode) == 0o700
+PYSETUP
+timeout --signal=TERM --kill-after=10s 300s pre-commit install-hooks
+```
+
+Сохраняйте этот же export при запуске pytest. Setup может загружать прежние
+закреплённые hooks и их окружения; тест читает допущенный cache и создаёт
+свою изолированную копию. Ошибка, timeout или неизвестное состояние setup —
+STOP: не переиспользуйте существующий ambient-cache и не исправляйте его
+права через chmod. Повтор подготовки требует отдельного решения в пределах
+действующего конечного пакета. Удаление подготовленного cache — отдельное
+явное локальное действие после проверок, не автоматическое восстановление.
+
 ### Проверки во время исправлений и итоговый gate
 
 Во время разработки и повторных repair-циклов выполняются только связанные

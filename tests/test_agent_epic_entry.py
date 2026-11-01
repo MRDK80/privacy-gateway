@@ -646,3 +646,41 @@ def test_managed_supervisor_shares_canonical_ownership_through_bubblewrap(
     assert report["machine_code"] == "ALREADY_COMPLETED"
     assert observed == ["validation", "child launch", "child running"]
     assert session.resume()["status"] == "ROADMAP_DONE"
+
+
+def test_entry_durable_wait_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools import agent_final_preparation_driver as driver
+
+    root, _, state = managed(tmp_path, monkeypatch)
+    config = guards.private_json(state / "epic-runtime.json")
+    config["schema_version"] = "8.0"
+    (state / "epic-runtime.json").write_text(json.dumps(config))
+    # Presentation seam only: original-source admission is covered separately.
+    # Ensure status delegates to the reader and never resumes or writes records.
+    observed: list[tuple[Path, Path]] = []
+
+    def read_wait(seed: Path, repository: Path) -> dict[str, int]:
+        observed.append((seed, repository))
+        return {"pr": 327}
+
+    monkeypatch.setattr(guards, "managed_launch_guard", lambda *args, **kwargs: None)
+    monkeypatch.setattr(driver, "read_wait_status", read_wait)
+    before = {
+        p.relative_to(state): p.read_bytes()
+        for p in state.rglob("*") if p.is_file()
+    }
+    report = entry.status(root, state)
+    after = {
+        p.relative_to(state): p.read_bytes()
+        for p in state.rglob("*") if p.is_file()
+    }
+    assert observed == [(state, root)]
+    assert report["status"] == "STATUS"
+    assert report["machine_code"] == "WAITING_OWNER_FINAL_APPROVAL"
+    assert report["phase"] == "FINAL:WAITING_OWNER_FINAL_APPROVAL"
+    assert report["checkpoint_status"] == "WAITING_OWNER_FINAL_APPROVAL"
+    assert report["links"].count("https://github.com/OWNER/repository/pull/327") == 1
+    assert str(tmp_path) not in json.dumps(report)
+    assert after == before

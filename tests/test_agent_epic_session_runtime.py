@@ -11,6 +11,7 @@ from tools import agent_coordinator_handover as handover
 from tools import agent_epic_handover as planner
 from tools import agent_epic_loop as loop
 from tools import agent_epic_session_runtime as runtime
+from tools import agent_orchestrate as workflow
 from tools.agent_epic_final_runtime import digest
 
 from tests.test_agent_epic_handover import (
@@ -458,3 +459,103 @@ def test_final_resume_pending_post_merge_ci_does_not_repeat_merge(
         "close_epic",
         "update_epic",
     ]
+
+
+@pytest.mark.parametrize("case", ["legacy_approval_not_upgraded"])
+def test_legacy_approval_not_upgraded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """A retained legacy document cannot manufacture the missing approval pin."""
+    assert case == "legacy_approval_not_upgraded"
+    engine, previous, _ = build(tmp_path, monkeypatch)
+    approval = {
+        "schema_version": "1.0", "repository": previous["repository"],
+        "epic": 248, "roadmap_ref": previous["base_ref"],
+        "roadmap_sha": previous["merge_sha"], "main_sha": previous["policy_sha"],
+        "policy_sha": previous["policy_sha"], "owner_identity": "OWNER",
+        "demo_confirmed_by_owner": True, "lesson_digest": "sha256:" + "a" * 64,
+    }
+    path = engine.state / "final-approval.json"
+    private(path, approval)
+    original = path.read_bytes()
+    before_config = dict(engine.config)
+    monkeypatch.setattr(
+        engine, "_adapter", lambda: pytest.fail("unapproved role must not start")
+    )
+    with pytest.raises(loop.PhaseBlocked, match="^FINAL_DEMO_UNCONFIRMED$"):
+        engine.final_resume(1)
+    assert engine.config == before_config
+    assert engine.config["approved_final_digest"] is None
+    assert path.read_bytes() == original
+    assert not (engine.state / "final-preparation").exists()
+
+
+def _legacy_final_cursor(
+    engine: runtime.SessionRuntime, previous: dict[str, Any], mode: str,
+) -> tuple[workflow.StateStore, dict[str, Any]]:
+    from tests.test_agent_epic_bootstrap import checkpoint
+
+    engine.store.save(
+        checkpoint(version="3.0", pr=278) | previous | {
+            "task": 250, "base_sha": previous["policy_sha"],
+            "phase": "NEXT_TASK", "completed_phases": list(loop.PHASES[1:]),
+            "status": "TASK_DONE",
+        }
+    )
+    cursor = {
+        "schema_version": "1.0", "repository": previous["repository"],
+        "epic": 248, "policy_sha": previous["policy_sha"], "seed_task": 250,
+        "current_task": 250, "completed_tasks": [250], "pending_task": None,
+        "mode": mode,
+    }
+    control = workflow.StateStore(engine.state / "session-control")
+    control.save("cursor", cursor)
+    return control, cursor
+
+
+@pytest.mark.parametrize("case", ["legacy_cursor_done"])
+def test_legacy_cursor_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """An original DONE cursor returns without replaying task or final effects."""
+    assert case == "legacy_cursor_done"
+    engine, previous, _ = build(tmp_path, monkeypatch)
+    control, cursor = _legacy_final_cursor(engine, previous, "DONE")
+    before = engine.store.load()
+    monkeypatch.setattr(
+        engine, "final_resume", lambda _: pytest.fail("DONE must not run final")
+    )
+    monkeypatch.setattr(
+        engine, "select", lambda: pytest.fail("DONE must not select another task")
+    )
+    assert engine.resume() == {
+        "status": "ROADMAP_DONE", "machine_code": "ALREADY_COMPLETED",
+    }
+    assert control.load("cursor") == cursor
+    assert engine.store.load() == before
+    assert not (engine.state / "final-preparation").exists()
+
+
+@pytest.mark.parametrize("case", ["legacy_failure_priority"])
+def test_legacy_failure_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """A final callback failure is propagated without saving DONE or new WAIT."""
+    assert case == "legacy_failure_priority"
+    engine, previous, _ = build(tmp_path, monkeypatch)
+    control, cursor = _legacy_final_cursor(engine, previous, "FINAL")
+    before = engine.store.load()
+    failure = loop.PhaseBlocked("OWNER_STOPPED")
+    calls: list[int] = []
+
+    def stopped(iterations: int) -> dict[str, Any]:
+        calls.append(iterations)
+        raise failure
+
+    monkeypatch.setattr(engine, "final_resume", stopped)
+    with pytest.raises(loop.PhaseBlocked, match="^OWNER_STOPPED$") as error:
+        engine.resume()
+    assert error.value is failure and calls == [1]
+    assert control.load("cursor") == cursor
+    assert engine.store.load() == before
+    assert not (engine.state / "final-preparation").exists()

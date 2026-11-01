@@ -355,9 +355,7 @@ def _prompt(role: str, request: Mapping[str, Any]) -> str:
         if "review_criteria" in request or "pending_delivery_criteria" in request:
             partition = {
                 "review_criteria": request.get("review_criteria"),
-                "pending_delivery_criteria": request.get(
-                    "pending_delivery_criteria"
-                ),
+                "pending_delivery_criteria": request.get("pending_delivery_criteria"),
             }
         runtime = {
             key: value
@@ -383,10 +381,14 @@ def _prompt(role: str, request: Mapping[str, Any]) -> str:
                 "pinned-patch-requirements",
                 json.dumps(partition, ensure_ascii=False, sort_keys=True),
             )
-        return prompt + chr(10) + _block(
+        return (
+            prompt
+            + chr(10)
+            + _block(
                 "runtime-evidence",
                 json.dumps(runtime, ensure_ascii=False, sort_keys=True),
             )
+        )
     payload = {key: value for key, value in request.items() if key != "trusted_policy"}
     data = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     policy = request.get("trusted_policy")
@@ -506,13 +508,22 @@ def _run_codex(
         settings_options: dict[str, Any] = {}
         if settings_observed is not None:
             settings_options = {
-                "reasoning": reasoning, "on_settings": settings_observed.update
+                "reasoning": reasoning,
+                "on_settings": settings_observed.update,
             }
         payload = roles.run(
-            argv, role=role, workdir=workdir, prompt=prompt,
-            schema=json.loads(schema_path.read_text()), model=model, timeout=timeout,
-            output_limit=DEFAULT_OUTPUT_LIMIT, invocation=invocation,
-            backend_digest=backend_digest, environment=environment, guard=guard,
+            argv,
+            role=role,
+            workdir=workdir,
+            prompt=prompt,
+            schema=json.loads(schema_path.read_text()),
+            model=model,
+            timeout=timeout,
+            output_limit=DEFAULT_OUTPUT_LIMIT,
+            invocation=invocation,
+            backend_digest=backend_digest,
+            environment=environment,
+            guard=guard,
             **settings_options,
         )
         output_path.write_text(json.dumps(payload), encoding="utf-8")
@@ -617,9 +628,7 @@ def _validate_repair_feedback(request: Mapping[str, Any]) -> None:
 
     def bounded_text(value: Any, limit: int = 512) -> bool:
         return (
-            isinstance(value, str)
-            and 0 < len(value) <= limit
-            and "\x00" not in value
+            isinstance(value, str) and 0 < len(value) <= limit and "\x00" not in value
         )
 
     source = feedback.get("source")
@@ -627,22 +636,27 @@ def _validate_repair_feedback(request: Mapping[str, Any]) -> None:
         if set(feedback) != {"source", "machine_code", "checks"}:
             raise AdapterError("INVALID_REQUEST")
         checks = feedback["checks"]
-        if not bounded_text(feedback["machine_code"], 64) or not isinstance(
-            checks, list
-        ) or len(checks) > 4:
+        if (
+            not bounded_text(feedback["machine_code"], 64)
+            or not isinstance(checks, list)
+            or len(checks) > 4
+        ):
             raise AdapterError("INVALID_REQUEST")
         for check in checks:
             if not isinstance(check, dict) or set(check) != {
-                "name", "status", "exit_code"
+                "name",
+                "status",
+                "exit_code",
             }:
                 raise AdapterError("INVALID_REQUEST")
             status, exit_code = check["status"], check["exit_code"]
             if (
                 not bounded_text(check["name"], 64)
                 or (status is not None and not bounded_text(status, 64))
-                or (exit_code is not None and (
-                    not isinstance(exit_code, int) or isinstance(exit_code, bool)
-                ))
+                or (
+                    exit_code is not None
+                    and (not isinstance(exit_code, int) or isinstance(exit_code, bool))
+                )
             ):
                 raise AdapterError("INVALID_REQUEST")
         return
@@ -653,7 +667,11 @@ def _validate_repair_feedback(request: Mapping[str, Any]) -> None:
         raise AdapterError("INVALID_REQUEST")
     for finding in findings:
         if not isinstance(finding, dict) or set(finding) != {
-            "severity", "category", "location", "requirement", "required_fix"
+            "severity",
+            "category",
+            "location",
+            "requirement",
+            "required_fix",
         }:
             raise AdapterError("INVALID_REQUEST")
         if not bounded_text(finding["severity"], 16) or not bounded_text(
@@ -662,7 +680,9 @@ def _validate_repair_feedback(request: Mapping[str, Any]) -> None:
             raise AdapterError("INVALID_REQUEST")
         location = finding["location"]
         if not isinstance(location, dict) or set(location) != {
-            "path", "line_start", "line_end"
+            "path",
+            "line_start",
+            "line_end",
         }:
             raise AdapterError("INVALID_REQUEST")
         path = location["path"]
@@ -800,6 +820,7 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         from tools import agent_epic_runtime_cli as runtime_guards
         from tools import agent_quota as quota
         from tools.agent_quota_source import _pinned
+
         quota_owner = quota.profile(runtime_guards.private_json(args.quota_profile))
         if runtime_guards.canonical_digest(quota_owner) != args.approved_quota_digest:
             raise AdapterError("INVALID_REQUEST")
@@ -811,6 +832,7 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
                 raise AdapterError("INVALID_REQUEST")
             runtime_guards.managed_launch_guard(args.quota_profile.parent, root)
             _pinned(approved_owner["source"])
+
         quota_guard()
         args.codex_command = [quota_owner["source"]["executable"]]
     continuation_backend: dict[str, Any] | None = None
@@ -830,8 +852,10 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         approved_profile = runtime_guards.continuation_profile_guard(
             state, config, mandate
         )
-        if (config.get("schema_version") not in {"6.0", "7.0"}
-            or approved_profile is None):
+        if (
+            config.get("schema_version") not in {"6.0", "7.0", "8.0"}
+            or approved_profile is None
+        ):
             raise AdapterError("INVALID_REQUEST")
         continuation_backend = continuation.document(
             runtime_guards.role_backend_guard(state, approved_profile, quota_owner)
@@ -848,13 +872,18 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
             fresh_profile = runtime_guards.continuation_profile_guard(
                 state, fresh_config, fresh_mandate
             )
-            if (fresh_config != config or fresh_mandate != mandate
+            if (
+                fresh_config != config
+                or fresh_mandate != mandate
                 or fresh_profile != approved_profile
                 or runtime_guards.role_backend_guard(
                     state, approved_profile, quota_owner
-                ) != approved_backend):
+                )
+                != approved_backend
+            ):
                 raise AdapterError("INVALID_REQUEST")
             _pinned(approved_backend["source"])
+
         iteration = request.get("repair_iteration")
         if type(iteration) is not int or not 0 <= iteration <= 2:
             raise AdapterError("INVALID_REQUEST")
@@ -862,9 +891,13 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         args.model = approved_backend["model"]
         args.codex_command = [approved_backend["source"]["executable"]]
         quota_guard()
-    native_source = (continuation_backend["source"]
-                     if continuation_backend is not None
-                     else quota_owner["source"] if quota_owner is not None else None)
+    native_source = (
+        continuation_backend["source"]
+        if continuation_backend is not None
+        else quota_owner["source"]
+        if quota_owner is not None
+        else None
+    )
     if native_source is None:
         _assert_version(args.codex_command, root)
     else:
@@ -874,7 +907,9 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         from tools.agent_quota_wait import bare_digest
 
         version = bounded_run(
-            [args.codex_command[0], "--version"], timeout=5, cap=4096,
+            [args.codex_command[0], "--version"],
+            timeout=5,
+            cap=4096,
             guard=quota_guard,
         )
         if (
@@ -901,7 +936,8 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         settings_call: dict[str, Any] = {}
         if continuation_backend is not None:
             settings_call = {
-                "reasoning": reasoning, "settings_observed": observed_settings
+                "reasoning": reasoning,
+                "settings_observed": observed_settings,
             }
         _run_codex(
             command=args.codex_command,
@@ -922,7 +958,8 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
                     "backend_digest": bare_digest(native_source),
                     "guard": quota_guard,
                 }
-                if native_source is not None else {}
+                if native_source is not None
+                else {}
             ),
         )
         payload = _read_payload(output_path, args.output_limit)
@@ -937,11 +974,17 @@ def adapt(args: argparse.Namespace) -> dict[str, Any]:
         from tools.agent_continuation_backend import completed_receipt
 
         receipt, terminal = completed_receipt(
-            continuation_backend, observed_settings, role=args.role,
-            invocation=bare_digest(request), output=payload,
+            continuation_backend,
+            observed_settings,
+            role=args.role,
+            invocation=bare_digest(request),
+            output=payload,
         )
-        return {"role_output": payload, "settings_receipt": receipt,
-                "terminal_fact": terminal}
+        return {
+            "role_output": payload,
+            "settings_receipt": receipt,
+            "terminal_fact": terminal,
+        }
     return payload
 
 

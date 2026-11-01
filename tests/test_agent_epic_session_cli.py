@@ -48,6 +48,11 @@ def test_v2_epic_command_runs_owner_only_script_in_real_namespace(
     path.write_text(json.dumps(value), encoding="utf-8")
     path.chmod(0o600)
     adapter = loop.CommandRuntimeAdapter.load(path, tmp_path / "repo", state)
+    with pytest.raises(cli.DeploymentError, match="RUNTIME_CONFIG_READ_FAILED"):
+        adapter.resume_epic()
+    config_path = state / "epic-runtime.json"
+    config_path.write_text(json.dumps({"schema_version": "1.0"}), encoding="utf-8")
+    config_path.chmod(0o600)
     assert adapter.resume_epic()["machine_code"] == "FINAL_DEMO_UNCONFIRMED"
     value["schema_version"] = "1.0"
     path.write_text(json.dumps(value), encoding="utf-8")
@@ -118,3 +123,93 @@ def test_epic_entry_cannot_import_code_before_pinned_policy_verification(
     monkeypatch.setattr(cli, "verify_policy", refuse)
     with pytest.raises(cli.DeploymentError, match="UNTRUSTED_RUNTIME_COMMAND"):
         cli.build_session(state, tmp_path / "repo")
+
+
+def waiting_result() -> dict[str, Any]:
+    """Closed presentation fixture, not original-source/owner authority."""
+    from tools.agent_final_preparation_report import prepare_report
+
+    from tests.test_agent_final_preparation_report import inputs
+
+    report = prepare_report(
+        *inputs(), child_numbers=(295, 296),
+        learning_status="NONE_APPLIED", comparison_status="UNMEASURED",
+    )
+    return {
+        "status": "WAITING_OWNER_FINAL_APPROVAL",
+        "machine_code": "WAITING_OWNER_FINAL_APPROVAL",
+        "report": report,
+    }
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Private POSIX adapter config")
+def test_cli_adapter_validated_owner_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from types import SimpleNamespace
+
+    result = waiting_result()
+    calls: list[str] = []
+
+    def resume() -> dict[str, Any]:
+        calls.append("resume")
+        return result
+
+    session = SimpleNamespace(
+        config={"schema_version": "8.0"}, resume=resume, wait_scope=None,
+    )
+    monkeypatch.setattr(cli, "build_session", lambda *args, **kwargs: session)
+    monkeypatch.setattr(sys, "argv", [
+        "runtime", "epic_resume", "--state-dir", str(tmp_path / "state"),
+        "--repository-root", str(tmp_path / "repo"),
+    ])
+    assert cli.main() == 0
+    captured = capsys.readouterr()
+    envelope = json.loads(captured.out)
+    assert not captured.err
+    assert envelope == {"schema_version": "1.0", **{
+        key: result[key] for key in ("status", "machine_code")
+    }, "result": result}
+    state = tmp_path / "adapter-state"
+    state.mkdir()
+    config_path = state / "epic-runtime.json"
+    config_path.write_text('{"schema_version":"8.0"}')
+    config_path.chmod(0o600)
+    adapter = loop.CommandRuntimeAdapter(
+        root=tmp_path, live_command=("synthetic",), phase_commands={},
+        reconcile_commands={}, timeout_seconds=1, output_limit=4096,
+        epic_command=("synthetic-epic",), state_directory=state,
+    )
+    monkeypatch.setattr(adapter, "_run", lambda command: envelope)
+    assert adapter.resume_epic() == envelope
+    assert calls == ["resume"]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Private POSIX checkpoint")
+def test_loop_wait_exit_and_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.test_agent_epic_bootstrap import checkpoint
+
+    root, state = tmp_path / "repo", tmp_path / "state"
+    root.mkdir()
+    store = loop.CheckpointStore(state, root)
+    store.save(checkpoint(version="3.0") | {"policy_sha": "a" * 40})
+    before = store.path.read_bytes()
+    envelope = {"schema_version": "1.0", "status": "WAITING_OWNER_FINAL_APPROVAL",
+                "machine_code": "WAITING_OWNER_FINAL_APPROVAL",
+                "result": waiting_result()}
+    adapter = loop.CommandRuntimeAdapter(
+        root=root, live_command=("synthetic",), phase_commands={},
+        reconcile_commands={}, timeout_seconds=1, output_limit=4096,
+        epic_command=("synthetic-epic",), state_directory=state,
+    )
+    monkeypatch.setattr(adapter, "resume_epic", lambda: envelope)
+    monkeypatch.setattr(loop.CommandRuntimeAdapter, "load", lambda *args: adapter)
+    monkeypatch.setattr(loop, "resume", lambda **kwargs: pytest.fail("legacy fallback"))
+    monkeypatch.setattr(sys, "argv", [
+        "loop", "resume", "--state-dir", str(state), "--repository-root", str(root),
+    ])
+    assert loop.main() == 0
+    assert json.loads(capsys.readouterr().out) == envelope
+    assert store.path.read_bytes() == before

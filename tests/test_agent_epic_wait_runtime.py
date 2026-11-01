@@ -34,10 +34,20 @@ class Budget:
         self.directory.mkdir(mode=0o700)
         self.clock = Clock()
         self.readers: dict[str, waits.Reader] = {}
+        self._context_stack: list[str] = []
+
+    @property
+    def active_stage(self) -> str | None:
+        return self._context_stack[-1] if self._context_stack else None
 
     @contextmanager
     def context(self, stage: str) -> Iterator[waits.Reader]:
-        yield self.reader(stage)
+        reader = self.reader(stage)
+        self._context_stack.append(stage)
+        try:
+            yield reader
+        finally:
+            self._context_stack.pop()
 
     def recorded(self, stage: str) -> bool:
         return (

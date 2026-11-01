@@ -36,6 +36,7 @@ def sample(tmp_path: Path, text: str) -> tuple[Path, dict[str, Any], dict[str, s
         "LANG": "C.UTF-8",
         "PYTHONPATH": str(REPO),
         "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
     }
     return root, plan, env
 
@@ -45,6 +46,12 @@ def test_actual_pytest_pause_resume_reuses_only_completed_unit(tmp_path: Path) -
         tmp_path,
         "def test_one():\n    assert True\n\ndef test_two():\n    assert True\n",
     )
+    source_cache = REPO / "tools/__pycache__"
+    cache_before = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in source_cache.glob("*.pyc")
+    }
+    cache_directory_existed = source_cache.exists()
     identity = hashlib.sha256((root / "test_synthetic.py").read_bytes()).hexdigest()
     deadline = time.monotonic() + 30
     expiry = time.time() + 30
@@ -74,6 +81,11 @@ def test_actual_pytest_pause_resume_reuses_only_completed_unit(tmp_path: Path) -
         assert runner.state.remaining() == []
         dispatches = [e["unit"] for e in store.events if e["kind"] == "dispatch"]
         assert dispatches == [0, 1]
+    assert source_cache.exists() == cache_directory_existed
+    assert {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in source_cache.glob("*.pyc")
+    } == cache_before
 
 
 def test_resume_cannot_extend_original_clock(tmp_path: Path) -> None:

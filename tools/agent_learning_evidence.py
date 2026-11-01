@@ -44,7 +44,7 @@ class SourceReader:
         self.root = root.resolve()
         self.seed = guards.secure_directory(guards.managed_state(state), root)
         self.config = guards.learning_private_json(self.seed / "epic-runtime.json")
-        if self.config.get("schema_version") != "7.0":
+        if self.config.get("schema_version") not in {"7.0", "8.0"}:
             raise c.LearningError("LEARNING_PROFILE_REQUIRED")
         if set(self.config) != guards.epic_config_keys(self.config):
             raise c.LearningError("LEARNING_SOURCE_INVALID")
@@ -68,12 +68,7 @@ class SourceReader:
         mandate = guards.learning_private_json(self.seed / "mandate.json")
         guards.bootstrap_authority(config, mandate, epic=True)
         guards.managed_launch_guard(self.seed, self.root)
-        guards.verify_policy(
-            self.policy,
-            self.root,
-            mandate["policy_sha"],
-            entry=self.policy / "tools/agent_epic_runtime_cli.py",
-        )
+        self._verify_policy_source(mandate["policy_sha"])
         owner = guards.learning_profile_guard(self.seed, config, mandate)
         if owner is None:
             raise c.LearningError("LEARNING_PROFILE_REQUIRED")
@@ -105,9 +100,25 @@ class SourceReader:
         if handover._repository_identity(self.root) != owner["repository"]:
             raise c.LearningError("LEARNING_IDENTITY_INVALID")
 
+    def _verify_policy_source(self, policy_sha: str) -> None:
+        verify = (
+            guards.verify_policy_config8_batch
+            if self.config.get("schema_version") == "8.0"
+            else guards.verify_policy
+        )
+        verify(
+            self.policy,
+            self.root,
+            policy_sha,
+            entry=self.policy / "tools/agent_epic_runtime_cli.py",
+        )
+
+    def _source_tasks(self) -> tuple[int, ...]:
+        return tuple(self.config["approved_order"])
+
     def task_directory(self, task: int) -> Path:
         c.integer(task, 2147483647, 1)
-        if task not in self.config["approved_order"]:
+        if task not in self._source_tasks():
             raise c.LearningError("LEARNING_TASK_UNAPPROVED")
         seed = guards.learning_private_json(self.seed / "epic-loop-checkpoint.json")
         directory = (

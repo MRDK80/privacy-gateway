@@ -3,14 +3,93 @@
 from __future__ import annotations
 
 import json
+import os
 import re
-from collections.abc import Callable, Sequence
+import stat
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any
 
 from tools import agent_orchestrate as workflow
 from tools.agent_quota import QuotaError
 from tools.agent_quota_process import run as bounded_run
 from tools.agent_quota_wait import bare_digest
+
+
+@dataclass
+class _MalformedSink:
+    fd: int
+    identity: tuple[int, int]
+    consumed: bool = False
+
+
+_malformed_sink: ContextVar[_MalformedSink | None] = ContextVar(
+    "_malformed_sink", default=None,
+)
+
+
+def _diagnostic_identity(fd: int) -> tuple[int, int]:
+    if type(fd) is not int or fd < 0:
+        raise ValueError("DIAGNOSTIC_SETUP_STOP")
+    info = os.fstat(fd)
+    if (
+        not stat.S_ISREG(info.st_mode) or info.st_uid != getattr(os, "getuid")()
+        or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1
+        or info.st_size != 0 or os.lseek(fd, 0, os.SEEK_CUR) != 0
+    ):
+        raise ValueError("DIAGNOSTIC_SETUP_STOP")
+    return info.st_dev, info.st_ino
+
+
+@contextmanager
+def _malformed_diagnostic(fd: int) -> Iterator[None]:
+    """Private synthetic-harness binding; no environment/config activation."""
+    try:
+        if _malformed_sink.get() is not None:
+            raise ValueError("DIAGNOSTIC_SETUP_STOP")
+        identity = _diagnostic_identity(fd)
+        os.set_inheritable(fd, False)
+    except Exception:
+        raise RuntimeError("DIAGNOSTIC_SETUP_STOP") from None
+    token = _malformed_sink.set(_MalformedSink(fd, identity))
+    try:
+        yield
+    finally:
+        try:
+            _malformed_sink.reset(token)
+        except Exception:
+            # A diagnostic cleanup error cannot replace the original outcome.
+            pass
+
+
+def _note_malformed_output(role: str, returncode: int, stdout_bytes: int) -> None:
+    sink = _malformed_sink.get()
+    if sink is None or sink.consumed:
+        return
+    # Context copies share this latch. Failed/partial writes never refund it.
+    sink.consumed = True
+    try:
+        if role not in {"executor", "controller"} or type(stdout_bytes) is not int:
+            return
+        if stdout_bytes < 0 or _diagnostic_identity(sink.fd) != sink.identity:
+            return
+        code: int | str = (
+            returncode if type(returncode) is int and -255 <= returncode <= 255
+            else "OTHER"
+        )
+        raw = (json.dumps({
+            "schema_version": "diagnostic1", "role": role,
+            "returncode": code, "stdout_bytes": stdout_bytes,
+            "parse_stage": "JSON_LOAD_VALUE_ERROR",
+        }, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+        if len(raw) <= 512:
+            os.write(sink.fd, raw)
+    except Exception:
+        # No raw values, exception text, retry or change to parser semantics.
+        pass
+
 
 EVENT_KEYS = {
     "schema_version",
@@ -119,6 +198,7 @@ class CommandAdapter(workflow.CommandAdapter):
         try:
             value = json.loads(completed.stdout)
         except ValueError:
+            _note_malformed_output(role, completed.returncode, len(completed.stdout))
             raise workflow.OrchestrationError("MALFORMED_OUTPUT") from None
         if completed.returncode == 20:
             verified = interruption(

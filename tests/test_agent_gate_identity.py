@@ -43,6 +43,7 @@ def test_empty_directory_and_directory_mode_are_source_inputs(tmp_path: Path) ->
     first = fingerprint(tmp_path, [], {}, {})
     directory = tmp_path / "synthetic-flag"
     directory.mkdir()
+    directory.chmod(0o755)
     second = fingerprint(tmp_path, [], {}, {})
     assert second != first
     directory.chmod(0o700)

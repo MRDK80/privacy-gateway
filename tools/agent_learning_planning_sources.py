@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import selectors
 import subprocess
 import tempfile
-from dataclasses import fields
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from tools import agent_epic_handover as handover
 from tools import agent_epic_loop as loop
@@ -88,44 +94,288 @@ def _object(reader: SourceReader, oid: str, kind: str) -> bytes:
     return raw
 
 
+class _WorkspaceObjects:
+    """One source-owned config8 object stream, never shared between proofs."""
+
+    def __init__(self, reader: SourceReader) -> None:
+        self.reader = reader
+        self.child: subprocess.Popen[bytes] | None = None
+        self.selector: selectors.BaseSelector | None = None
+        self.end: float | None = None
+        self.io_end: float | None = None
+        self.requests = 0
+
+    @staticmethod
+    def _invalid() -> NoReturn:
+        raise core.LearningError("LEARNING_SOURCE_INVALID")
+
+    def _window(self) -> None:
+        now = time.monotonic()
+        if self.end is not None and now >= self.end:
+            self._invalid()
+        self.io_end, self.end = now + 28.0, now + 30.0
+
+    def __enter__(self) -> _WorkspaceObjects:
+        primary: BaseException | None = None
+        try:
+            self._window()
+            self.child = subprocess.Popen(
+                ["git", "cat-file", "--batch"], cwd=self.reader.root,
+                env=workflow._snapshot_environment(GIT_OPTIONAL_LOCKS="0"),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, shell=False, close_fds=True, bufsize=0,
+            )
+            if self.child.stdin is None or self.child.stdout is None:
+                self._invalid()
+            set_blocking = getattr(os, "set_blocking", None)
+            if not callable(set_blocking):
+                self._invalid()
+            set_blocking(self.child.stdin.fileno(), False)
+            set_blocking(self.child.stdout.fileno(), False)
+            self.selector = selectors.DefaultSelector()
+        except BaseException as error:
+            primary = error
+        if primary is not None:
+            self._cleanup(primary)
+            self._raise(primary)
+        return self
+
+    @staticmethod
+    def _raise(error: BaseException) -> NoReturn:
+        if isinstance(error, core.LearningError):
+            raise error
+        if isinstance(error, (OSError, ValueError, subprocess.SubprocessError)):
+            raise core.LearningError("LEARNING_SOURCE_INVALID") from None
+        raise error
+
+    def _deadline(self, *, final: bool = False) -> None:
+        deadline = self.end if final else self.io_end
+        if deadline is None or time.monotonic() >= deadline:
+            self._invalid()
+
+    def _wait(self, fd: int, event: int, *, final: bool = False) -> None:
+        if self.selector is None:
+            self._invalid()
+        assert self.selector is not None
+        deadline = self.end if final else self.io_end
+        if deadline is None:
+            self._invalid()
+        assert deadline is not None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._invalid()
+        self.selector.register(fd, event)
+        primary = None
+        try:
+            if not self.selector.select(remaining):
+                self._invalid()
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            try:
+                self.selector.unregister(fd)
+            except BaseException:
+                if primary is None:
+                    raise
+        if time.monotonic() >= deadline:
+            self._invalid()
+
+    def _read_some(self, count: int, *, final: bool = False) -> bytes:
+        child = self.child
+        if child is None or child.stdout is None:
+            self._invalid()
+        assert child is not None and child.stdout is not None
+        fd = child.stdout.fileno()
+        while True:
+            self._wait(fd, selectors.EVENT_READ, final=final)
+            try:
+                raw = os.read(fd, min(count, 65536))
+                self._deadline(final=final)
+                return raw
+            except (BlockingIOError, InterruptedError):
+                continue
+
+    def _exact(self, size: int) -> bytes:
+        raw = bytearray()
+        while len(raw) < size:
+            chunk = self._read_some(size - len(raw))
+            if not chunk:
+                self._invalid()
+            raw.extend(chunk)
+        return bytes(raw)
+
+    def object(self, oid: str, kind: str) -> bytes:
+        primary: BaseException | None = None
+        result = b""
+        try:
+            core.hash_value(oid, size=40)
+            if kind not in {"commit", "tree", "blob"}:
+                self._invalid()
+            if self.requests:
+                self._window()  # Reject expired prior window BEFORE resetting.
+            if self.requests >= self.reader.owner["limits"]["max_records"] + 1:
+                self._invalid()
+            self.requests += 1
+            child = self.child
+            if child is None or child.stdin is None:
+                self._invalid()
+            assert child is not None and child.stdin is not None
+            fd = child.stdin.fileno()
+            pending = memoryview((oid + "\n").encode("ascii"))
+            while pending:
+                self._wait(fd, selectors.EVENT_WRITE)
+                try:
+                    count = os.write(fd, pending)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                self._deadline()
+                if count <= 0:
+                    self._invalid()
+                pending = pending[count:]
+            header = bytearray()
+            while len(header) < 96:
+                byte = self._read_some(1)
+                if not byte:
+                    self._invalid()
+                header.extend(byte)
+                if byte == b"\n":
+                    break
+            match = re.fullmatch(
+                rb"([0-9a-f]{40}) (commit|tree|blob) (0|[1-9][0-9]*)\n", bytes(header),
+            )
+            if (match is None or match[1] != oid.encode("ascii")
+                    or match[2] != kind.encode("ascii")):
+                self._invalid()
+            assert match is not None
+            size = int(match[3])
+            if size > self.reader.owner["limits"]["max_store_bytes"]:
+                self._invalid()
+            result = self._exact(size)
+            if self._exact(1) != b"\n":
+                self._invalid()
+            hasher = hashlib.sha1(f"{kind} {size}\0".encode())
+            hasher.update(result)
+            if hasher.hexdigest() != oid:
+                self._invalid()
+            self._deadline(final=True)
+        except BaseException as error:
+            primary = error
+        if primary is not None:
+            self._raise(primary)
+        return result
+
+    def _finish(self) -> None:
+        child = self.child
+        if child is None or child.stdin is None:
+            self._invalid()
+        assert child is not None and child.stdin is not None
+        child.stdin.close()
+        if self._read_some(1, final=True):
+            self._invalid()
+        remaining = 0.0 if self.end is None else self.end - time.monotonic()
+        if remaining <= 0 or child.wait(timeout=remaining) != 0:
+            self._invalid()
+        self._deadline(final=True)
+
+    def _cleanup(self, primary: BaseException | None) -> None:
+        secondary: BaseException | None = None
+        child = self.child
+        if child is not None:
+            for stream in (child.stdin, child.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except BaseException as error:
+                        if secondary is None:
+                            secondary = error
+            try:
+                if child.poll() is None:
+                    child.kill()
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+            try:
+                remaining = 0.0 if self.end is None else self.end - time.monotonic()
+                child.wait(timeout=max(0.0, remaining))
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+        if self.selector is not None:
+            try:
+                self.selector.close()
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+        if primary is None:
+            if secondary is not None:
+                self._raise(secondary)
+            self._deadline(final=True)
+
+    def __exit__(self, _type: Any, error: Any, _traceback: Any) -> None:
+        primary: BaseException | None = error
+        if primary is None:
+            try:
+                self._finish()
+            except BaseException as failure:
+                primary = failure
+        self._cleanup(primary)
+        if primary is not None:
+            self._raise(primary)
+        return None
+
+
+@contextmanager
+def _workspace_objects(
+    reader: SourceReader,
+) -> Iterator[Callable[[str, str], bytes]]:
+    config = getattr(reader, "config", None)
+    if not isinstance(config, dict) or config.get("schema_version") != "8.0":
+        yield lambda oid, kind: _object(reader, oid, kind)
+    else:
+        with _WorkspaceObjects(reader) as objects:
+            yield objects.object
+
+
 def verify_workspace(reader: SourceReader, value: dict[str, Any]) -> None:
     value = workspace(value)
-    commit = _object(reader, value["head_sha"], "commit")
-    if not commit.startswith(("tree " + value["tree_hash"] + "\n").encode()):
-        raise core.LearningError("LEARNING_SOURCE_MISMATCH")
-    # Each reachable tree and blob is bounded and byte-verified before checkout.
-    pending: list[tuple[str, str]] = [(value["tree_hash"], "tree")]
-    seen: set[str] = set()
-    size = 0
-    limits = reader.owner["limits"]
-    while pending:
-        oid, kind = pending.pop()
-        if oid in seen:
-            continue
-        if len(seen) >= limits["max_records"]:
-            raise core.LearningError("LEARNING_SOURCE_INVALID")
-        seen.add(oid)
-        raw = _object(reader, oid, kind)
-        size += len(raw)
-        if size > limits["max_store_bytes"]:
-            raise core.LearningError("LEARNING_SOURCE_INVALID")
-        if kind == "tree":
-            offset = 0
-            while offset < len(raw):
-                marker = raw.find(b"\0", offset)
-                if marker < 0 or marker + 21 > len(raw):
-                    raise core.LearningError("LEARNING_SOURCE_INVALID")
-                entry = raw[offset:marker]
-                mode, _, name = entry.partition(b" ")
-                if not name or b"/" in name or name in {b".", b".."}:
-                    raise core.LearningError("LEARNING_SOURCE_INVALID")
-                if mode not in {b"40000", b"100644", b"100755", b"120000"}:
-                    raise core.LearningError("LEARNING_SOURCE_INVALID")
-                child = raw[marker + 1 : marker + 21].hex()
-                pending.append((child, "tree" if mode == b"40000" else "blob"))
-                offset = marker + 21
-                if len(pending) + len(seen) > limits["max_records"]:
-                    raise core.LearningError("LEARNING_SOURCE_INVALID")
+    with _workspace_objects(reader) as fetch:
+        commit = fetch(value["head_sha"], "commit")
+        if not commit.startswith(("tree " + value["tree_hash"] + "\n").encode()):
+            raise core.LearningError("LEARNING_SOURCE_MISMATCH")
+        # Each reachable tree and blob is bounded and byte-verified before checkout.
+        pending: list[tuple[str, str]] = [(value["tree_hash"], "tree")]
+        seen: set[str] = set()
+        size = 0
+        limits = reader.owner["limits"]
+        while pending:
+            oid, kind = pending.pop()
+            if oid in seen:
+                continue
+            if len(seen) >= limits["max_records"]:
+                raise core.LearningError("LEARNING_SOURCE_INVALID")
+            seen.add(oid)
+            raw = fetch(oid, kind)
+            size += len(raw)
+            if size > limits["max_store_bytes"]:
+                raise core.LearningError("LEARNING_SOURCE_INVALID")
+            if kind == "tree":
+                offset = 0
+                while offset < len(raw):
+                    marker = raw.find(b"\0", offset)
+                    if marker < 0 or marker + 21 > len(raw):
+                        raise core.LearningError("LEARNING_SOURCE_INVALID")
+                    entry = raw[offset:marker]
+                    mode, _, name = entry.partition(b" ")
+                    if not name or b"/" in name or name in {b".", b".."}:
+                        raise core.LearningError("LEARNING_SOURCE_INVALID")
+                    if mode not in {b"40000", b"100644", b"100755", b"120000"}:
+                        raise core.LearningError("LEARNING_SOURCE_INVALID")
+                    child = raw[marker + 1 : marker + 21].hex()
+                    pending.append((child, "tree" if mode == b"40000" else "blob"))
+                    offset = marker + 21
+                    if len(pending) + len(seen) > limits["max_records"]:
+                        raise core.LearningError("LEARNING_SOURCE_INVALID")
 
 
 def replay(reader: SourceReader, task: int, role: str, ordinal: int) -> dict[str, Any]:
@@ -143,11 +393,59 @@ def replay(reader: SourceReader, task: int, role: str, ordinal: int) -> dict[str
 
 
 def _replay(reader: SourceReader, task: int, role: str, ordinal: int) -> dict[str, Any]:
+    result, envelope, relevance, normalized, _ = _original(reader, task, role, ordinal)
+    if relevance is not None:
+        from tools.agent_learning_planning_history import verify
+
+        verify(reader, role, envelope, relevance, normalized)
+    return result
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PlanningCallFact:
+    """Neutral full-artifact commitments; construction conveys no source authority."""
+
+    task: int
+    role: str
+    ordinal: int
+    invocation_key: str
+    metadata_digest: str
+    problem_digest: str
+    relevance_digest: str | None
+    request_digest: str
+    response_digest: str
+    context_digest: str
+    workspace_digest: str
+    validation_digest: str
+    source_digest: str
+
+
+def _original(
+    reader: SourceReader, task: int, role: str, ordinal: int
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any] | None,
+    dict[str, Any],
+    dict[str, Any],
+]:
+    return _original_with_call_fact(reader, task, role, ordinal)[0]
+
+
+def _original_with_call_fact(
+    reader: SourceReader, task: int, role: str, ordinal: int
+) -> tuple[
+    tuple[
+        dict[str, Any],
+        dict[str, Any],
+        dict[str, Any] | None,
+        dict[str, Any],
+        dict[str, Any],
+    ],
+    PlanningCallFact,
+]:
     reader.guard()
-    if (
-        role not in records.PLANNING_ROLES
-        or task not in reader.config["approved_order"]
-    ):
+    if role not in records.PLANNING_ROLES or task not in reader._source_tasks():
         raise core.LearningError("LEARNING_PLANNING_SOURCE_INVALID")
     core.integer(ordinal, 3, 1)
     source = admission.Admission(reader.seed, reader.root)._storage(task)
@@ -431,11 +729,7 @@ def _replay(reader: SourceReader, task: int, role: str, ordinal: int) -> dict[st
             code = error.machine_code
     if code != validation["machine_code"]:
         raise core.LearningError("LEARNING_SOURCE_MISMATCH")
-    if relevance is not None:
-        from tools.agent_learning_planning_history import verify
-
-        verify(reader, role, envelope, relevance, normalized)
-    return {
+    result = {
         "validation": validation,
         "request": request,
         "response": response,
@@ -443,3 +737,34 @@ def _replay(reader: SourceReader, task: int, role: str, ordinal: int) -> dict[st
         "workspace": original_workspace,
         "facts": normalized,
     }
+
+    commitments: dict[str, Any] = {
+        "family": "PLANNING",
+        "task": task,
+        "role": role,
+        "ordinal": ordinal,
+        "metadata_digest": digest(metadata),
+        "problem_digest": digest(problem),
+        "relevance_digest": digest(relevance) if relevance is not None else None,
+        "request_digest": digest(request_record),
+        "response_digest": digest(response_record),
+        "context_digest": digest(context_record),
+        "workspace_digest": digest(original_workspace),
+        "validation_digest": digest(validation),
+    }
+    call_fact = PlanningCallFact(
+        task=task,
+        role=role,
+        ordinal=ordinal,
+        invocation_key=metadata["invocation_key"],
+        metadata_digest=commitments["metadata_digest"],
+        problem_digest=commitments["problem_digest"],
+        relevance_digest=commitments["relevance_digest"],
+        request_digest=commitments["request_digest"],
+        response_digest=commitments["response_digest"],
+        context_digest=commitments["context_digest"],
+        workspace_digest=commitments["workspace_digest"],
+        validation_digest=commitments["validation_digest"],
+        source_digest=digest(commitments),
+    )
+    return (result, envelope, relevance, normalized, metadata), call_fact

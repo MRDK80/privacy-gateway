@@ -19,9 +19,10 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 CONFIG_KEYS = {
     "schema_version",
@@ -42,7 +43,9 @@ EPIC_CONFIG_KEYS = (CONFIG_KEYS - {"approved_handover_digest"}) | {
 
 def epic_config_keys(config: dict[str, Any]) -> set[str]:
     version = config.get("schema_version")
-    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0"}:
+    if version not in {"1.0", "2.0", "3.0", "4.0", "5.0", "6.0", "7.0", "8.0"}:
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    if version == "8.0" and config.get("approved_final_digest") is not None:
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
     keys = EPIC_CONFIG_KEYS | (
         {"approved_launch_digest"} if version != "1.0" else set()
@@ -51,20 +54,32 @@ def epic_config_keys(config: dict[str, Any]) -> set[str]:
         keys
         | (
             {"approved_planning_digest"}
-            if version in {"3.0", "4.0", "5.0", "6.0", "7.0"}
+            if version in {"3.0", "4.0", "5.0", "6.0", "7.0", "8.0"}
             else set()
         )
-        | ({"approved_wait_digest"}
-           if version in {"4.0", "5.0", "6.0", "7.0"} else set())
-        | ({"approved_quota_digest"} if version in {"5.0", "6.0", "7.0"} else set())
-        | ({"approved_continuation_digest"} if version in {"6.0", "7.0"} else set())
-        | ({"approved_learning_digest"} if version == "7.0" else set())
+        | (
+            {"approved_wait_digest"}
+            if version in {"4.0", "5.0", "6.0", "7.0", "8.0"}
+            else set()
+        )
+        | (
+            {"approved_quota_digest"}
+            if version in {"5.0", "6.0", "7.0", "8.0"}
+            else set()
+        )
+        | (
+            {"approved_continuation_digest"}
+            if version in {"6.0", "7.0", "8.0"}
+            else set()
+        )
+        | ({"approved_learning_digest"} if version in {"7.0", "8.0"} else set())
+        | ({"approved_final_preparation_digest"} if version == "8.0" else set())
     )
 
 
 def planning_enabled(config: Mapping[str, Any]) -> bool:
     return config.get("schema_version") == "3.0" or (
-        config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0"}
+        config.get("schema_version") in {"4.0", "5.0", "6.0", "7.0", "8.0"}
         and config.get("approved_planning_digest") is not None
     )
 
@@ -73,7 +88,7 @@ def wait_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Validate the closed owner profile before importing candidate code."""
-    if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
+    if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0", "8.0"}:
         return None
     path = state / "wait-profile.json"
     owner = private_json(path)
@@ -248,7 +263,7 @@ def recovery_config_enabled(config: Mapping[str, Any]) -> bool:
 def quota_enabled(config: Mapping[str, Any]) -> bool:
     """Config6 composes separately approved quota only through a nonnull binding."""
     return config.get("schema_version") == "5.0" or (
-        config.get("schema_version") in {"6.0", "7.0"}
+        config.get("schema_version") in {"6.0", "7.0", "8.0"}
         and config.get("approved_quota_digest") is not None
     )
 
@@ -299,21 +314,32 @@ def quota_profile_guard(
 
 def role_backend_document(raw: Any) -> dict[str, Any]:
     """Closed source/settings validation usable before candidate imports."""
-    keys = {"schema_version", "source", "model", "original_reasoning",
-            "repeat_reasoning_levels"}
+    keys = {
+        "schema_version",
+        "source",
+        "model",
+        "original_reasoning",
+        "repeat_reasoning_levels",
+    }
     if (
-        not isinstance(raw, dict) or set(raw) != keys
+        not isinstance(raw, dict)
+        or set(raw) != keys
         or raw["schema_version"] != "1.0"
         or raw["original_reasoning"] != "low"
         or raw["repeat_reasoning_levels"] != ["medium", "high"]
-        or not isinstance(raw["model"], str) or not 1 <= len(raw["model"]) <= 128
+        or not isinstance(raw["model"], str)
+        or not 1 <= len(raw["model"]) <= 128
         or any(ord(c) < 32 or ord(c) == 127 for c in raw["model"])
     ):
         raise DeploymentError("CONTINUATION_BACKEND_INVALID")
     source = raw["source"]
     if (
-        not isinstance(source, dict) or set(source) != {
-            "executable", "executable_sha256", "version_digest",
+        not isinstance(source, dict)
+        or set(source)
+        != {
+            "executable",
+            "executable_sha256",
+            "version_digest",
             "request_timeout_seconds",
         }
         or not isinstance(source["executable"], str)
@@ -336,12 +362,13 @@ def role_backend_guard(
 ) -> dict[str, Any]:
     path = seed / "role-backend.json"
     value = role_backend_document(private_json(path))
-    if (path.stat().st_nlink != 1
+    if (
+        path.stat().st_nlink != 1
         or canonical_digest(value) != "sha256:" + owner["backend_digest"]
-        or (quota_owner is not None and value["source"] != quota_owner["source"])):
+        or (quota_owner is not None and value["source"] != quota_owner["source"])
+    ):
         raise DeploymentError("CONTINUATION_BACKEND_CHANGED")
     return value
-
 
 
 def continuation_transport_guard(raw: dict[str, Any]) -> None:
@@ -350,11 +377,12 @@ def continuation_transport_guard(raw: dict[str, Any]) -> None:
     path = Path(source["executable"])
     info = path.lstat()
     if (
-        not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-        or info.st_mode & 0o022 or not os.access(path, os.X_OK)
+        not stat.S_ISREG(info.st_mode)
+        or info.st_nlink != 1
+        or info.st_mode & 0o022
+        or not os.access(path, os.X_OK)
         or any(parent.is_symlink() for parent in path.parents)
-        or hashlib.sha256(path.read_bytes()).hexdigest()
-        != source["executable_sha256"]
+        or hashlib.sha256(path.read_bytes()).hexdigest() != source["executable_sha256"]
     ):
         raise DeploymentError("CONTINUATION_SOURCE_CHANGED")
     version = _quota_read([str(path), "--version"]).strip()
@@ -364,18 +392,24 @@ def continuation_transport_guard(raw: dict[str, Any]) -> None:
     ):
         raise DeploymentError("CONTINUATION_SOURCE_UNSUPPORTED")
 
+
 def continuation_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Closed owner profile binding before pinned runtime imports."""
     version = config.get("schema_version")
-    if (version not in {"3.0", "6.0", "7.0"}
-        or "approved_continuation_digest" not in config):
+    if (
+        version not in {"3.0", "6.0", "7.0", "8.0"}
+        or "approved_continuation_digest" not in config
+    ):
         return None
     seed = managed_state(state)
-    epic = (config if version in {"6.0", "7.0"}
-            else private_json(seed / "epic-runtime.json"))
-    if epic.get("schema_version") not in {"6.0", "7.0"} or config.get(
+    epic = (
+        config
+        if version in {"6.0", "7.0", "8.0"}
+        else private_json(seed / "epic-runtime.json")
+    )
+    if epic.get("schema_version") not in {"6.0", "7.0", "8.0"} or config.get(
         "approved_continuation_digest"
     ) != epic.get("approved_continuation_digest"):
         raise DeploymentError("CONTINUATION_APPROVAL_MISMATCH")
@@ -535,7 +569,7 @@ def learning_profile_guard(
     state: Path, config: dict[str, Any], mandate: dict[str, Any]
 ) -> dict[str, Any] | None:
     """Task3 inherits learning only through its exact verified managed config7."""
-    direct = config.get("schema_version") == "7.0"
+    direct = config.get("schema_version") in {"7.0", "8.0"}
     child = (
         config.get("schema_version") == "3.0"
         and "approved_handover_digest" in config
@@ -545,7 +579,7 @@ def learning_profile_guard(
         return None
     seed = managed_state(state)
     epic = config if direct else private_json(seed / "epic-runtime.json")
-    if epic.get("schema_version") != "7.0":
+    if epic.get("schema_version") not in {"7.0", "8.0"}:
         return None
     if set(epic) != epic_config_keys(epic):
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
@@ -578,18 +612,22 @@ def learning_profile_guard(
     ):
         catalog_path = Path(epic["policy_root"]) / "docs/schemas" / name
         try:
-            if (catalog_path.is_symlink()
+            if (
+                catalog_path.is_symlink()
                 or any(p.is_symlink() for p in catalog_path.parents)
                 or catalog_path.stat().st_nlink != 1
-                or catalog_path.stat().st_size > 65536):
+                or catalog_path.stat().st_size > 65536
+            ):
                 raise DeploymentError("LEARNING_CATALOG_CHANGED")
         except OSError:
             raise DeploymentError("LEARNING_CATALOG_CHANGED") from None
         catalog = learning_private_json(catalog_path)
-        if (set(catalog) != {"schema_version", "rules"}
+        if (
+            set(catalog) != {"schema_version", "rules"}
             or catalog.get("schema_version") != "1.0"
             or not isinstance(catalog.get("rules"), list)
-            or len(catalog["rules"]) > 128):
+            or len(catalog["rules"]) > 128
+        ):
             raise DeploymentError("LEARNING_CATALOG_CHANGED")
         catalogs[key] = canonical_digest(catalog).removeprefix("sha256:")
     if canonical_digest(catalogs) != "sha256:" + owner["catalog_digest"]:
@@ -1095,6 +1133,7 @@ def managed_launch_guard(
         "5.0",
         "6.0",
         "7.0",
+        "8.0",
     }
     if not present and not managed:
         return
@@ -1345,6 +1384,96 @@ def secure_directory(path: Path, root: Path) -> Path:
     return directory
 
 
+def _legacy_policy_batch_sources(
+    root: Path, sha: str, paths: list[str]
+) -> dict[str, bytes] | None:
+    """Fresh optional transport optimization; legacy checks remain authoritative.
+
+    Eligibility bounds never reject a policy: unsupported or ambiguous Git
+    results return to the original per-file show at its original check point.
+    No positive proof or expected bytes survive this verify_policy invocation.
+    """
+    if not 1 <= len(paths) <= 4096 or any(
+        re.fullmatch(r"(?:tools|docs/schemas)/[A-Za-z0-9_./-]+", path) is None
+        or any(part in {".", ".."} for part in path.split("/"))
+        for path in paths
+    ):
+        return None
+    try:
+        inventory = subprocess.run(
+            ["git", "ls-tree", "-r", "-z", sha, "tools", "docs/schemas"],
+            cwd=root,
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if (
+            inventory.returncode != 0
+            or len(inventory.stdout) > 1024 * 1024
+            or len(inventory.stderr) > 65536
+            or not inventory.stdout.endswith(b"\0")
+        ):
+            return None
+        records = inventory.stdout[:-1].split(b"\0")
+        if len(records) != len(paths):
+            return None
+        object_ids: list[bytes] = []
+        for record, relative in zip(records, paths, strict=True):
+            header, separator, raw_path = record.partition(b"\t")
+            match = re.fullmatch(rb"[0-7]{6} blob ([0-9a-f]{40})", header)
+            if not separator or match is None or raw_path != relative.encode("ascii"):
+                return None
+            object_ids.append(match[1])
+        batch = subprocess.run(
+            ["git", "cat-file", "--batch"],
+            cwd=root,
+            input=b"\n".join(object_ids) + b"\n",
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
+        if (
+            batch.returncode != 0
+            or len(batch.stdout) > 64 * 1024 * 1024
+            or len(batch.stderr) > 65536
+        ):
+            return None
+        position = 0
+        sources: dict[str, bytes] = {}
+        for relative, expected_id in zip(paths, object_ids, strict=True):
+            end = batch.stdout.find(b"\n", position, position + 96)
+            if end == -1:
+                return None
+            header_match = re.fullmatch(
+                rb"([0-9a-f]{40}) blob (0|[1-9][0-9]*)",
+                batch.stdout[position:end],
+            )
+            if header_match is None or header_match[1] != expected_id:
+                return None
+            size = int(header_match[2])
+            if size > 8 * 1024 * 1024:
+                return None
+            start = end + 1
+            finish = start + size
+            if batch.stdout[finish : finish + 1] != b"\n":
+                return None
+            contents = batch.stdout[start:finish]
+            actual_id = (
+                hashlib.sha1(
+                    b"blob " + str(len(contents)).encode("ascii") + b"\0" + contents
+                )
+                .hexdigest()
+                .encode("ascii")
+            )
+            if actual_id != expected_id:
+                return None
+            sources[relative] = contents
+            position = finish + 1
+        return sources if position == len(batch.stdout) else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
 def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
     """Every module/schema is byte-identical to the pinned Git policy object."""
     if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
@@ -1372,6 +1501,7 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
         or "tools/codex_adapter.py" not in paths
     ):
         raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    batch_sources = _legacy_policy_batch_sources(root, sha, paths)
     for relative in paths:
         target = private / relative
         for parent in (target, *target.parents):
@@ -1384,7 +1514,12 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
             not stat.S_ISREG(info.st_mode)
             or info.st_uid != owner_uid()
             or stat.S_IMODE(info.st_mode) & 0o077
-            or target.read_bytes() != git("show", f"{sha}:{relative}")
+            or target.read_bytes()
+            != (
+                batch_sources[relative]
+                if batch_sources is not None
+                else git("show", f"{sha}:{relative}")
+            )
         ):
             raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
     for item in private.rglob("*"):
@@ -1398,8 +1533,165 @@ def verify_policy(policy: Path, root: Path, sha: str, *, entry: Path) -> None:
             raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
 
 
+def verify_policy_config8_batch(
+    policy: Path, root: Path, sha: str, *, entry: Path
+) -> None:
+    """Fresh full policy proof for the already admitted config8 SourceReader."""
+    if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+        raise DeploymentError("POLICY_SHA_INVALID")
+    private = secure_directory(policy, root)
+
+    def git(
+        *args: str, input_bytes: bytes | None = None
+    ) -> subprocess.CompletedProcess[bytes]:
+        if input_bytes is None:
+            result = subprocess.run(
+                ["git", *args], cwd=root, capture_output=True, check=False, timeout=30
+            )
+        else:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=root,
+                capture_output=True,
+                check=False,
+                timeout=30,
+                input=input_bytes,
+            )
+        if result.returncode != 0:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        return result
+
+    entry_result = git("show", f"{sha}:tools/agent_epic_runtime_cli.py")
+    if entry.read_bytes() != entry_result.stdout:
+        raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+    if len(entry_result.stdout) > 8 * 1024 * 1024 or len(entry_result.stderr) > 65536:
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+
+    inventory = git("ls-tree", "-r", "--name-only", sha, "tools", "docs/schemas")
+    raw_paths = inventory.stdout
+    if (
+        len(raw_paths) > 1024 * 1024
+        or len(inventory.stderr) > 65536
+        or not raw_paths
+        or not raw_paths.endswith(b"\n")
+    ):
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    records = raw_paths[:-1].split(b"\n")
+    if len(records) > 4096:
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    paths: list[str] = []
+    folded: set[str] = set()
+    reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{number}" for prefix in ("COM", "LPT") for number in range(1, 10)
+    }
+    for raw_path in records:
+        if not 1 <= len(raw_path) <= 1024:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        try:
+            relative = raw_path.decode("ascii")
+        except UnicodeDecodeError:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE") from None
+        parts = relative.split("/")
+        if (
+            not relative.startswith(("tools/", "docs/schemas/"))
+            or any(
+                re.fullmatch(r"[A-Za-z0-9_.-]+", part) is None
+                or part in {".", ".."}
+                or part.endswith(".")
+                or part.split(".", 1)[0].upper() in reserved
+                for part in parts
+            )
+            or relative.casefold() in folded
+        ):
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        folded.add(relative.casefold())
+        paths.append(relative)
+    if (
+        "tools/agent_epic_runtime.py" not in paths
+        or "tools/codex_adapter.py" not in paths
+    ):
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    requests = "".join(f"{sha}:{relative}\n" for relative in paths).encode("ascii")
+    if len(requests) > 1024 * 1024:
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    batch = git("cat-file", "--batch", input_bytes=requests)
+    if len(batch.stdout) > 64 * 1024 * 1024 or len(batch.stderr) > 65536:
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    position = 0
+    sources: list[bytes] = []
+    for _ in paths:
+        end = batch.stdout.find(b"\n", position, position + 96)
+        if end == -1:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        header = re.fullmatch(
+            rb"([0-9a-f]{40}) blob (0|[1-9][0-9]*)", batch.stdout[position:end]
+        )
+        if header is None:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        size = int(header[2])
+        if size > 8 * 1024 * 1024:
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        start = end + 1
+        finish = start + size
+        if batch.stdout[finish : finish + 1] != b"\n":
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        contents = batch.stdout[start:finish]
+        object_id = hashlib.sha1(
+            b"blob " + str(len(contents)).encode("ascii") + b"\0" + contents
+        ).hexdigest()
+        if header[1] != object_id.encode("ascii"):
+            raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+        sources.append(contents)
+        position = finish + 1
+    if position != len(batch.stdout):
+        raise DeploymentError("POLICY_REVISION_UNAVAILABLE")
+    for relative, expected in zip(paths, sources, strict=True):
+        target = private / relative
+        for parent in (target, *target.parents):
+            if parent == private:
+                break
+            if parent.is_symlink():
+                raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+        info = target.stat()
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != owner_uid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or target.read_bytes() != expected
+        ):
+            raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+    for item in private.rglob("*"):
+        info = item.lstat()
+        if (
+            item.is_symlink()
+            or info.st_uid != owner_uid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or (item.is_file() and item.relative_to(private).as_posix() not in paths)
+        ):
+            raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+
+
+def final_preseed_guard(state: Path, root: Path) -> None:
+    """Admission only: reread the original seed before effect-capable imports.
+
+    Existing read-only reconciliation bypasses this restart-only check through
+    its original read_only route, never through a durable bypass artifact.
+    """
+    path = managed_state(state) / "epic-runtime.json"
+    if not path.exists() and not path.is_symlink():
+        return
+    config = private_json(path)
+    if config.get("schema_version") != "8.0":
+        return
+    if set(config) != epic_config_keys(config):
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    validate_final_preseed(state, root)
+
+
 def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     state = secure_directory(state, root)
+    if not read_only:
+        final_preseed_guard(state, root)
     config = private_json(state / "runtime-task.json")
     recovery_profile = config.get("schema_version") in {"2.0", "3.0"}
     if set(config) != CONFIG_KEYS | (
@@ -1501,7 +1793,9 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
         value=task_handover,
         approved_digest=config["approved_handover_digest"],
         adapter=codex_role_adapter(
-            policy_root=policy, root=root, policy_sha=current["policy_sha"],
+            policy_root=policy,
+            root=root,
+            policy_sha=current["policy_sha"],
             **role_options,
         ),
     )
@@ -1516,6 +1810,7 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     )
     engine.bootstrap = BootstrapTask(engine, reviewed, authority)
     from tools import agent_epic_recovery
+
     if recovery_config_enabled(config) or agent_epic_recovery.present(state):
         from tools.agent_epic_recovery import BootstrapRecovery
 
@@ -1529,8 +1824,35 @@ def build_runtime(state: Path, root: Path, *, read_only: bool = False) -> Any:
     return engine
 
 
+def _retained_wait_before_quota(state: Path, root: Path) -> bool:
+    """Fixed wake STOP admission before cleanup, probes or ordinary constructors."""
+    state = secure_directory(state, root)
+    config = private_json(state / "epic-runtime.json")
+    if config.get("schema_version") != "8.0":
+        return False
+    if set(config) != epic_config_keys(config):
+        raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    mandate = private_json(state / "mandate.json")
+    bootstrap_authority(config, mandate, epic=True)
+    managed_launch_guard(state, root)
+    policy = Path(config["policy_root"])
+    verify_policy(policy, root, mandate.get("policy_sha", ""), entry=Path(__file__))
+    existing = sys.modules.get("tools")
+    if existing is not None and not Path(
+        existing.__file__ or ""
+    ).resolve().is_relative_to(policy.resolve()):
+        raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(policy))
+    from tools.agent_owner_final_admission import _retained_sources
+
+    # No frame/readers are constructed and no CI/transport budget is admitted.
+    return _retained_sources(state, root) is not None
+
+
 def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
     state = secure_directory(state, root)
+    final_preseed_guard(state, root)
     if (state / "bootstrap-recovery.json").exists() or (
         (state / "runtime-task.json").exists()
         and recovery_config_enabled(private_json(state / "runtime-task.json"))
@@ -1565,17 +1887,25 @@ def build_session(state: Path, root: Path, *, wake: bool = False) -> Any:
         raise DeploymentError("UNTRUSTED_RUNTIME_COMMAND")
     sys.dont_write_bytecode = True
     sys.path.insert(0, str(policy))
-    from tools.agent_quota_supervisor import readiness as quota_readiness
-
-    quota_readiness(state, root, config)
     from tools.agent_epic_session_runtime import SessionRuntime
     from tools.agent_epic_wait_scope import Scope
 
-    scope = Scope.for_root(state, root) if wake else Scope.inherited(state, root)
+    scope = (
+        Scope.retained_owner(state, root)
+        if config["schema_version"] == "8.0" else None
+    )
+    if scope is None:
+        from tools.agent_quota_supervisor import readiness as quota_readiness
+
+        quota_readiness(state, root, config)
+        scope = (
+            Scope.for_session_wake(state, root) if wake
+            else Scope.inherited(state, root)
+        )
     return SessionRuntime(state, root, config, wait_scope=scope)
 
 
-def build_entry(state: Path, root: Path) -> Any:
+def build_entry(state: Path, root: Path, *, action: str | None = None) -> Any:
     """Frozen bootstrap checks before importing the installed entry module."""
     state = secure_directory(state, root)
     for name, code in (
@@ -1588,6 +1918,8 @@ def build_entry(state: Path, root: Path) -> Any:
     config = private_json(state / "epic-runtime.json")
     if set(config) != epic_config_keys(config):
         raise DeploymentError("RUNTIME_CONFIG_INVALID")
+    if action not in {"status", "pause", "stop"}:
+        final_preseed_guard(state, root)
     mandate = private_json(state / "mandate.json")
     bootstrap_authority(config, mandate, epic=True)
     planning_profile_guard(state, config, mandate)
@@ -1766,7 +2098,9 @@ def main() -> int:
             )
             return 0
         if args.command == "entry":
-            result = build_entry(args.state_dir, args.repository_root).execute(
+            result = build_entry(
+                args.state_dir, args.repository_root, action=args.action
+            ).execute(
                 args.action,
                 args.repository_root,
                 args.state_dir,
@@ -1780,6 +2114,11 @@ def main() -> int:
             return 0
         if args.command in {"epic_resume", "quota_wake"}:
             if args.command == "quota_wake":
+                if _retained_wait_before_quota(args.state_dir, args.repository_root):
+                    print(json.dumps({
+                        "status": "BLOCKED", "machine_code": "QUOTA_WAKE_STALE",
+                    }, sort_keys=True))
+                    return 0
                 cleanup = build_quota_cleanup(args.state_dir, args.repository_root)
                 config = private_json(args.state_dir / "epic-runtime.json")
                 mandate = private_json(args.state_dir / "mandate.json")
@@ -1813,7 +2152,15 @@ def main() -> int:
                 args.repository_root,
                 wake=args.command == "quota_wake",
             )
-            if quota_enabled(session.config):
+            retained = (
+                session.wait_scope is not None and session.wait_scope._retained_owner
+            )
+            if retained and args.command == "quota_wake":
+                session.wait_scope.guard()
+                result = {"status": "BLOCKED", "machine_code": "QUOTA_WAKE_STALE"}
+            elif retained:
+                result = session.resume()
+            elif quota_enabled(session.config):
                 from tools.agent_quota_supervisor import run as quota_run
 
                 result = quota_run(
@@ -1824,11 +2171,14 @@ def main() -> int:
             else:
                 result = session.resume()
             status = result.get("status")
-            if status not in {
-                "ROADMAP_DONE",
-                "BLOCKED",
-                "ESCALATE",
-                "PAUSED_RATE_LIMIT",
+            if status == "WAITING_OWNER_FINAL_APPROVAL":
+                if session.config.get("schema_version") != "8.0":
+                    raise DeploymentError("EPIC_RUNTIME_RESULT_INVALID")
+                from tools.agent_final_preparation_driver import validate_wait_result
+
+                result = validate_wait_result(result)
+            elif status not in {
+                "ROADMAP_DONE", "BLOCKED", "ESCALATE", "PAUSED_RATE_LIMIT",
             }:
                 raise DeploymentError("EPIC_RUNTIME_RESULT_INVALID")
             print(
@@ -1905,6 +2255,1238 @@ def main() -> int:
             }
     print(json.dumps(value, sort_keys=True))
     return 0
+
+
+# Original final counter source validation lives in the frozen stdlib entry.
+_final_preseed_CONFIG8_KEYS = EPIC_CONFIG_KEYS | {
+    "approved_launch_digest",
+    "approved_planning_digest",
+    "approved_wait_digest",
+    "approved_quota_digest",
+    "approved_continuation_digest",
+    "approved_learning_digest",
+    "approved_final_preparation_digest",
+}
+_final_preseed_IDENTITY = {"repository", "epic", "mandate_digest", "launch_digest"}
+_final_preseed_PROFILE = {
+    "repository",
+    "epic",
+    "roadmap_ref",
+    "policy_sha",
+    "mandate_digest",
+    "owner_identity",
+    "max_report_chars",
+    "max_artifact_bytes",
+    "max_final_model_calls",
+}
+_final_preseed_COMMAND = _final_preseed_IDENTITY | {
+    "kind",
+    "procedure",
+    "owner_identity",
+    "policy_sha",
+    "preparation_digest",
+    "counter_zero_digest",
+}
+_final_preseed_APPROVAL = _final_preseed_IDENTITY | {
+    "owner_identity",
+    "preparation_digest",
+    "counter_zero_digest",
+    "owner_command_digest",
+    "approved_at",
+}
+_final_preseed_RECEIPT = _final_preseed_APPROVAL | {"kind", "initialization_digest"}
+_final_preseed_PIN = _final_preseed_IDENTITY | {
+    "owner_identity",
+    "initialization_digest",
+    "installation_receipt_digest",
+}
+_final_preseed_ZERO = _final_preseed_IDENTITY | {
+    "calls_consumed",
+    "pending_reservation_digest",
+}
+_final_preseed_MAX_SOURCE_BYTES = 262144
+
+
+def _final_preseed_invalid(
+    code: str = "FINAL_INITIALIZATION_SOURCE_INVALID",
+) -> NoReturn:
+    raise DeploymentError(code)
+
+
+def _final_preseed_require(ok: bool) -> None:
+    if not ok:
+        _final_preseed_invalid()
+
+
+def _final_preseed_integer(
+    value: Any, minimum: int = 0, maximum: int = 2**53 - 1
+) -> None:
+    _final_preseed_require(type(value) is int and minimum <= value <= maximum)
+
+
+def _final_preseed_hash(value: Any, *, tagged: bool = False, sha: bool = False) -> None:
+    pattern = (
+        r"[0-9a-f]{40}"
+        if sha
+        else (r"sha256:[0-9a-f]{64}" if tagged else r"[0-9a-f]{64}")
+    )
+    _final_preseed_require(
+        isinstance(value, str) and re.fullmatch(pattern, value) is not None
+    )
+
+
+def _final_preseed_content(value: Any) -> str:
+    return canonical_digest(value).removeprefix("sha256:")
+
+
+def _final_preseed_pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+    value = dict(items)
+    _final_preseed_require(len(value) == len(items))
+    return value
+
+
+def _final_preseed_private(fd: int, *, directory: bool) -> None:
+    info = os.fstat(fd)
+    _final_preseed_require(
+        (stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode))
+        and info.st_uid == getattr(os, "getuid")()
+        and not info.st_mode & 0o077
+        and (directory or info.st_nlink == 1)
+    )
+
+
+def _final_preseed_directory(parent: int, name: str) -> int:
+    fd = os.open(
+        name,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW") | getattr(os, "O_DIRECTORY"),
+        dir_fd=parent,
+    )
+    try:
+        _final_preseed_private(fd, directory=True)
+    except Exception:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _final_preseed_seed(path: Path, root: Path) -> int:
+    # Preserve inherited outside-worktree/private-directory checks, then anchor
+    # every path component without following links before reading named sources.
+    secure_directory(path, root)
+    fd = os.open(
+        path.anchor,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW") | getattr(os, "O_DIRECTORY"),
+    )
+    try:
+        for part in path.parts[1:]:
+            next_fd = os.open(
+                part,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW") | getattr(os, "O_DIRECTORY"),
+                dir_fd=fd,
+            )
+            os.close(fd)
+            fd = next_fd
+        _final_preseed_private(fd, directory=True)
+        return fd
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _final_preseed_read(parent: int, name: str, cap: int) -> dict[str, Any]:
+    fd = os.open(
+        name,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW") | getattr(os, "O_NONBLOCK"),
+        dir_fd=parent,
+    )
+    try:
+        _final_preseed_private(fd, directory=False)
+        _final_preseed_require(os.fstat(fd).st_size <= cap)
+        raw = bytearray()
+        while len(raw) <= cap:
+            chunk = os.read(fd, min(65536, cap + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
+        _final_preseed_require(len(raw) <= cap)
+        value = json.loads(raw, object_pairs_hook=_final_preseed_pairs)
+        _final_preseed_require(isinstance(value, dict))
+        return dict(value)
+    finally:
+        os.close(fd)
+
+
+def _final_preseed_sealed(
+    value: dict[str, Any], keys: set[str], self_key: str = "record_digest"
+) -> dict[str, Any]:
+    _final_preseed_require(set(value) == keys | {"schema_version", self_key})
+    _final_preseed_require(value["schema_version"] == "1.0")
+    _final_preseed_hash(value[self_key])
+    _final_preseed_require(
+        value[self_key]
+        == _final_preseed_content({k: v for k, v in value.items() if k != self_key})
+    )
+    _final_preseed_integer(value["epic"], 1, 2147483647)
+    _final_preseed_require(
+        isinstance(value["repository"], str)
+        and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}",
+            value["repository"],
+        )
+        is not None
+    )
+    for key in ("mandate_digest", "launch_digest", "preparation_digest"):
+        if key in value:
+            _final_preseed_hash(value[key], tagged=True)
+    if "policy_sha" in value:
+        _final_preseed_hash(value["policy_sha"], sha=True)
+    if "owner_identity" in value:
+        owner = value["owner_identity"]
+        _final_preseed_require(
+            isinstance(owner, str)
+            and 1 <= len(owner) <= 256
+            and owner == owner.strip()
+            and all(ord(char) >= 32 for char in owner)
+        )
+    if "roadmap_ref" in value:
+        ref = value["roadmap_ref"]
+        _final_preseed_require(
+            isinstance(ref, str)
+            and len(ref) <= 256
+            and ref.startswith(f"roadmap/{value['epic']}-")
+            and re.fullmatch(r"[A-Za-z0-9_./-]+", ref) is not None
+            and ".." not in ref
+            and "//" not in ref
+            and not ref.endswith(("/", "."))
+        )
+    for key in (
+        "counter_zero_digest",
+        "owner_command_digest",
+        "initialization_digest",
+        "installation_receipt_digest",
+    ):
+        if key in value:
+            _final_preseed_hash(value[key])
+    if "approved_at" in value:
+        _final_preseed_integer(value["approved_at"])
+    return value
+
+
+def _final_preseed_absent(parent: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=parent, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    return False
+
+
+_final_preseed_RESERVATION = _final_preseed_IDENTITY | {
+    "ordinal",
+    "preparation_identity_digest",
+    "input_digest",
+    "backend_digest",
+    "settings_digest",
+    "started_at",
+    "deadline_at",
+    "status",
+    "output_digest",
+}
+_final_preseed_POLICY_FILES = (
+    "AGENTS.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "docs/SECURITY.md",
+    "docs/ARCHITECTURE.md",
+    "docs/threat-model.md",
+    "docs/agent-contracts.md",
+)
+
+
+def _final_preseed_exact(value: Any, keys: set[str]) -> dict[str, Any]:
+    _final_preseed_require(isinstance(value, dict) and set(value) == keys)
+    return dict(value)
+
+
+def _final_preseed_request_variant(raw: Any) -> tuple[dict[str, Any], str | None]:
+    """Closed native request syntax; never learning-source provenance admission."""
+    keys = {
+        "issue",
+        "acceptance_criteria",
+        "base_sha",
+        "head_sha",
+        "repair_iteration",
+        "gate_evidence",
+        "reviewed_state",
+        "diff",
+        "contract",
+    }
+    if isinstance(raw, dict) and set(raw) == keys:
+        return _final_preseed_exact(raw, keys), None
+    request = _final_preseed_exact(raw, keys | {"learning_source_digest"})
+    _final_preseed_hash(request["learning_source_digest"])
+    return request, request["learning_source_digest"]
+
+
+def _final_preseed_git(root: Path, *args: str, optional: bool = False) -> str | None:
+    # Fixed native read-only Git; no inherited Git environment, fsmonitor,
+    # textconv, external diff, hooks or optional index writes. Bound all output
+    # while it is read, not after an unbounded capture_output allocation.
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "LC_ALL": "C",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_OPTIONAL_LOCKS": "0",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+    command = [
+        "/usr/bin/git",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.untrackedCache=false",
+        *args,
+    ]
+    with subprocess.Popen(
+        command,
+        cwd=root,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ) as child:
+        assert child.stdout is not None
+        output = bytearray()
+        deadline = time.monotonic() + 5
+        try:
+            with selectors.DefaultSelector() as selector:
+                selector.register(child.stdout, selectors.EVENT_READ)
+                while True:
+                    remaining = deadline - time.monotonic()
+                    _final_preseed_require(remaining > 0)
+                    _final_preseed_require(bool(selector.select(remaining)))
+                    chunk = os.read(child.stdout.fileno(), 65536)
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    _final_preseed_require(
+                        len(output) <= _final_preseed_MAX_SOURCE_BYTES
+                    )
+            result = child.wait(timeout=max(0.001, deadline - time.monotonic()))
+            if optional and result:
+                return None
+            _final_preseed_require(result == 0)
+            return output.decode().strip()
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait()
+
+
+
+class _FinalPreseedPolicyObjects:
+    """Seven fixed policy requests, one private bootstrap-local stream."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+        self.child: subprocess.Popen[bytes] | None = None
+        self.selector: selectors.BaseSelector | None = None
+        self.end: float | None = None
+        self.io_end: float | None = None
+        self.requests = 0
+
+    @staticmethod
+    def _invalid() -> NoReturn:
+        _final_preseed_invalid()
+
+    def _window(self) -> None:
+        now = time.monotonic()
+        if self.end is not None and now >= self.end:
+            self._invalid()
+        self.io_end, self.end = now + 4.0, now + 5.0
+
+    def __enter__(self) -> _FinalPreseedPolicyObjects:
+        primary: BaseException | None = None
+        try:
+            self._window()
+            self.child = subprocess.Popen(
+                ["/usr/bin/git", "-c", "core.fsmonitor=false", "-c",
+                 "core.hooksPath=/dev/null", "-c", "core.untrackedCache=false",
+                 "cat-file", "--batch"], cwd=self.root,
+                env={
+                    "PATH": "/usr/bin:/bin", "LC_ALL": "C",
+                    "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null",
+                    "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0",
+                },
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, shell=False, close_fds=True, bufsize=0,
+            )
+            if self.child.stdin is None or self.child.stdout is None:
+                self._invalid()
+            set_blocking = getattr(os, "set_blocking", None)
+            if not callable(set_blocking):
+                self._invalid()
+            set_blocking(self.child.stdin.fileno(), False)
+            set_blocking(self.child.stdout.fileno(), False)
+            self.selector = selectors.DefaultSelector()
+        except BaseException as error:
+            primary = error
+        if primary is not None:
+            self._cleanup(primary)
+            self._raise(primary)
+        return self
+
+    @staticmethod
+    def _raise(error: BaseException) -> NoReturn:
+        if isinstance(error, DeploymentError):
+            raise error
+        if isinstance(
+            error, (OSError, ValueError, UnicodeError, subprocess.SubprocessError),
+        ):
+            raise DeploymentError("FINAL_INITIALIZATION_SOURCE_INVALID") from None
+        raise error
+
+    def _deadline(self, *, final: bool = False) -> None:
+        deadline = self.end if final else self.io_end
+        if deadline is None or time.monotonic() >= deadline:
+            self._invalid()
+
+    def _wait(self, fd: int, event: int, *, final: bool = False) -> None:
+        if self.selector is None:
+            self._invalid()
+        assert self.selector is not None
+        deadline = self.end if final else self.io_end
+        if deadline is None:
+            self._invalid()
+        assert deadline is not None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            self._invalid()
+        self.selector.register(fd, event)
+        primary = None
+        try:
+            if not self.selector.select(remaining):
+                self._invalid()
+        except BaseException as error:
+            primary = error
+            raise
+        finally:
+            try:
+                self.selector.unregister(fd)
+            except BaseException:
+                if primary is None:
+                    raise
+        if time.monotonic() >= deadline:
+            self._invalid()
+
+    def _read_some(self, count: int, *, final: bool = False) -> bytes:
+        child = self.child
+        if child is None or child.stdout is None:
+            self._invalid()
+        assert child is not None and child.stdout is not None
+        fd = child.stdout.fileno()
+        while True:
+            self._wait(fd, selectors.EVENT_READ, final=final)
+            try:
+                raw = os.read(fd, min(count, 65536))
+                self._deadline(final=final)
+                return raw
+            except (BlockingIOError, InterruptedError):
+                continue
+
+    def _exact(self, size: int) -> bytes:
+        raw = bytearray()
+        while len(raw) < size:
+            chunk = self._read_some(size - len(raw))
+            if not chunk:
+                self._invalid()
+            raw.extend(chunk)
+        return bytes(raw)
+
+    def policy(self, policy_sha: str, path: str) -> str | None:
+        primary: BaseException | None = None
+        result: str | None = None
+        try:
+            _final_preseed_hash(policy_sha, sha=True)
+            if (self.requests >= len(_final_preseed_POLICY_FILES)
+                    or path != _final_preseed_POLICY_FILES[self.requests]):
+                self._invalid()
+            if self.requests:
+                self._window()
+            self.requests += 1
+            child = self.child
+            if child is None or child.stdin is None:
+                self._invalid()
+            assert child is not None and child.stdin is not None
+            expression = (policy_sha + ":" + path).encode("ascii")
+            pending = memoryview(expression + b"\n")
+            while pending:
+                self._wait(child.stdin.fileno(), selectors.EVENT_WRITE)
+                try:
+                    count = os.write(child.stdin.fileno(), pending)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                self._deadline()
+                if count <= 0:
+                    self._invalid()
+                pending = pending[count:]
+            header = bytearray()
+            while len(header) < 128:
+                byte = self._read_some(1)
+                if not byte:
+                    self._invalid()
+                header.extend(byte)
+                if byte == b"\n":
+                    break
+            if bytes(header) != expression + b" missing\n":
+                match = re.fullmatch(
+                    rb"([0-9a-f]{40}) blob (0|[1-9][0-9]*)\n", bytes(header),
+                )
+                if match is None:
+                    self._invalid()
+                assert match is not None
+                size = int(match[2])
+                if size > _final_preseed_MAX_SOURCE_BYTES:
+                    self._invalid()
+                raw = self._exact(size)
+                if self._exact(1) != b"\n":
+                    self._invalid()
+                if hashlib.sha1(f"blob {size}\0".encode() + raw).hexdigest() != (
+                    match[1].decode("ascii")
+                ):
+                    self._invalid()
+                result = raw.decode().strip()
+            self._deadline(final=True)
+        except BaseException as error:
+            primary = error
+        if primary is not None:
+            self._raise(primary)
+        return result
+
+    def _finish(self) -> None:
+        child = self.child
+        if child is None or child.stdin is None:
+            self._invalid()
+        assert child is not None and child.stdin is not None
+        child.stdin.close()
+        if self._read_some(1, final=True):
+            self._invalid()
+        remaining = 0.0 if self.end is None else self.end - time.monotonic()
+        if remaining <= 0 or child.wait(timeout=remaining) != 0:
+            self._invalid()
+        self._deadline(final=True)
+
+    def _cleanup(self, primary: BaseException | None) -> None:
+        secondary: BaseException | None = None
+        child = self.child
+        if child is not None:
+            for stream in (child.stdin, child.stdout):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except BaseException as error:
+                        if secondary is None:
+                            secondary = error
+            try:
+                if child.poll() is None:
+                    child.kill()
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+            try:
+                remaining = 0.0 if self.end is None else self.end - time.monotonic()
+                child.wait(timeout=max(0.0, remaining))
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+        if self.selector is not None:
+            try:
+                self.selector.close()
+            except BaseException as error:
+                if secondary is None:
+                    secondary = error
+        if primary is None:
+            if secondary is not None:
+                self._raise(secondary)
+            self._deadline(final=True)
+
+    def __exit__(self, _type: Any, error: Any, _traceback: Any) -> None:
+        primary: BaseException | None = error
+        if primary is None:
+            try:
+                self._finish()
+            except BaseException as failure:
+                primary = failure
+        self._cleanup(primary)
+        if primary is not None:
+            self._raise(primary)
+        return None
+
+def _final_preseed_native_completion(
+    original: dict[str, Any],
+    backend: dict[str, Any],
+    invocation: str,
+    output: dict[str, Any],
+    reservation: dict[str, Any],
+) -> None:
+    original = _final_preseed_exact(original, {"receipt", "terminal"})
+    receipt = _final_preseed_exact(
+        original["receipt"],
+        {
+            "schema_version",
+            "role",
+            "invocation_digest",
+            "backend_digest",
+            "requested",
+            "effective",
+            "thread_digest",
+            "turn_digest",
+            "outcome",
+            "terminal_digest",
+            "receipt_digest",
+        },
+    )
+    terminal = _final_preseed_exact(
+        original["terminal"],
+        {
+            "role",
+            "invocation_digest",
+            "thread_digest",
+            "turn_digest",
+            "status",
+            "validated_output_digest",
+            "adapter_exit_code",
+        },
+    )
+    settings = {"model": backend["model"], "reasoning": "low"}
+    for key in (
+        "invocation_digest",
+        "backend_digest",
+        "thread_digest",
+        "turn_digest",
+        "terminal_digest",
+        "receipt_digest",
+    ):
+        _final_preseed_hash(receipt[key])
+    _final_preseed_require(
+        receipt["schema_version"] == "1.0"
+        and receipt["role"] == terminal["role"] == "controller"
+        and receipt["invocation_digest"] == terminal["invocation_digest"] == invocation
+        and receipt["backend_digest"] == _final_preseed_content(backend)
+        and receipt["requested"] == receipt["effective"] == settings
+        and receipt["outcome"] == "COMPLETED"
+        and receipt["receipt_digest"]
+        == _final_preseed_content(
+            {k: v for k, v in receipt.items() if k != "receipt_digest"}
+        )
+        and receipt["terminal_digest"] == _final_preseed_content(terminal)
+        and receipt["thread_digest"] == terminal["thread_digest"]
+        and receipt["turn_digest"] == terminal["turn_digest"]
+        and terminal["status"] == "completed"
+        and terminal["validated_output_digest"] == _final_preseed_content(output)
+        and type(terminal["adapter_exit_code"]) is int
+        and terminal["adapter_exit_code"] == 0
+        and reservation["settings_digest"] == _final_preseed_content(receipt)
+        and reservation["output_digest"] == _final_preseed_content(output)
+    )
+
+
+def _final_preseed_consumed(
+    seed_fd: int,
+    preparation_fd: int,
+    root: Path,
+    config: dict[str, Any],
+    profile: dict[str, Any],
+    current: dict[str, Any],
+    identity: dict[str, Any],
+    reservation_name: str,
+) -> None:
+    cap = profile["max_artifact_bytes"]
+    _final_preseed_require(
+        current["pending_reservation_digest"] == reservation_name[12:-5]
+    )
+    reservation = _final_preseed_sealed(
+        _final_preseed_read(preparation_fd, reservation_name, cap),
+        _final_preseed_RESERVATION,
+    )
+    for key, expected in identity.items():
+        _final_preseed_require(
+            type(reservation[key]) is type(expected) and reservation[key] == expected
+        )
+    _final_preseed_integer(reservation["ordinal"], 1, 1)
+    _final_preseed_integer(reservation["started_at"])
+    _final_preseed_integer(reservation["deadline_at"], reservation["started_at"] + 1)
+    for key in ("preparation_identity_digest", "input_digest", "backend_digest"):
+        _final_preseed_hash(reservation[key])
+    for key in ("settings_digest", "output_digest"):
+        if reservation[key] is not None:
+            _final_preseed_hash(reservation[key])
+    _final_preseed_require(
+        reservation["status"] in {"RESERVED", "UNKNOWN", "COMPLETED"}
+    )
+    if reservation["status"] != "COMPLETED":
+        _final_preseed_invalid("FINAL_INITIALIZATION_NATIVE_CHAIN_REQUIRED")
+    continuation = _final_preseed_read(
+        seed_fd, "continuation-profile.json", _final_preseed_MAX_SOURCE_BYTES
+    )
+    _final_preseed_exact(
+        continuation,
+        {
+            "schema_version",
+            "repository",
+            "epic",
+            "roadmap_ref",
+            "policy_sha",
+            "mandate_digest",
+            "owner_identity",
+            "backend_digest",
+            "limits",
+        },
+    )
+    _final_preseed_require(
+        continuation["schema_version"] == "1.0"
+        and canonical_digest(continuation) == config["approved_continuation_digest"]
+    )
+    for key in (
+        "repository",
+        "epic",
+        "roadmap_ref",
+        "policy_sha",
+        "mandate_digest",
+        "owner_identity",
+    ):
+        _final_preseed_require(
+            type(continuation[key]) is type(profile[key])
+            and continuation[key] == profile[key]
+        )
+    limits = _final_preseed_exact(
+        continuation["limits"],
+        {
+            "threshold_permille",
+            "max_handoffs",
+            "max_prompt_bytes",
+            "max_record_bytes",
+            "max_findings",
+        },
+    )
+    for key, maximum in {
+        "threshold_permille": 950,
+        "max_handoffs": 32,
+        "max_prompt_bytes": 262144,
+        "max_record_bytes": 65536,
+        "max_findings": 128,
+    }.items():
+        _final_preseed_integer(limits[key], 1, maximum)
+    backend = role_backend_document(
+        _final_preseed_read(
+            seed_fd, "role-backend.json", _final_preseed_MAX_SOURCE_BYTES
+        )
+    )
+    _final_preseed_require(
+        _final_preseed_content(backend)
+        == continuation["backend_digest"]
+        == reservation["backend_digest"]
+    )
+    sources_fd = settings_fd = -1
+    try:
+        sources_fd = _final_preseed_directory(preparation_fd, "sources")
+        settings_fd = _final_preseed_directory(preparation_fd, "role-settings")
+        source = _final_preseed_exact(
+            _final_preseed_read(
+                sources_fd, "review-" + _final_preseed_content(identity) + ".json", cap
+            ),
+            {
+                "identity",
+                "request",
+                "policy",
+                "session_id",
+                "output",
+                "settings_source",
+            },
+        )
+        environment = _final_preseed_sealed(
+            _final_preseed_read(
+                sources_fd,
+                "environment-" + _final_preseed_content(identity) + ".json",
+                cap,
+            ),
+            {
+                "repository",
+                "epic",
+                "mandate_digest",
+                "launch_digest",
+                "kind",
+                "preparation_identity_digest",
+                "input_digest",
+                "review_source_digest",
+                "launcher_python_version",
+                "launcher_executable_sha256",
+            },
+        )
+        for key in (
+            "preparation_identity_digest",
+            "input_digest",
+            "review_source_digest",
+            "launcher_executable_sha256",
+        ):
+            _final_preseed_hash(environment[key])
+        _final_preseed_require(
+            environment["kind"] == "FINAL_AGGREGATE_ENVIRONMENT"
+            and isinstance(environment["launcher_python_version"], str)
+            and re.fullmatch(
+                r"[0-9]+\.[0-9]+\.[0-9]+", environment["launcher_python_version"]
+            )
+            is not None
+            and all(
+                environment[key] == reservation[key]
+                for key in (
+                    "repository",
+                    "epic",
+                    "mandate_digest",
+                    "launch_digest",
+                    "preparation_identity_digest",
+                    "input_digest",
+                )
+            )
+            and environment["review_source_digest"] == _final_preseed_content(source)
+        )
+        original = _final_preseed_read(
+            settings_fd,
+            "receipt-" + reservation["input_digest"] + ".json",
+            min(cap, limits["max_record_bytes"]),
+        )
+        main = _final_preseed_git(root, "rev-parse", "refs/heads/main")
+        roadmap = _final_preseed_git(
+            root, "rev-parse", "refs/heads/" + profile["roadmap_ref"]
+        )
+        tree = _final_preseed_git(root, "rev-parse", str(roadmap) + "^{tree}")
+        for value in (main, roadmap, tree):
+            _final_preseed_hash(value, sha=True)
+        _final_preseed_require(
+            not _final_preseed_git(root, "status", "--porcelain=v1")
+            and _final_preseed_git(root, "rev-parse", "HEAD") == roadmap
+        )
+        expected_identity = {
+            **identity,
+            "main_sha": main,
+            "roadmap_sha": roadmap,
+            "tree_sha": tree,
+            "policy_sha": profile["policy_sha"],
+            "backend_digest": _final_preseed_content(backend),
+        }
+        _final_preseed_require(
+            source["identity"] == expected_identity
+            and reservation["preparation_identity_digest"]
+            == _final_preseed_content(expected_identity)
+        )
+        request, learning_source_digest = _final_preseed_request_variant(
+            source["request"]
+        )
+        paths = _final_preseed_git(
+            root,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            str(main),
+            str(roadmap),
+        )
+        _final_preseed_require(bool(paths))
+        diff = _final_preseed_git(
+            root, "diff", "--no-ext-diff", "--no-textconv", str(main), str(roadmap)
+        )
+        _final_preseed_require(isinstance(diff, str) and len(diff) <= 200000)
+        criteria = [
+            "Review cumulative roadmap diff, security invariants "
+            "and final delivery contract"
+        ]
+        contract = {
+            "issue": identity["epic"],
+            "epic": identity["epic"],
+            "acceptance_criteria": criteria,
+            "base_ref": "main",
+            "base_sha": main,
+            "head_ref": profile["roadmap_ref"],
+            "allowed_paths": str(paths).splitlines(),
+            "policy_sha": profile["policy_sha"],
+            "permissions": {
+                "commit": False,
+                "push": False,
+                "create_pr": False,
+                "comment": False,
+                "merge": False,
+            },
+            "max_repair_iterations": 0,
+            "remaining_repair_iterations": 0,
+            "max_minutes": 60,
+            "task_class": "final-review",
+        }
+        gate = request["gate_evidence"]
+        _final_preseed_require(isinstance(gate, dict))
+        checks = ["pytest", "ruff", "mypy", "pre-commit"]
+        _final_preseed_require(
+            gate.get("profile") == "repository-full"
+            and gate.get("profile_version") == "1"
+            and gate.get("expected_checks") == gate.get("executed_checks") == checks
+            and gate.get("complete") is True
+            and gate.get("status") == "passed"
+            and gate.get("machine_code") == "OK"
+        )
+        entries = gate.get("checks")
+        _final_preseed_require(
+            isinstance(entries, list) and len(entries) == len(checks)
+        )
+        _final_preseed_require(
+            all(
+                isinstance(entry, dict)
+                and entry.get("id") == key
+                and entry.get("status") == "passed"
+                for entry, key in zip(entries, checks)
+            )
+        )
+        snapshot = gate["snapshot"]
+        _final_preseed_require(
+            isinstance(snapshot, dict) and snapshot["tree_hash"] == tree
+        )
+        _final_preseed_hash(snapshot["snapshot_commit"], sha=True)
+        expected_request = {
+            "issue": identity["epic"],
+            "acceptance_criteria": criteria,
+            "base_sha": main,
+            "head_sha": roadmap,
+            "repair_iteration": 0,
+            "gate_evidence": gate,
+            "reviewed_state": {"snapshot_commit": snapshot["snapshot_commit"]},
+            "diff": diff,
+            "contract": contract,
+        }
+        if learning_source_digest is not None:
+            expected_request["learning_source_digest"] = learning_source_digest
+        _final_preseed_require(request == expected_request)
+        policy = {}
+        if config["schema_version"] == "8.0":
+            with _FinalPreseedPolicyObjects(root) as objects:
+                for path in _final_preseed_POLICY_FILES:
+                    content = objects.policy(profile["policy_sha"], path)
+                    if content is not None:
+                        policy[path] = content
+        else:
+            for path in _final_preseed_POLICY_FILES:
+                content = _final_preseed_git(
+                    root,
+                    "show",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    profile["policy_sha"] + ":" + path,
+                    optional=True,
+                )
+                if content is not None:
+                    policy[path] = content
+        _final_preseed_require(
+            "AGENTS.md" in policy
+            and "CONTRIBUTING.md" in policy
+            and source["policy"] == policy
+        )
+        session = source["session_id"]
+        _final_preseed_require(
+            isinstance(session, str)
+            and re.fullmatch(r"final-controller-[0-9a-f]{32}", session) is not None
+        )
+        payload = {**request, "trusted_policy": policy, "session_id": session}
+        invocation = _final_preseed_content(payload)
+        _final_preseed_require(
+            invocation == reservation["input_digest"]
+            and source["settings_source"] == original
+        )
+        output = _final_preseed_exact(
+            source["output"],
+            {
+                "schema_version",
+                "role",
+                "task_issue",
+                "base_sha",
+                "head_sha",
+                "review_basis",
+                "verdict",
+                "repair_iteration",
+                "escalation_reason",
+                "blocking_findings",
+                "notes",
+            },
+        )
+        basis = _final_preseed_exact(
+            output["review_basis"],
+            {
+                "trust_source_kind",
+                "head_policy_applied",
+                "executor_self_assessment_treated_as_evidence_only",
+            },
+        )
+        _final_preseed_require(
+            output["schema_version"] == "1.0"
+            and output["role"] == "controller"
+            and type(output["task_issue"]) is int
+            and output["task_issue"] == identity["epic"]
+            and output["base_sha"] == main
+            and output["head_sha"] == roadmap
+            and output["verdict"] in {"PASS", "PASS_WITH_NOTES"}
+            and output["blocking_findings"] == []
+            and basis["trust_source_kind"] == "local_read_only_bundle"
+            and basis["head_policy_applied"] is False
+            and basis["executor_self_assessment_treated_as_evidence_only"] is True
+            and len(json.dumps(output, ensure_ascii=False)) <= 20000
+        )
+        _final_preseed_native_completion(
+            original, backend, invocation, output, reservation
+        )
+    finally:
+        for fd in (sources_fd, settings_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+@contextmanager
+def _final_preseed_original_sources(
+    state: Path, root: Path
+) -> Iterator[dict[str, Any]]:
+    """Shared anchored/capped original graph; never grants restart admission."""
+    if os.name != "posix":
+        _final_preseed_invalid()
+    seed_fd = preparation_fd = initialization_fd = -1
+    try:
+        seed_fd = _final_preseed_seed(managed_state(state), root)
+        config = _final_preseed_read(
+            seed_fd, "epic-runtime.json", _final_preseed_MAX_SOURCE_BYTES
+        )
+        _final_preseed_require(
+            set(config) == _final_preseed_CONFIG8_KEYS
+            and config["schema_version"] == "8.0"
+            and config["approved_final_digest"] is None
+        )
+        mandate = _final_preseed_read(
+            seed_fd, "mandate.json", _final_preseed_MAX_SOURCE_BYTES
+        )
+        bootstrap_authority(config, mandate, epic=True)
+        launch = _final_preseed_read(
+            seed_fd, "launch.json", _final_preseed_MAX_SOURCE_BYTES
+        )
+        _final_preseed_require(
+            set(launch) == LAUNCH_KEYS and launch["schema_version"] == "1.0"
+        )
+        _final_preseed_hash(config["approved_launch_digest"], tagged=True)
+        _final_preseed_hash(config["approved_final_preparation_digest"], tagged=True)
+        _final_preseed_require(
+            canonical_digest(launch) == config["approved_launch_digest"]
+        )
+        adapter = _final_preseed_read(
+            seed_fd, "runtime-adapter.json", _final_preseed_MAX_SOURCE_BYTES
+        )
+        _final_preseed_require(
+            launch_config_digest(config, adapter) == launch["runtime_config_digest"]
+        )
+        for key in ("installation_digest", "runtime_config_digest", "mandate_digest"):
+            _final_preseed_hash(launch[key], tagged=True)
+        _final_preseed_require(
+            launch["mandate_digest"] == config["approved_mandate_digest"]
+        )
+        for key in (
+            "repository",
+            "epic",
+            "roadmap_ref",
+            "policy_sha",
+            "owner_identity",
+        ):
+            _final_preseed_require(
+                type(launch[key]) is type(mandate[key]) and launch[key] == mandate[key]
+            )
+        profile = _final_preseed_sealed(
+            _final_preseed_read(
+                seed_fd,
+                "final-preparation-profile.json",
+                _final_preseed_MAX_SOURCE_BYTES,
+            ),
+            _final_preseed_PROFILE,
+        )
+        for key in (
+            "repository",
+            "epic",
+            "roadmap_ref",
+            "policy_sha",
+            "owner_identity",
+            "mandate_digest",
+        ):
+            _final_preseed_require(
+                type(profile[key]) is type(launch[key]) and profile[key] == launch[key]
+            )
+        _final_preseed_require(
+            canonical_digest(profile) == config["approved_final_preparation_digest"]
+        )
+        _final_preseed_integer(profile["max_report_chars"], 1, 20000)
+        _final_preseed_integer(
+            profile["max_artifact_bytes"], 1, _final_preseed_MAX_SOURCE_BYTES
+        )
+        _final_preseed_integer(profile["max_final_model_calls"], 1, 1)
+        cap = profile["max_artifact_bytes"]
+        preparation_fd = _final_preseed_directory(seed_fd, "final-preparation")
+        current = _final_preseed_sealed(
+            _final_preseed_read(preparation_fd, "role-state.json", cap),
+            _final_preseed_ZERO,
+        )
+        _final_preseed_integer(current["calls_consumed"], 0, 1)
+        identity = {
+            "repository": launch["repository"],
+            "epic": launch["epic"],
+            "mandate_digest": launch["mandate_digest"],
+            "launch_digest": config["approved_launch_digest"],
+        }
+        initialization_fd = _final_preseed_directory(seed_fd, "final-initialization")
+        command = _final_preseed_sealed(
+            _final_preseed_read(initialization_fd, "command-source.json", cap),
+            _final_preseed_COMMAND,
+        )
+        approval = _final_preseed_sealed(
+            _final_preseed_read(initialization_fd, "approval.json", cap),
+            _final_preseed_APPROVAL,
+            "approved_digest",
+        )
+        receipt = _final_preseed_sealed(
+            _final_preseed_read(initialization_fd, "install-receipt.json", cap),
+            _final_preseed_RECEIPT,
+        )
+        pin = _final_preseed_sealed(
+            _final_preseed_read(initialization_fd, "approval-pin.json", cap),
+            _final_preseed_PIN,
+        )
+        for value in (current, command, approval, receipt, pin):
+            for key, expected in identity.items():
+                _final_preseed_require(
+                    type(value[key]) is type(expected) and value[key] == expected
+                )
+            if "owner_identity" in value:
+                _final_preseed_require(
+                    value["owner_identity"] == launch["owner_identity"]
+                )
+        _final_preseed_require(
+            command["policy_sha"] == launch["policy_sha"]
+            and command["kind"] == "OWNER_ORIGINAL_FINAL_COUNTER_PROVISIONING"
+            and command["procedure"] == "ADR303_ORIGINAL_COUNTER_PROVISIONING_V1"
+            and receipt["kind"] == "OWNER_FINAL_COUNTER_INITIALIZATION"
+        )
+        original_zero = {
+            "schema_version": "1.0",
+            **identity,
+            "calls_consumed": 0,
+            "pending_reservation_digest": None,
+        }
+        original_zero["record_digest"] = _final_preseed_content(original_zero)
+        for value in (command, approval, receipt):
+            _final_preseed_require(
+                value["preparation_digest"]
+                == config["approved_final_preparation_digest"]
+                and value["counter_zero_digest"]
+                == _final_preseed_content(original_zero)
+            )
+        _final_preseed_require(
+            approval["owner_command_digest"] == _final_preseed_content(command)
+            and receipt["owner_command_digest"] == _final_preseed_content(command)
+            and receipt["approved_at"] == approval["approved_at"]
+            and receipt["initialization_digest"] == _final_preseed_content(approval)
+            and pin["initialization_digest"] == _final_preseed_content(approval)
+            and pin["installation_receipt_digest"] == _final_preseed_content(receipt)
+        )
+        reservation = (
+            "reservation-"
+            + _final_preseed_content(
+                {"launch_digest": identity["launch_digest"], "ordinal": 1}
+            )
+            + ".json"
+        )
+        yield {
+            "config": config,
+            "mandate": mandate,
+            "adapter": adapter,
+            "launch": launch,
+            "profile": profile,
+            "command": command,
+            "approval": approval,
+            "receipt": receipt,
+            "pin": pin,
+            "current": current,
+            "identity": identity,
+            "reservation": reservation,
+            "original_zero": original_zero,
+            "seed_fd": seed_fd,
+            "preparation_fd": preparation_fd,
+        }
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RecursionError,
+        subprocess.TimeoutExpired,
+    ):
+        _final_preseed_invalid()
+    finally:
+        for fd in (initialization_fd, preparation_fd, seed_fd):
+            if fd >= 0:
+                os.close(fd)
+
+
+def validate_final_preseed(state: Path, root: Path) -> dict[str, Any]:
+    """Strict restart admission: proven original zero or completed native chain."""
+    with _final_preseed_original_sources(state, root) as sources:
+        current: dict[str, Any] = sources["current"]
+        original_zero = sources["original_zero"]
+        seed_fd, preparation_fd = sources["seed_fd"], sources["preparation_fd"]
+        config, profile = sources["config"], sources["profile"]
+        identity, reservation = sources["identity"], sources["reservation"]
+        if current["calls_consumed"] == 0:
+            _final_preseed_require(
+                current["pending_reservation_digest"] is None
+                and current == original_zero
+            )
+            _final_preseed_require(
+                all(
+                    _final_preseed_absent(preparation_fd, name)
+                    for name in ("role-settings", "sources", reservation)
+                )
+            )
+        else:
+            _final_preseed_consumed(
+                seed_fd,
+                preparation_fd,
+                root,
+                config,
+                profile,
+                current,
+                identity,
+                reservation,
+            )
+        return current
+
+
+def final_preparation_original_sources(state: Path, root: Path) -> dict[str, Any]:
+    """Read original sources for an already owned continuous scope, not restart.
+
+    This reader creates no namespaces, reservations or authority. Its callers
+    still owe actual seed/supervisor ownership and original lifecycle guards.
+    """
+    with _final_preseed_original_sources(state, root) as sources:
+        current = sources["current"]
+        if current["calls_consumed"] == 0:
+            _final_preseed_require(current == sources["original_zero"])
+        else:
+            _final_preseed_require(
+                current["pending_reservation_digest"]
+                == sources["reservation"]
+                .removeprefix("reservation-")
+                .removesuffix(".json")
+            )
+        return {
+            k: v for k, v in sources.items() if k not in {"seed_fd", "preparation_fd"}
+        }
 
 
 if __name__ == "__main__":

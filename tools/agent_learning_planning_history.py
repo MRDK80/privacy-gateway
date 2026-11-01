@@ -29,11 +29,32 @@ def verify(
     items = retained(reader)
     hint = envelope["hints"][0]
     if any(
-        item["kind"] == "tombstone"
-        and item["record"]["lesson_id"] == hint["lesson_id"]
+        item["kind"] == "tombstone" and item["record"]["lesson_id"] == hint["lesson_id"]
         for item in workflow_items + items
     ):
         raise core.LearningError("LEARNING_VERIFICATION_STALE")
+    proof = _original_proof(reader, role, envelope, relevance, items)
+    revalidate(verifier, proof)
+    corrected = replay(
+        reader,
+        proof["corrected"]["identity"]["task"],
+        role,
+        proof["corrected"]["ordinal"],
+    )
+    if not current_equivalent(current, corrected["facts"]):
+        raise core.LearningError("LEARNING_SOURCE_MISMATCH")
+    reader.guard()
+
+
+def _original_proof(
+    reader: SourceReader,
+    role: str,
+    envelope: dict[str, Any],
+    relevance: dict[str, Any],
+    items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Original links only; callers retain their distinct selection authority."""
+    hint = envelope["hints"][0]
     verified = [
         item["record"]
         for item in items
@@ -91,16 +112,9 @@ def verify(
     }
     if hint != expected:
         raise core.LearningError("LEARNING_SOURCE_MISMATCH")
-    revalidate(
-        verifier,
-        {
-            "verified": verified[0],
-            "rule": rule,
-            "failure": before[0],
-            "corrected": after[0],
-        },
-    )
-    corrected = replay(reader, after[0]["identity"]["task"], role, after[0]["ordinal"])
-    if not current_equivalent(current, corrected["facts"]):
-        raise core.LearningError("LEARNING_SOURCE_MISMATCH")
-    reader.guard()
+    return {
+        "verified": verified[0],
+        "rule": rule,
+        "failure": before[0],
+        "corrected": after[0],
+    }

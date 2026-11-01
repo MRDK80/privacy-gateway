@@ -170,6 +170,8 @@ with (state / "native-planning-observations.jsonl").open("a") as stream:
 def prepared(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    initial_frame_seconds: int = 300,
 ) -> dict[str, str]:
     source = tmp_path / "source"
     shutil.copytree(
@@ -209,6 +211,7 @@ def prepared(
         delivery_enabled=True,
         with_demo=True,
         with_planning_policy=True,
+        initial_frame_seconds=initial_frame_seconds,
     )
     state = Path(value["state"])
     store = StateStore(state)

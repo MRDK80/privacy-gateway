@@ -180,13 +180,31 @@ def revalidate(verifier: Verifier, proof: dict[str, Any]) -> None:
         for item in items
     ):
         raise core.LearningError("LEARNING_VERIFICATION_STALE")
+    candidate = _original_records(proof, items)
+    paired = pair(reader, verifier.session, proof["failure"], proof["corrected"], rule)
+    _original_links(proof, candidate, paired)
+
+
+def _original_records(
+    proof: dict[str, Any], items: list[dict[str, Any]]
+) -> dict[str, Any]:
+    verified = proof["verified"]
+    sources = {(item["kind"], digest(item["record"])): item["record"] for item in items}
+    if ("planning_verification", digest(verified)) not in sources:
+        raise core.LearningError("LEARNING_SOURCE_MISSING")
     for name in ("failure", "corrected"):
         if ("planning_observation", digest(proof[name])) not in sources:
             raise core.LearningError("LEARNING_SOURCE_MISSING")
     candidate = sources.get(("planning_candidate", verified["candidate_digest"]))
     if candidate is None:
         raise core.LearningError("LEARNING_SOURCE_MISSING")
-    paired = pair(reader, verifier.session, proof["failure"], proof["corrected"], rule)
+    return dict(candidate)
+
+
+def _original_links(
+    proof: dict[str, Any], candidate: dict[str, Any], paired: dict[str, Any] | None
+) -> None:
+    rule, verified = proof["rule"], proof["verified"]
     if paired is None:
         raise core.LearningError("LEARNING_VERIFICATION_STALE")
     links = (

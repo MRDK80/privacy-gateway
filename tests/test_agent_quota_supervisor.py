@@ -312,3 +312,41 @@ def test_callback_consumes_only_exact_current_arm(
                 engine._consume_wake(current)
             assert current._load() == before
     assert current._load()["attempts"] == 1
+
+
+def test_quota_wait_passthrough_noarm(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools import agent_epic_entry as entry
+    from tools import agent_epic_loop as loop
+
+    from tests.test_agent_epic_session_cli import waiting_result
+
+    root, state = tmp_path / "repo", tmp_path / "state"
+    root.mkdir()
+    state.mkdir(mode=0o700)
+    store = loop.CheckpointStore(state, root)
+    store.save(checkpoint(version="3.0") | {"policy_sha": "a" * 40})
+    before = store.path.read_bytes()
+    expected = waiting_result()
+    calls: list[str] = []
+
+    def resume(*, supervisor_lock: loop.RunnerLock) -> dict[str, Any]:
+        supervisor_lock.assert_owned(state / "session-control")
+        calls.append("resume")
+        return expected
+
+    session = SimpleNamespace(
+        state=state, root=root, wait_scope=None, resume=resume,
+        config={"schema_version": "8.0", "approved_quota_digest": "sha256:" + "a" * 64},
+    )
+    monkeypatch.setattr(entry, "_active_store", lambda *args: store)
+    monkeypatch.setattr(
+        supervisor, "SystemdUser", lambda *args, **kwargs: pytest.fail("arm")
+    )
+    monkeypatch.delenv(loop.SUPERVISOR_LOCK_FD_ENV, raising=False)
+    assert supervisor.run(session, wake=False) == expected
+    assert calls == ["resume"]
+    assert store.path.read_bytes() == before
+    assert not (state / "quota-final-pause.json").exists()
+    assert not list(state.rglob("quota-arm-*.json"))

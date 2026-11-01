@@ -81,3 +81,13 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(socket, "socket", _no_network)
     monkeypatch.chdir(Path(__file__).resolve().parents[1])
     return temp
+
+
+@pytest.fixture(scope="session")
+def completed_learning_readers(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> dict[str, str]:
+    """One fresh actual producer per worker; all three reader groups run once."""
+    from tests.learning_completed_reader_fixture import completed_reader_case
+
+    return completed_reader_case(tmp_path_factory.mktemp("completed-learning"))

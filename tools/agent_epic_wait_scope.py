@@ -29,6 +29,8 @@ def command_identity(command: Sequence[str]) -> tuple[str, ...]:
 
 
 class Scope:
+    _retained_anchor: dict[str, Any]
+
     def __init__(
         self,
         state: Path,
@@ -43,6 +45,9 @@ class Scope:
         self.frame = frame
         self.initial = initial
         self.read_only = read_only
+        self._owner_original = False
+        self._retained_owner = False
+        self._session_origin: str | None = None
         self.config = guards.private_json(self.state / "epic-runtime.json")
         self.adapter = guards.private_json(self.state / "runtime-adapter.json")
         self.mandate = guards.private_json(self.state / "mandate.json")
@@ -58,6 +63,56 @@ class Scope:
         self.guard()
 
     @classmethod
+    def retained_owner(cls, state: Path, root: Path) -> Scope | None:
+        """Pending no-create route: cannot read, publish, or create a frame."""
+        from tools.agent_owner_final_admission import _retained_sources
+
+        saved = _retained_sources(state, root)
+        if saved is None:
+            return None
+        result = cls.__new__(cls)
+        result.state, result.root = state, root
+        result.config = saved["sources"]["config"]
+        result.mandate = saved["sources"]["mandate"]
+        profile = guards.wait_profile_guard(state, result.config, result.mandate)
+        if profile is None:
+            raise frames.FrameError("WAIT_PROFILE_REQUIRED")
+        result.profile = profile
+        result.adapter = guards.private_json(state / "runtime-adapter.json")
+        result.control = guards.private_json(state / "launch-control.json")
+        result._retained_anchor = saved["final"]["owner_wait"]
+        result._owner_original = False
+        result._retained_owner = True
+        result._session_origin = None
+        result.initial = False
+        result.read_only = False
+        # There is deliberately no claimed frame here. Every frame/reader API
+        # rejects this pending object; the fixed locked factory replaces it.
+        result.frame = {}
+        result._readers = {}
+        result._contexts = set()
+        result._context_stack = []
+        result.guard()
+        return result
+
+    @classmethod
+    def owner_original(cls, state: Path, root: Path) -> Scope:
+        """Borrow only the already locked, source-verified original invocation."""
+        from tools.agent_owner_final_admission import _current_sources
+
+        source = _current_sources(state, root)
+        if source.scope is not None or source.frames is None:
+            raise frames.FrameError("WAIT_FRAME_BINDING_CHANGED")
+        result = cls(
+            state, root, dict(source.frames.frame),
+            initial=source.frames.frame["parent_frame_digest"] is None,
+        )
+        result._owner_original = True
+        source.scope = result
+        result.guard()
+        return result
+
+    @classmethod
     def for_root(
         cls, state: Path, root: Path, *, read_only: bool = False
     ) -> Scope | None:
@@ -66,7 +121,7 @@ class Scope:
         if not path.exists():
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
+        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0", "8.0"}:
             return None
         guards.managed_launch_guard(seed, root, read_only=read_only, allow_initial=True)
         mandate = guards.private_json(seed / "mandate.json")
@@ -96,6 +151,14 @@ class Scope:
         return cls(seed, root, value, initial=True, read_only=read_only)
 
     @classmethod
+    def for_session_wake(cls, state: Path, root: Path) -> Scope | None:
+        """Fixed build_session(wake=True) route; generic roots cannot publish."""
+        result = cls.for_root(state, root)
+        if result is not None:
+            result._session_origin = "QUOTA_WAKE"
+        return result
+
+    @classmethod
     def inherited(
         cls, state: Path, root: Path, *, read_only: bool = False
     ) -> Scope | None:
@@ -105,7 +168,7 @@ class Scope:
             frames.clear(os.environ)
             return None
         config = guards.private_json(path)
-        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0"}:
+        if config.get("schema_version") not in {"4.0", "5.0", "6.0", "7.0", "8.0"}:
             frames.clear(os.environ)
             return None
         mandate = guards.private_json(seed / "mandate.json")
@@ -121,9 +184,39 @@ class Scope:
             command=command_identity((sys.executable, sys.argv[0], *sys.argv[1:])),
             now=time.time(),
         )
-        return cls(seed, root, value, read_only=read_only)
+        result = cls(seed, root, value, read_only=read_only)
+        result._session_origin = "EPIC_COMMAND"
+        return result
 
     def guard(self) -> None:
+        if self._retained_owner:
+            from tools.agent_owner_final_admission import _retained_sources
+
+            saved = _retained_sources(self.state, self.root)
+            current = guards.private_json(self.state / "launch-control.json")
+            if (
+                saved is None or saved["sources"]["config"] != self.config
+                or saved["sources"]["mandate"] != self.mandate
+                or saved["final"]["owner_wait"] != self._retained_anchor
+                or current != self.control or current.get("state") != "RUNNING"
+                or wait.digest(current) != self._retained_anchor["control_digest"]
+            ):
+                raise frames.FrameError("WAIT_FRAME_BINDING_CHANGED")
+            now = time.time()
+            if not self._retained_anchor["stage_started_at"] <= now < min(
+                self._retained_anchor["deadline_at"], self.mandate["expires_at"],
+                self.config["started_at"]
+                + self.mandate["limits"]["max_duration_seconds"],
+            ):
+                raise frames.FrameError("WAIT_INVOCATION_EXPIRED")
+            guards.managed_launch_guard(self.state, self.root)
+            guards.bootstrap_authority(self.config, self.mandate, epic=True)
+            return
+        if self._owner_original:
+            from tools.agent_owner_final_admission import _current_scope
+
+            _current_scope(self)
+            return
         now = time.time()
         if not self.frame["started_at"] <= now < self.frame["deadline_at"]:
             raise frames.FrameError("WAIT_INVOCATION_EXPIRED")
@@ -143,13 +236,21 @@ class Scope:
             self.state, self.root, read_only=self.read_only, allow_initial=self.initial
         )
         path = self.state / "launch-control.json"
-        current = guards.private_json(path) if path.exists() else None
-        if current != self.control or (
-            not self.read_only and current is not None and current["state"] != "RUNNING"
+        current_control = guards.private_json(path) if path.exists() else None
+        if current_control != self.control or (
+            not self.read_only and current_control is not None
+            and current_control["state"] != "RUNNING"
         ):
             raise frames.FrameError("OWNER_CONTROL_CHANGED")
 
     def _stage_guard(self, stage: str) -> tuple[Callable[[], None], float]:
+        if self._owner_original:
+            from tools.agent_owner_final_admission import _current_scope
+
+            source = _current_scope(self)
+            if stage != "FINAL:FINAL_GATE" or source.frames is None:
+                raise frames.FrameError("WAIT_FRAME_BINDING_CHANGED")
+            return self.guard, source.frames.anchor["deadline_at"]
         parts = stage.split(":")
         final = parts[0] == "FINAL" or parts[:2] == ["RECONCILE", "FINAL"]
         cursor = (
@@ -270,7 +371,14 @@ class Scope:
 
     def reader(self, stage: str) -> wait.Reader:
         self.guard()
+        if self._retained_owner:
+            raise frames.FrameError("WAIT_FRAME_REQUIRED")
         if stage not in self._readers:
+            if self._owner_original:
+                if stage != "FINAL:FINAL_GATE":
+                    raise frames.FrameError("WAIT_FRAME_BINDING_CHANGED")
+                self._readers[stage] = wait.Reader.owner_original(self)
+                return self._readers[stage]
             guard, deadline = self._stage_guard(stage)
             self._readers[stage] = wait.Reader(
                 directory=self.state,
@@ -286,6 +394,14 @@ class Scope:
                 deadline_at=deadline,
                 guard=guard,
             )
+        return self._readers[stage]
+
+    def _active_reader(self) -> wait.Reader:
+        """Return only the reader of an already-entered original context."""
+        self.guard()
+        stage = self.active_stage
+        if stage is None or stage not in self._contexts or stage not in self._readers:
+            raise frames.FrameError("WAIT_FRAME_REQUIRED")
         return self._readers[stage]
 
     def recorded(self, stage: str) -> bool:
@@ -337,6 +453,8 @@ class Scope:
 
     def child(self, command: Sequence[str], timeout: int) -> tuple[dict[str, Any], int]:
         self.guard()
+        if self._owner_original or self._retained_owner:
+            raise frames.FrameError("WAIT_FRAME_BINDING_CHANGED")
         now = time.time()
         return frames.create(
             state=self.state,

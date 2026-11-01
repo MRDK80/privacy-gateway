@@ -42,6 +42,7 @@ def setup(tmp_path: Path) -> tuple[StorageReader, dict[str, Any]]:
     git(root, "add", "synthetic.py")
     git(root, "commit", "-qm", "synthetic initial")
     reader = StorageReader(seed, root)
+    reader.config = {"schema_version": "8.0"}  # Local source-envelope double.
     return reader, capture_workspace(reader, identity(), "planner", 1)
 
 
@@ -265,3 +266,246 @@ def test_missing_original_planning_artifact_blocks_fresh_process(
     saved = json.loads((source / "admission.json").read_text())
     assert saved["attempts"] == {"planner": 1, "review": 1}
     assert saved["status"] == "ADMITTED"
+
+
+def test_verify_workspace_one_batch_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Causal old API: original real commit/tree/blob needs3processes, new1."""
+    reader, original = setup(tmp_path)
+    actual = subprocess.Popen
+    launches: list[list[str]] = []
+
+    def observed(argv: Any, *args: Any, **kwargs: Any) -> Any:
+        if list(argv)[:2] == ["git", "cat-file"]:
+            launches.append(list(argv))
+        return actual(argv, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", observed)
+    verify_workspace(reader, original)
+    assert len(launches) == 1
+    assert launches[0] == ["git", "cat-file", "--batch"]
+
+
+def test_verify_workspace_fresh_second_call(tmp_path: Path) -> None:
+    reader, original = setup(tmp_path)
+    verify_workspace(reader, original)
+    oid = git(reader.root, "rev-parse", "HEAD:synthetic.py")
+    (reader.root / ".git" / "objects" / oid[:2] / oid[2:]).unlink()
+    with pytest.raises(core.LearningError, match="LEARNING_SOURCE_INVALID"):
+        verify_workspace(reader, original)
+
+
+@pytest.mark.parametrize("case", [
+    "partial_stream_success", "missing_object", "malformed_header", "wrong_oid",
+    "wrong_kind", "oversized_object", "truncated_body", "wrong_separator",
+    "hash_mismatch", "trailing_stdout", "nonzero_exit", "request_write_timeout",
+    "header_timeout", "body_timeout", "final_exit_timeout",
+    "primary_cleanup_failure_preserved", "cleanup_only_failure_closed",
+    "graph_cumulative_cap", "pending_duplicate_count_preserved",
+    "reserved_cleanup_window_boundary", "legacy_default_per_object_transport",
+    "unadmitted_schema_never_batched",
+])
+def test_workspace_batch_protocol(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    """Protocol/clock doubles; no28second sleeps or installed authority claim."""
+    import hashlib
+    import selectors
+    from types import SimpleNamespace
+
+    from tools import agent_epic_runtime_cli as guards
+    from tools import agent_learning_planning_sources as sources
+    from tools.agent_learning_evidence import SourceReader
+
+    reader, original = setup(tmp_path)
+    if case == "legacy_default_per_object_transport":
+        reader.config = {"schema_version": "7.0"}
+        actual = subprocess.Popen
+        calls: list[list[str]] = []
+
+        def old_transport(argv: Any, *args: Any, **kwargs: Any) -> Any:
+            if list(argv)[:2] == ["git", "cat-file"]:
+                calls.append(list(argv))
+            return actual(argv, *args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", old_transport)
+        verify_workspace(reader, original)
+        assert len(calls) == 3 and all("--batch" not in row for row in calls)
+        return
+    if case == "unadmitted_schema_never_batched":
+        monkeypatch.setattr(
+            guards, "learning_private_json", lambda path: {"schema_version": "9.0"},
+        )
+        with pytest.raises(core.LearningError, match="LEARNING_PROFILE_REQUIRED"):
+            SourceReader(reader.seed, reader.root)
+        return
+
+    def oid(kind: str, raw: bytes) -> str:
+        return hashlib.sha1(f"{kind} {len(raw)}\0".encode() + raw).hexdigest()
+
+    blob = b"synthetic object bytes" * 3
+    blob_id = oid("blob", blob)
+    tree = b"100644 synthetic.py\0" + bytes.fromhex(blob_id)
+    if case == "pending_duplicate_count_preserved":
+        tree += b"100644 duplicate.py\0" + bytes.fromhex(blob_id)
+        reader.owner["limits"]["max_records"] = 2
+    tree_id = oid("tree", tree)
+    commit = ("tree " + tree_id + "\n\nsynthetic\n").encode()
+    commit_id = oid("commit", commit)
+    if case == "graph_cumulative_cap":
+        reader.owner["limits"]["max_store_bytes"] = max(map(len, (blob, tree, commit)))
+    if case == "oversized_object":
+        reader.owner["limits"]["max_store_bytes"] = len(blob) - 1
+    objects = {blob_id: ("blob", blob), tree_id: ("tree", tree),
+               commit_id: ("commit", commit)}
+    clock = [0.0]
+    wire = bytearray()
+    requests: list[str] = []
+    input_bytes = bytearray()
+    close_attempts: list[str] = []
+    waits: list[float] = []
+
+    class Pipe:
+        def __init__(self, name: str, number: int) -> None:
+            self.name, self.number = name, number
+            self.closed = False
+
+        def fileno(self) -> int:
+            return self.number
+
+        def close(self) -> None:
+            close_attempts.append(self.name)
+            self.closed = True
+            if self.name == "stdout" and case in {
+                "primary_cleanup_failure_preserved", "cleanup_only_failure_closed",
+            }:
+                if case == "primary_cleanup_failure_preserved":
+                    raise KeyboardInterrupt
+                raise OSError("synthetic close")
+
+    class Child:
+        def __init__(self) -> None:
+            self.stdin, self.stdout = Pipe("stdin", 101), Pipe("stdout", 102)
+            self.returncode: int | None = None
+            self.killed = False
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed, self.returncode = True, -9
+
+        def wait(self, timeout: float) -> int:
+            waits.append(timeout)
+            if case == "final_exit_timeout" and not self.killed:
+                clock[0] = 30.0
+                self.returncode = 0
+                return 0
+            if self.returncode is None:
+                self.returncode = 1 if case == "nonzero_exit" else 0
+            assert self.returncode is not None
+            return self.returncode
+
+    child = Child()
+    starts: list[Any] = []
+
+    def popen(argv: Any, **kwargs: Any) -> Any:
+        starts.append((list(argv), kwargs))
+        return child
+
+    def write(fd: int, raw: Any) -> int:
+        assert fd == 101
+        chunk = bytes(raw[:5])
+        if case == "request_write_timeout":
+            clock[0] = 28.0
+        input_bytes.extend(chunk)
+        if input_bytes.endswith(b"\n"):
+            requested = input_bytes.decode().strip()
+            requests.append(requested)
+            input_bytes.clear()
+            kind, body = objects[requested]
+            header = f"{requested} {kind} {len(body)}\n".encode()
+            if case == "missing_object":
+                header, body = (requested + " missing\n").encode(), b""
+            elif case == "malformed_header":
+                header = f"{requested} {kind} 01\n".encode()
+            elif case == "wrong_oid":
+                header = f"{'f' * 40} {kind} {len(body)}\n".encode()
+            elif case == "wrong_kind":
+                header = f"{requested} tree {len(body)}\n".encode()
+            elif case == "truncated_body":
+                body = body[:-1]
+            elif case == "hash_mismatch":
+                body = b"X" + body[1:]
+            wire.extend(header + body)
+            if case != "truncated_body":
+                wire.extend(b"X" if case == "wrong_separator" else b"\n")
+            if case == "trailing_stdout":
+                wire.extend(b"X")
+        return len(chunk)
+
+    def read(fd: int, size: int) -> bytes:
+        assert fd == 102
+        count = min(size, 3, len(wire))
+        raw = bytes(wire[:count])
+        del wire[:count]
+        if case == "body_timeout" and raw == b"\n" and not wire:
+            clock[0] = 28.0
+        return raw
+
+    class Selector:
+        def __init__(self) -> None:
+            self.fd, self.event = 0, 0
+
+        def register(self, fd: int, event: int) -> None:
+            self.fd, self.event = fd, event
+
+        def unregister(self, fd: int) -> None:
+            assert fd == self.fd
+
+        def select(self, timeout: float) -> list[Any]:
+            assert 0 < timeout <= 30
+            stopped = case == "header_timeout" and self.fd == 102
+            if stopped:
+                clock[0] = 28.0
+                return []
+            return [(SimpleNamespace(fd=self.fd), self.event)]
+
+        def close(self) -> None:
+            close_attempts.append("selector")
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(os, "set_blocking", lambda *args: None)
+    monkeypatch.setattr(os, "read", read)
+    monkeypatch.setattr(os, "write", write)
+    monkeypatch.setattr(selectors, "DefaultSelector", Selector)
+    monkeypatch.setattr(sources, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    if case == "primary_cleanup_failure_preserved":
+        with pytest.raises(LookupError, match="^primary$"):
+            with sources._WorkspaceObjects(reader) as stream:
+                assert stream.object(blob_id, "blob") == blob
+                raise LookupError("primary")
+    elif case == "partial_stream_success":
+        with sources._WorkspaceObjects(reader) as stream:
+            assert stream.object(blob_id, "blob") == blob
+    elif case in {"graph_cumulative_cap", "pending_duplicate_count_preserved"}:
+        value = core.seal({**original, "head_sha": commit_id, "tree_hash": tree_id})
+        with pytest.raises(core.LearningError, match="LEARNING_SOURCE_INVALID"):
+            verify_workspace(reader, value)
+        if case == "pending_duplicate_count_preserved":
+            assert requests == [commit_id, tree_id]
+    else:
+        with pytest.raises(core.LearningError, match="LEARNING_SOURCE_INVALID"):
+            with sources._WorkspaceObjects(reader) as stream:
+                stream.object(blob_id, "blob")
+                if case == "reserved_cleanup_window_boundary":
+                    clock[0] = 30.0
+                    stream.object(blob_id, "blob")
+        if case == "reserved_cleanup_window_boundary":
+            assert requests == [blob_id]  # Expired prior window was not revived.
+    assert len(starts) == 1
+    assert starts[0][0] == ["git", "cat-file", "--batch"]
+    assert starts[0][1]["stderr"] == subprocess.DEVNULL
+    assert {"stdin", "stdout", "selector"}.issubset(close_attempts)
+    assert child.poll() is not None and all(0 <= value <= 30 for value in waits)

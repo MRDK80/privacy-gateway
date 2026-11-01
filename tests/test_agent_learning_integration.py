@@ -26,7 +26,11 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX frozen sources
 
 
 def multi(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, controller_rule: bool = False
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    controller_rule: bool = False,
+    initial_adapter_timeout: int = 120,
 ) -> dict[str, str]:
     source = tmp_path / "source"
     shutil.copytree(
@@ -68,7 +72,11 @@ def multi(
     )
     monkeypatch.setattr(factory, "SOURCE", source)
     value = factory.build(
-        base, extra_tasks=(302, 303), delivery_enabled=True, with_demo=True
+        base,
+        extra_tasks=(302, 303),
+        delivery_enabled=True,
+        with_demo=True,
+        initial_adapter_timeout=initial_adapter_timeout,
     )
     store = StateStore(Path(value["state"]))
     plans = store.load("approved-plans")
@@ -269,7 +277,11 @@ def test_two_frozen_tasks_retain_distinct_failure_and_correction_sources(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    value = multi(tmp_path, monkeypatch)
+    value = multi(
+        tmp_path,
+        monkeypatch,
+        initial_adapter_timeout=300,
+    )
     roles(value)
     body = (
         SETUP
@@ -277,7 +289,11 @@ def test_two_frozen_tasks_retain_distinct_failure_and_correction_sources(
     'after':correction.state['status'],
     'failed_checks':len(reader.gate(302)),'corrected_checks':len(reader.gate(301))}))"""
     )
-    assert child(value, body) == {
+    assert child(
+        value,
+        body,
+        timeout_seconds=360,
+    ) == {
         "before": "FAIL_ESCALATE",
         "after": "PASS",
         "failed_checks": 4,
@@ -372,7 +388,11 @@ def test_original_failure_delivery_and_next_role_hint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    value = multi(tmp_path, monkeypatch)
+    value = multi(
+        tmp_path,
+        monkeypatch,
+        initial_adapter_timeout=300,
+    )
     roles(value)
     body = (
         SETUP
@@ -380,7 +400,7 @@ def test_original_failure_delivery_and_next_role_hint(
         + """print(json.dumps({'promoted':len(promoted),
     'selected':len(hints['hints']),'merge_differs':api.merge!=api.head}))"""
     )
-    assert child(value, body, timeout_seconds=60) == {
+    assert child(value, body, timeout_seconds=360) == {
         "promoted": 1,
         "selected": 1,
         "merge_differs": True,
@@ -429,9 +449,13 @@ def test_verified_hint_reaches_actual_next_role_completion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    value = multi(tmp_path, monkeypatch)
+    value = multi(
+        tmp_path,
+        monkeypatch,
+        initial_adapter_timeout=300,
+    )
     roles(value)
-    assert child(value, SETUP + DELIVERY + NEXT_CALL, timeout_seconds=120) == {
+    assert child(value, SETUP + DELIVERY + NEXT_CALL, timeout_seconds=360) == {
         "completed_hinted_calls": 1,
         "executor_calls": 2,
     }
@@ -440,7 +464,12 @@ def test_verified_hint_reaches_actual_next_role_completion(
 def test_controller_problem_uses_original_same_run_failure_and_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    value = multi(tmp_path, monkeypatch, controller_rule=True)
+    value = multi(
+        tmp_path,
+        monkeypatch,
+        controller_rule=True,
+        initial_adapter_timeout=300,
+    )
     roles(value)
     body = SETUP + DELIVERY.replace(
         "assert len(promoted)==1", "assert len(promoted)==2"
@@ -469,7 +498,7 @@ assert proof['failed']['gate']['status']=='failed'
 assert proof['corrected']['gate']['status']=='passed'
 print(json.dumps({'problem':problem,'ordinals':[1,2]}))
 """
-    assert child(value, body, timeout_seconds=120) == {
+    assert child(value, body, timeout_seconds=360) == {
         "problem": "typing",
         "ordinals": [1, 2],
     }

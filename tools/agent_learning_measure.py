@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from tools import agent_epic_planning as admission
 from tools import agent_learning as c
@@ -13,7 +13,7 @@ from tools.agent_continuation import digest
 from tools.agent_epic_loop import RunnerLock
 from tools.agent_epic_runtime_cli import secure_directory
 from tools.agent_epic_session_runtime import SessionRuntime
-from tools.agent_learning_evidence import SourceReader
+from tools.agent_learning_evidence import SourceReader, WorkflowFact
 from tools.agent_learning_sources import environment as source_environment
 from tools.agent_learning_store import Store
 
@@ -103,9 +103,20 @@ def _metadata(
     return values
 
 
-def observed(
+def _seed_planning_precedent(
+    seed: dict[str, Any], plans: dict[str, Any], config: dict[str, Any], task: int
+) -> bool:
+    """Pure original field comparison, never source authority by construction."""
+    return cast(
+        bool,
+        seed["task"] == task
+        and plans["initial_handover_digest"] == config["approved_handover_digest"],
+    )
+
+
+def _observed_with_workflow_fact(
     reader: SourceReader, session: SessionRuntime, task: int
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[tuple[dict[str, Any], list[dict[str, Any]]], WorkflowFact]:
     reader.guard()
     if (
         not isinstance(session, SessionRuntime)
@@ -166,10 +177,7 @@ def observed(
         seed = reader._json(reader.seed / "epic-loop-checkpoint.json")
         plans = reader._json(reader.seed / "approved-plans.json")
         config = reader._json(directory / "runtime-task.json")
-        if (
-            seed["task"] != task
-            or plans["initial_handover_digest"] != config["approved_handover_digest"]
-        ):
+        if not _seed_planning_precedent(seed, plans, config, task):
             raise c.LearningError("LEARNING_MEASUREMENT_SOURCE_INVALID")
     metadata = _metadata(
         reader,
@@ -227,7 +235,14 @@ def observed(
     }
     value["measurement_id"] = digest(value)
     value = c.measurement(c.seal(value))
-    return value, metadata
+    return (value, metadata), fact
+
+
+def observed(
+    reader: SourceReader, session: SessionRuntime, task: int
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Preserve original measurement tuple from the complete original source body."""
+    return _observed_with_workflow_fact(reader, session, task)[0]
 
 
 def verified_baseline(

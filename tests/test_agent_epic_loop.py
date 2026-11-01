@@ -15,8 +15,7 @@ import pytest
 from tools import agent_epic_loop as loop
 
 
-@pytest.fixture
-def active_runtime_namespace() -> None:
+def _require_active_runtime_namespace() -> None:
     if os.name == "nt":
         pytest.skip("production runtime adapter requires POSIX isolation")
     try:
@@ -47,6 +46,11 @@ def active_runtime_namespace() -> None:
     )
     if probe.returncode != 0:
         pytest.skip("Bubblewrap namespace is unavailable on this runner")
+
+
+@pytest.fixture
+def active_runtime_namespace() -> None:
+    _require_active_runtime_namespace()
 
 
 def _checkpoint() -> dict[str, object]:
@@ -990,6 +994,47 @@ def test_runtime_adapter_namespace_failure_does_not_run_command(
 ) -> None:
     if os.name == "nt":
         pytest.skip("production runtime adapter requires POSIX isolation")
+    from tests import test_agent_final_learning_lifecycle_genuine as canonical
+    from tests.learning_completed_reader_fixture import completed_reader_case
+
+    class AcquisitionReached(Exception):
+        pass
+
+    acquired: list[str] = []
+    probe_results = [1, 0]
+
+    def fake_probe(
+        *args: object, **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        assert args == ([
+            "/bin/false", "--die-with-parent", "--unshare-pid",
+            "--bind", "/", "/", "--proc", "/proc",
+            "--dev-bind", "/dev", "/dev", "--", sys.executable, "-c", "pass",
+        ],)
+        assert kwargs == {"capture_output": True, "check": False, "timeout": 10}
+        return subprocess.CompletedProcess(args=[], returncode=probe_results.pop(0))
+
+    def stop_acquisition(*args: object, **kwargs: object) -> None:
+        acquired.append("cache")
+        raise AcquisitionReached
+
+    def forbidden_preparation(*args: object, **kwargs: object) -> None:
+        raise AssertionError("producer preparation preceded capability admission")
+
+    with monkeypatch.context() as admission:
+        admission.setattr(loop.CommandRuntimeAdapter, "_bubblewrap",
+                          staticmethod(lambda: Path("/bin/false")))
+        admission.setattr(subprocess, "run", fake_probe)
+        admission.setattr(canonical, "_canonical_bin", lambda: tmp_path)
+        admission.setattr(canonical, "_cache", stop_acquisition)
+        admission.setattr(canonical, "_prepared_two_tasks", forbidden_preparation)
+        with pytest.raises(pytest.skip.Exception, match="namespace is unavailable"):
+            completed_reader_case(tmp_path / "unavailable")
+        assert acquired == []
+        with pytest.raises(AcquisitionReached):
+            completed_reader_case(tmp_path / "available")
+        assert acquired == ["cache"]
+        assert probe_results == []
     monkeypatch.setattr(
         loop.CommandRuntimeAdapter,
         "_bubblewrap",

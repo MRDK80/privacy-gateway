@@ -65,7 +65,24 @@ class PrimaryAPI:
             }
         elif suffix.startswith("commits/"):
             sha = suffix.split("/")[1]
-            value = {"total_count": 5, "check_runs": self.rows(sha)}
+            rows = self.rows(sha)
+            if suffix.endswith("/check-suites?per_page=100"):
+                suites = [
+                    {
+                        "id": identifier, "head_sha": sha,
+                        "app": {"id": 15368},
+                        "repository": {"full_name": "OWNER/repo"},
+                    }
+                    for identifier in sorted({r["check_suite"]["id"] for r in rows})
+                ]
+                value = {"total_count": len(suites), "check_suites": suites}
+            elif suffix.endswith((
+                "/check-runs", "/check-runs?per_page=100",
+                "/check-runs?filter=all&per_page=100",
+            )):
+                value = {"total_count": len(rows), "check_runs": rows}
+            else:
+                raise AssertionError("unsupported synthetic commit endpoint")
         elif suffix.startswith("check-suites/"):
             suite = int(suffix.split("/")[1])
             pre = suite in {51, 151}

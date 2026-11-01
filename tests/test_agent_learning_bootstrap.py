@@ -47,7 +47,8 @@ def test_bootstrap_document_matches_closed_owner_profile(change: str | None) -> 
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX owner private profile")
-def test_task3_inherits_exact_seed_and_catalog(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["7.0", "8.0"])
+def test_task3_inherits_exact_seed_and_catalog(tmp_path: Path, version: str) -> None:
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     policy = state / "policy"
@@ -59,10 +60,10 @@ def test_task3_inherits_exact_seed_and_catalog(tmp_path: Path) -> None:
     owner = profile()
     owner["catalog_digest"] = catalog_digest(catalog, catalog)
     config: dict[str, Any] = {
-        key: None for key in guards.epic_config_keys({"schema_version": "7.0"})
+        key: None for key in guards.epic_config_keys({"schema_version": version})
     }
     config.update(
-        schema_version="7.0",
+        schema_version=version,
         policy_root=str(policy),
         approved_learning_digest=guards.canonical_digest(owner),
         approved_mandate_digest=owner["mandate_digest"],

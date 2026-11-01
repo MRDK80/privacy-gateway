@@ -115,11 +115,17 @@ class Verifier:
         return self._retained(capturing=task)
 
     def _retained(self, *, capturing: int | None = None) -> list[dict[str, Any]]:
+        return self._retained_originals(capturing=capturing)[0]
+
+    def _retained_originals(
+        self, *, capturing: int | None = None
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         reader = self.reader
         reader.guard()
         result: list[dict[str, Any]] = []
         tasks: dict[int, list[dict[str, Any]]] = {}
-        for task in reader.config["approved_order"]:
+        origins: list[dict[str, Any]] = []
+        for task in reader._source_tasks():
             try:
                 directory = reader.task_directory(task)
             except c.LearningError as error:
@@ -128,6 +134,14 @@ class Verifier:
                 raise
             tasks[task] = []
             if not (directory / "learning").exists():
+                origins.append(
+                    {
+                        "task": task,
+                        "store_kind": "workflow",
+                        "records_digest": digest(None),
+                        "record_identities": [],
+                    }
+                )
                 continue
             with reader.ownership(directory):
                 with Store(
@@ -140,6 +154,26 @@ class Verifier:
                     if task != capturing:
                         store.ensure_usable()
                     items = store.records()
+            from tools.agent_learning_store import KEY_FIELDS
+
+            origins.append(
+                {
+                    "task": task,
+                    "store_kind": "workflow",
+                    "records_digest": digest(items),
+                    "record_identities": sorted(
+                        [
+                            {
+                                "kind": row["kind"],
+                                "key": row["record"][KEY_FIELDS[row["kind"]]],
+                                "record_digest": digest(row["record"]),
+                            }
+                            for row in items
+                        ],
+                        key=lambda row: (row["kind"], row["key"]),
+                    ),
+                }
+            )
             tasks[task] = items
             result.extend(items)
             if len(result) > reader.owner["limits"]["max_records"]:
@@ -147,7 +181,7 @@ class Verifier:
         for task, items in tasks.items():
             if task != capturing:
                 self._source_complete(task, items, result)
-        return result
+        return result, origins
 
     def _source_complete(
         self,
@@ -540,11 +574,35 @@ class Verifier:
     def selection(
         self, task_class: str, role: str, problem_class: str | None = None
     ) -> dict[str, Any]:
+        if role not in c.ROLES:
+            raise c.LearningError("LEARNING_INVOCATION_INVALID")
+        return self._selection_original(
+            task_class, role, problem_class, self.retained()
+        )[0]
+
+    def selection_proof(
+        self, task_class: str, role: str, problem_class: str | None = None
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        if role not in c.ROLES:
+            raise c.LearningError("LEARNING_INVOCATION_INVALID")
+        retained, origins = self._retained_originals()
+        value, references = self._selection_original(
+            task_class, role, problem_class, retained
+        )
+        self._workflow_selection_origins = origins
+        return value, references
+
+    def _selection_original(
+        self,
+        task_class: str,
+        role: str,
+        problem_class: str | None,
+        retained: list[dict[str, Any]],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         reader = self.reader
         if role not in c.ROLES:
             raise c.LearningError("LEARNING_INVOCATION_INVALID")
         catalog_role = "controller" if role == "planning_review" else role
-        retained = self.retained()
         tombstones = {
             item["record"]["lesson_id"]
             for item in retained
@@ -559,6 +617,7 @@ class Verifier:
             if item["kind"] == "candidate"
         }
         selected: list[dict[str, Any]] = []
+        references: list[dict[str, Any]] = []
         verifications = [item for item in retained if item["kind"] == "verification"]
         for item in sorted(verifications, key=lambda item: item["record"]["lesson_id"]):
             verified = item["record"]
@@ -590,6 +649,7 @@ class Verifier:
                 if digest(obs) == verified["observation_digest"]
             ]
             confirmed = False
+            confirmed_reference: dict[str, Any] | None = None
             for after in afters:
                 for before in observations:
                     proof = self.pair(before, after, rule)
@@ -598,6 +658,14 @@ class Verifier:
                         for key in ("evidence_digest", "applicability_digest")
                     ):
                         confirmed = True
+                        confirmed_reference = {
+                            "lesson_id": verified["lesson_id"],
+                            "verification_digest": digest(verified),
+                            "candidate_digest": digest(candidate),
+                            "before_digest": digest(before),
+                            "after_digest": digest(after),
+                            "pair_digest": digest(proof),
+                        }
                         break
             if not confirmed:
                 raise c.LearningError("LEARNING_VERIFICATION_STALE")
@@ -613,10 +681,13 @@ class Verifier:
             }
             if digest(hint) not in {digest(value) for value in selected}:
                 selected.append(hint)
+                assert confirmed_reference is not None
+                references.append(confirmed_reference)
             if len(selected) >= reader.owner["limits"]["max_hints_per_role"]:
                 break
         if reader.owner["limits"]["max_hints_per_role"] == 0:
             selected = []
+            references = []
         value = {
             "schema_version": "1.0",
             "role": role,
@@ -631,4 +702,9 @@ class Verifier:
             > reader.owner["limits"]["max_hint_bytes"]
         ):
             raise c.LearningError("LEARNING_HINT_CAPACITY_EXHAUSTED")
-        return value
+        if len(references) != len(selected) or any(
+            hint["lesson_id"] != row["lesson_id"]
+            for hint, row in zip(selected, references)
+        ):
+            raise c.LearningError("LEARNING_SOURCE_MISMATCH")
+        return value, references
