@@ -37,6 +37,99 @@ from tests.test_agent_learning_workflow_binding import initial_config8
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX original sources")
 
 
+def _aggregate_diagnostic_report(state: Path, *, required: bool = True) -> str:
+    """Expose only closed metadata already emitted by the synthetic adapter."""
+    unavailable = "\nAGGREGATE_ADAPTER_METADATA_UNAVAILABLE"
+    try:
+        path = state / "aggregate-adapter-diagnostic.json"
+        descriptor = os.open(
+            path, os.O_RDONLY | getattr(os, "O_NOFOLLOW")
+            | getattr(os, "O_NONBLOCK"),
+        )
+        try:
+            before = os.fstat(descriptor)
+            assert stat.S_ISREG(before.st_mode)
+            assert before.st_uid == getattr(os, "getuid")()
+            assert stat.S_IMODE(before.st_mode) == 0o600
+            assert before.st_nlink == 1 and 0 <= before.st_size <= 1024
+            raw = os.read(descriptor, 1025)
+            def fields(item: os.stat_result) -> tuple[int, ...]:
+                return (
+                    item.st_dev, item.st_ino, item.st_mode, item.st_uid,
+                    item.st_gid, item.st_nlink, item.st_size,
+                    item.st_mtime_ns, item.st_ctime_ns,
+                )
+            assert len(raw) == before.st_size
+            assert fields(before) == fields(os.fstat(descriptor))
+            assert fields(before) == fields(path.lstat())
+        finally:
+            os.close(descriptor)
+
+        def unique(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in items:
+                assert key not in result
+                result[key] = value
+            return result
+
+        metadata = json.loads(raw, object_pairs_hook=unique)
+        assert type(metadata) is dict
+        assert set(metadata) == {
+            "schema_version", "binding", "phase", "exception_class", "machine_code",
+        }
+        assert metadata["schema_version"] == "1.0"
+        assert metadata["binding"] == "ORIGINAL_RESERVED_AGGREGATE_INPUT"
+        assert type(metadata["phase"]) is str
+        assert metadata["phase"] in {"ADAPT_EXCEPTION", "ADAPT_RETURNED"}
+        assert metadata["exception_class"] is None or type(
+            metadata["exception_class"]
+        ) is str
+        assert metadata["exception_class"] in {
+            None, "OTHER", "RoleError", "AdapterError", "SchemaError",
+        }
+        assert metadata["machine_code"] is None or type(
+            metadata["machine_code"]
+        ) is str
+        assert metadata["machine_code"] in {
+            'ADAPTER_TIMEOUT',
+            'CODEX_NOT_FOUND',
+            'INVALID_REQUEST',
+            'MALFORMED_OUTPUT',
+            'OTHER',
+            'OUTPUT_LIMIT',
+            'PROMPT_TOO_LARGE',
+            'ROLE_BACKEND_INCOMPLETE',
+            'ROLE_BACKEND_TIMEOUT',
+            'ROLE_BACKEND_UNAVAILABLE',
+            'ROLE_COMPLETION_INVALID',
+            'ROLE_EFFECTIVE_POLICY_UNVERIFIED',
+            'ROLE_EVENT_BINDING_CHANGED',
+            'ROLE_EVENT_OUTPUT_LIMIT',
+            'ROLE_INPUT_LIMIT',
+            'ROLE_NON_QUOTA_ERROR',
+            'ROLE_OUTPUT_INVALID',
+            'ROLE_OUTPUT_LIMIT',
+            'ROLE_PROTOCOL_INVALID',
+            'ROLE_RPC_FAILED',
+            'ROLE_SANDBOX_UNSUPPORTED',
+            'ROLE_SERVER_REQUEST_FORBIDDEN',
+            'SANDBOX_UNAVAILABLE',
+            'SCHEMA_ERROR',
+            'SCHEMA_VIOLATION',
+            'VERSION_MISMATCH',
+            'VERSION_PROBE_FAILED',
+            None,
+        }
+        exported = {key: metadata[key] for key in (
+            "phase", "exception_class", "machine_code",
+        )}
+        return "\nAGGREGATE_ADAPTER_METADATA=" + json.dumps(exported, sort_keys=True)
+    except (OSError, ValueError, TypeError, AssertionError):
+        if required:
+            raise AssertionError("AGGREGATE_DIAGNOSTIC_VALIDATION_STOP") from None
+        return unavailable
+
+
 def _malformed_sink_file(state: Path) -> tuple[int, Path, tuple[int, int]]:
     """Own one fresh, private, content-free diagnostic sink before spawn."""
     fd: int | None = None
@@ -2454,52 +2547,8 @@ def test_original_FINAL_learning_request_completion_and_observation(
         capture_failed = True
     if capture_failed:
         raise RuntimeError("HARNESS_CAPTURE_PERSISTENCE_STOP") from None
-    diagnostic = state / "aggregate-adapter-diagnostic.json"
-    assert diagnostic.is_file() and not diagnostic.is_symlink(), (
-        "ADAPTER_DIAGNOSTIC_MISSING_STOP"
-    )
-    assert diagnostic.stat().st_size <= 1024, "ADAPTER_DIAGNOSTIC_LIMIT_STOP"
-    metadata = json.loads(diagnostic.read_bytes())
-    assert set(metadata) == {
-        "schema_version", "binding", "phase", "exception_class", "machine_code",
-    }
-    assert metadata["schema_version"] == "1.0"
-    assert metadata["binding"] == "ORIGINAL_RESERVED_AGGREGATE_INPUT"
-    assert metadata["phase"] in {"ADAPT_EXCEPTION", "ADAPT_RETURNED"}
-    assert metadata["exception_class"] in {
-        None, "OTHER", "RoleError", "AdapterError", "SchemaError",
-    }
-    allowed_codes = {
-        None, "OTHER",
-        'ADAPTER_TIMEOUT',
-        'CODEX_NOT_FOUND',
-        'INVALID_REQUEST',
-        'MALFORMED_OUTPUT',
-        'OUTPUT_LIMIT',
-        'PROMPT_TOO_LARGE',
-        'ROLE_BACKEND_INCOMPLETE',
-        'ROLE_BACKEND_TIMEOUT',
-        'ROLE_BACKEND_UNAVAILABLE',
-        'ROLE_COMPLETION_INVALID',
-        'ROLE_EFFECTIVE_POLICY_UNVERIFIED',
-        'ROLE_EVENT_BINDING_CHANGED',
-        'ROLE_EVENT_OUTPUT_LIMIT',
-        'ROLE_INPUT_LIMIT',
-        'ROLE_NON_QUOTA_ERROR',
-        'ROLE_OUTPUT_INVALID',
-        'ROLE_OUTPUT_LIMIT',
-        'ROLE_PROTOCOL_INVALID',
-        'ROLE_RPC_FAILED',
-        'ROLE_SANDBOX_UNSUPPORTED',
-        'ROLE_SERVER_REQUEST_FORBIDDEN',
-        'SANDBOX_UNAVAILABLE',
-        'SCHEMA_ERROR',
-        'SCHEMA_VIOLATION',
-        'VERSION_MISMATCH',
-        'VERSION_PROBE_FAILED',
-    }
-    assert metadata["machine_code"] in allowed_codes
-    assert run.returncode == 0, run.stderr + diagnostic_report
+    aggregate_report = _aggregate_diagnostic_report(state)
+    assert run.returncode == 0, run.stderr + diagnostic_report + aggregate_report
     result = json.loads(run.stdout)
     assert result["owner_tail"]["status"] == "ROADMAP_DONE"
     assert result["owner_tail"]["ci_attempts"] == 8

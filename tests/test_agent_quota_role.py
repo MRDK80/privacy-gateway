@@ -268,8 +268,11 @@ def test_native_role_does_not_inherit_diagnostic_fd(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX private diagnostic FD")
-def test_parent_readback_rejects_raw_or_replaced_file(tmp_path: Path) -> None:
+def test_parent_readback_rejects_raw_or_replaced_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from tests.test_agent_final_learning_lifecycle_genuine import (
+        _aggregate_diagnostic_report,
         _malformed_readback,
         _malformed_sink_file,
     )
@@ -288,3 +291,66 @@ def test_parent_readback_rejects_raw_or_replaced_file(tmp_path: Path) -> None:
     path.rename(original)
     path.symlink_to(original)
     assert _malformed_readback(path, identity, failed=True) == result
+
+    # The actual parent formatter must reject unvalidated synthetic contents.
+    import json
+
+    aggregate = tmp_path / "aggregate-adapter-diagnostic.json"
+    valid: dict[str, str | None] = {
+        "schema_version": "1.0",
+        "binding": "ORIGINAL_RESERVED_AGGREGATE_INPUT",
+        "phase": "ADAPT_EXCEPTION",
+        "exception_class": "AdapterError",
+        "machine_code": "SANDBOX_UNAVAILABLE",
+    }
+    missing = "\nAGGREGATE_ADAPTER_METADATA_UNAVAILABLE"
+    assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+    accepted = [valid, {**valid, "phase": "ADAPT_RETURNED",
+                        "exception_class": None, "machine_code": None}]
+    for record in accepted:
+        aggregate.write_text(json.dumps(record))
+        aggregate.chmod(0o600)
+        report = _aggregate_diagnostic_report(tmp_path)
+        assert json.loads(report.split("=", 1)[1]) == {
+            key: record[key] for key in ("phase", "exception_class", "machine_code")
+        }
+    rejected = [
+        json.dumps({**valid, "machine_code": "private-canary"}),
+        json.dumps({**valid, "extra": "private-canary"}),
+        json.dumps({**valid, "phase": {"private-canary": 1}}),
+        json.dumps({**valid, "exception_class": ["private-canary"]}),
+        json.dumps({**valid, "machine_code": False}),
+        json.dumps(valid)[:-1] + ', "machine_code": "private-canary"}',
+        "private-canary",
+        "x" * 1025,
+    ]
+    for raw in rejected:
+        aggregate.write_text(raw)
+        assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+        with pytest.raises(
+            AssertionError, match="^AGGREGATE_DIAGNOSTIC_VALIDATION_STOP$",
+        ):
+            _aggregate_diagnostic_report(tmp_path)
+    aggregate.write_text(json.dumps(valid))
+    retained = tmp_path / "aggregate-retained"
+    aggregate.rename(retained)
+    aggregate.symlink_to(retained)
+    assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+    aggregate.unlink()
+    getattr(os, "mkfifo")(aggregate, 0o600)
+    assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+    aggregate.unlink()
+    aggregate.write_text(json.dumps(valid))
+    aggregate.chmod(0o600)
+    original_read = os.read
+
+    def replace_during_read(descriptor: int, count: int) -> bytes:
+        raw = original_read(descriptor, count)
+        aggregate.unlink()
+        aggregate.write_text(json.dumps(valid))
+        aggregate.chmod(0o600)
+        return raw
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "read", replace_during_read)
+        assert _aggregate_diagnostic_report(tmp_path, required=False) == missing

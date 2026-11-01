@@ -103,7 +103,13 @@ def completed_reader_case(tmp_path: Path) -> dict[str, str]:
             path = state / ('completed-reader-' + name)
             path.write_bytes(raw)
             path.chmod(0o600)
-        assert completed.returncode == 0, completed.stderr[-8000:] + diagnostic_report
+        aggregate_report = (
+            canonical._aggregate_diagnostic_report(state, required=False)
+            if completed.returncode != 0 else ""
+        )
+        assert completed.returncode == 0, (
+            completed.stderr[-8000:] + diagnostic_report + aggregate_report
+        )
         lines = completed.stdout.splitlines()
         assert len(lines) == 1
         result = json.loads(lines[0])
