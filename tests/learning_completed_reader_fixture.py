@@ -18,6 +18,9 @@ import pytest
 
 
 def completed_reader_case(tmp_path: Path) -> dict[str, str]:
+    from tests.test_agent_epic_loop import _require_active_runtime_namespace
+
+    _require_active_runtime_namespace()
     from tests import test_agent_final_learning_lifecycle_genuine as canonical
     from tests.test_agent_learning_integration import roles
     from tests.test_agent_learning_workflow_binding import initial_config8

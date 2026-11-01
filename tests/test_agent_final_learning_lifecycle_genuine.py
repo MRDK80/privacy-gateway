@@ -29,6 +29,9 @@ from tests.test_agent_continuation import owner
 from tests.test_agent_continuation_backend import document
 from tests.test_agent_coordinator_handover import _value
 from tests.test_agent_epic_handover import _mandate
+from tests.test_agent_epic_loop import (
+    active_runtime_namespace as active_runtime_namespace,
+)
 from tests.test_agent_learning import profile
 from tests.test_agent_learning_integration import roles
 from tests.test_agent_learning_planning_catalog import sample
@@ -2489,6 +2492,7 @@ _FINAL_ROADMAP_FIXTURE = (
     "assert not api.git('status','--porcelain=v1','--untracked-files=all')\n"
 )
 
+@pytest.mark.usefixtures("active_runtime_namespace")
 def test_original_FINAL_learning_request_completion_and_observation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
