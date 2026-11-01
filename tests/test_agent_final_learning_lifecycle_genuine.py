@@ -76,6 +76,7 @@ def _aggregate_diagnostic_report(state: Path, *, required: bool = True) -> str:
         assert type(metadata) is dict
         assert set(metadata) == {
             "schema_version", "binding", "phase", "exception_class", "machine_code",
+            "backend_os_error",
         }
         assert metadata["schema_version"] == "1.0"
         assert metadata["binding"] == "ORIGINAL_RESERVED_AGGREGATE_INPUT"
@@ -120,9 +121,29 @@ def _aggregate_diagnostic_report(state: Path, *, required: bool = True) -> str:
             'VERSION_PROBE_FAILED',
             None,
         }
+        backend = metadata["backend_os_error"]
+        if backend is not None:
+            assert metadata["phase"] == "ADAPT_EXCEPTION"
+            assert metadata["exception_class"] == "RoleError"
+            assert metadata["machine_code"] == "ROLE_BACKEND_UNAVAILABLE"
+            assert type(backend) is dict
+            assert set(backend) == {"class", "errno_category"}
+            assert type(backend["class"]) is str
+            assert backend["class"] in {
+                "BROKEN_PIPE", "CONNECTION_RESET", "NOT_FOUND", "PERMISSION",
+                "WOULD_BLOCK", "TIMEOUT", "OS_ERROR", "OTHER_OS_ERROR",
+            }
+            assert type(backend["errno_category"]) is str
+            assert backend["errno_category"] in {
+                "EACCES", "EPERM", "ENOENT", "ENOEXEC", "EPIPE", "EBADF",
+                "EIO", "EAGAIN", "EINTR", "ENOSPC", "ETIMEDOUT",
+                "ECONNRESET", "EINVAL", "OTHER", "UNAVAILABLE",
+            }
         exported = {key: metadata[key] for key in (
             "phase", "exception_class", "machine_code",
         )}
+        if backend is not None:
+            exported["backend_os_error"] = backend
         return "\nAGGREGATE_ADAPTER_METADATA=" + json.dumps(exported, sort_keys=True)
     except (OSError, ValueError, TypeError, AssertionError):
         if required:
@@ -659,8 +680,29 @@ ADAPTER_DIAGNOSTIC = (
     ' | diagnostic_os.O_CREAT | diagnostic_os.O'
     '_EXCL,\n        0o600,\n    )\n    with diagn'
     'ostic_os.fdopen(descriptor, "wb") as strea'
-    'm:\n        stream.write(data)\n\n\ndef _obser'
-    'ved_diagnostic_adapt(args: argparse.Namesp'
+    'm:\n        stream.write(data)\n\n\ndef _diagnostic_backend'
+    '_os_error(error: BaseException) -> dict[str, str] | Non'
+    'e:\n    import errno\n\n    context = error.__context__\n  '
+    '  if not isinstance(context, OSError):\n        return N'
+    'one\n    classes = {\n        BrokenPipeError: "BROKEN_PI'
+    'PE",\n        ConnectionResetError: "CONNECTION_RESET",\n'
+    '        FileNotFoundError: "NOT_FOUND",\n        Permiss'
+    'ionError: "PERMISSION",\n        BlockingIOError: "WOULD'
+    '_BLOCK",\n        TimeoutError: "TIMEOUT",\n        OSErr'
+    'or: "OS_ERROR",\n    }\n    categories = {\n        errno.'
+    'EACCES: "EACCES", errno.EPERM: "EPERM",\n        errno.E'
+    'NOENT: "ENOENT", errno.ENOEXEC: "ENOEXEC",\n        errn'
+    'o.EPIPE: "EPIPE", errno.EBADF: "EBADF",\n        errno.E'
+    'IO: "EIO", errno.EAGAIN: "EAGAIN",\n        errno.EINTR:'
+    ' "EINTR", errno.ENOSPC: "ENOSPC",\n        errno.ETIMEDO'
+    'UT: "ETIMEDOUT", errno.ECONNRESET: "ECONNRESET",\n      '
+    '  errno.EINVAL: "EINVAL",\n    }\n    number = context.er'
+    'rno\n    return {\n        "class": classes.get(type(cont'
+    'ext), "OTHER_OS_ERROR"),\n        "errno_category": (\n  '
+    '          categories.get(number, "OTHER")\n            i'
+    'f type(number) is int else "UNAVAILABLE"\n        ),\n   '
+    ' }\n\n\ndef _observed_diagnostic_adapt(args: argparse.Name'
+    'sp'
     'ace) -> dict[str, Any]:\n    from tools.age'
     'nt_role_app_server import RoleError\n\n    g'
     'lobal _DIAGNOSTIC_STATE_MATCH, _DIAGNOSTIC'
@@ -686,7 +728,11 @@ ADAPTER_DIAGNOSTIC = (
     'TE_INPUT",\n                "phase": "ADAPT'
     '_EXCEPTION",\n                "exception_cl'
     'ass": classes.get(type(error), "OTHER"),\n '
-    '               "machine_code": code,\n     '
+    '               "machine_code": code,\n                "b'
+    'ackend_os_error": (\n                    _diagnostic_bac'
+    'kend_os_error(error)\n                    if type(error)'
+    ' is RoleError\n                    and code == "ROLE_BAC'
+    'KEND_UNAVAILABLE" else None\n                ),\n     '
     '       }\n            try:\n                '
     '_adapter_diagnostic_write(record)\n        '
     '    except (OSError, ValueError):\n        '
@@ -699,7 +745,8 @@ ADAPTER_DIAGNOSTIC = (
     ' "ORIGINAL_RESERVED_AGGREGATE_INPUT",\n    '
     '            "phase": "ADAPT_RETURNED",\n   '
     '             "exception_class": None,\n    '
-    '            "machine_code": None,\n        '
+    '            "machine_code": None,\n                "back'
+    'end_os_error": None,\n        '
     '    })\n        except (OSError, ValueError'
     '):\n            # Parent explicitly STOPs o'
     'n missing/partial/invalid receipt.\n       '

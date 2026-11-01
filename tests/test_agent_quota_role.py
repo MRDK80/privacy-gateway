@@ -272,6 +272,7 @@ def test_parent_readback_rejects_raw_or_replaced_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.test_agent_final_learning_lifecycle_genuine import (
+        ADAPTER_DIAGNOSTIC,
         _aggregate_diagnostic_report,
         _malformed_readback,
         _malformed_sink_file,
@@ -293,6 +294,8 @@ def test_parent_readback_rejects_raw_or_replaced_file(
     assert _malformed_readback(path, identity, failed=True) == result
 
     # The actual parent formatter must reject unvalidated synthetic contents.
+    import ast
+    import errno
     import json
 
     aggregate = tmp_path / "aggregate-adapter-diagnostic.json"
@@ -302,6 +305,7 @@ def test_parent_readback_rejects_raw_or_replaced_file(
         "phase": "ADAPT_EXCEPTION",
         "exception_class": "AdapterError",
         "machine_code": "SANDBOX_UNAVAILABLE",
+        "backend_os_error": None,
     }
     missing = "\nAGGREGATE_ADAPTER_METADATA_UNAVAILABLE"
     assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
@@ -354,3 +358,65 @@ def test_parent_readback_rejects_raw_or_replaced_file(
     with monkeypatch.context() as scoped:
         scoped.setattr(os, "read", replace_during_read)
         assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+
+    # Compile only the exact generated pure classifier definition, never adapt.
+    parsed = ast.parse(ADAPTER_DIAGNOSTIC)
+    definitions: list[ast.stmt] = [
+        node for node in parsed.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_diagnostic_backend_os_error"
+    ]
+    assert len(definitions) == 1
+    namespace: dict[str, object] = {}
+    exec(compile(ast.Module(body=definitions, type_ignores=[]),
+                 "<synthetic-oserror-classifier>", "exec"), namespace)
+    classifier = namespace["_diagnostic_backend_os_error"]
+    assert callable(classifier)
+    assert classifier(RuntimeError("private-canary")) is None
+    for number, category in (
+        (errno.EPIPE, "EPIPE"), (errno.ENOENT, "ENOENT"),
+        (errno.EACCES, "EACCES"), (987654, "OTHER"),
+    ):
+        try:
+            try:
+                raise OSError(number, "private-canary", "private-filename")
+            except OSError:
+                raise RuntimeError("private-canary") from None
+        except RuntimeError as error:
+            classification = classifier(error)
+        assert isinstance(classification, dict)
+        assert set(classification) == {"class", "errno_category"}
+        assert classification["errno_category"] == category
+        assert "private-canary" not in json.dumps(classification)
+        assert "private-filename" not in json.dumps(classification)
+    backend_record: dict[str, object] = {
+        **valid, "machine_code": "ROLE_BACKEND_UNAVAILABLE",
+        "exception_class": "RoleError",
+        "backend_os_error": {"class": "BROKEN_PIPE", "errno_category": "EPIPE"},
+    }
+    aggregate.write_text(json.dumps(backend_record))
+    aggregate.chmod(0o600)
+    report = _aggregate_diagnostic_report(tmp_path)
+    assert json.loads(report.split("=", 1)[1]) == {
+        key: backend_record[key] for key in (
+            "phase", "exception_class", "machine_code", "backend_os_error",
+        )
+    }
+    for bad in (
+        {"class": "private-canary", "errno_category": "EPIPE"},
+        {"class": "BROKEN_PIPE", "errno_category": "private-canary"},
+        {"class": ["BROKEN_PIPE"], "errno_category": "EPIPE"},
+        {"class": "BROKEN_PIPE", "errno_category": True},
+        {"class": "BROKEN_PIPE", "errno_category": "EPIPE", "raw": "private-canary"},
+        "private-canary",
+    ):
+        candidate = dict(backend_record)
+        candidate["backend_os_error"] = bad
+        aggregate.write_text(json.dumps(candidate))
+        assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
+    duplicate = json.dumps(backend_record).replace(
+        '"class": "BROKEN_PIPE"',
+        '"class": "BROKEN_PIPE", "class": "private-canary"',
+    )
+    aggregate.write_text(duplicate)
+    assert _aggregate_diagnostic_report(tmp_path, required=False) == missing
