@@ -24,7 +24,6 @@
 [`docs/threat-model.md`](docs/threat-model.md).
 
 ## Публичные контракты
-
 - Публичный Library API определён в
   [`docs/LIBRARY_API.md`](docs/LIBRARY_API.md). Остальные модули пакета
   являются internal implementation details.
@@ -57,7 +56,6 @@ Exact PR CI, controller/demo и post-merge evidence сохраняются; oper
 Opt-in составной local gate разрешён только по принятому exact-контракту [ADR-384](docs/ADR-384-resumable-local-gate.md) и условиям `CONTRIBUTING.md`. Без проверенного inventory/partition и terminal receipts сохраняются четыре исходные команды; snapshots и partial PASS не создают разрешения на retry.
 
 ## Reasoning при repair retry
-
 - Обычная работа использует Low. Новый blocker выбирает уровень по своей сложности и не наследует максимум другого blocker; механическая правка может использовать Low с прежними review/checks/approvals.
 - При доказанной ошибке модели повтор того же blocker повышает reasoning той же модели на следующую доступную ступень host. После цикла верни обычную работу к Low; дальнейший повтор продолжает цепочку этого blocker.
 - До пяти автоматических repair-циклов/повышений суммарно на issue; новый blocker, Low, подагент или restart не сбрасывают consumed attempts. После исчерпания бюджета, неудачного повтора на максимуме или недоступного следующего повышения требуется решение владельца с blocker и уровнем. Owner exception может разрешать Low для новой механической правки после Ultra, но не восстанавливает бюджет и не меняет прежние точные approvals.
@@ -66,7 +64,6 @@ Opt-in составной local gate разрешён только по прин
 - Конечный owner-approved mechanical packet и fixture preflight — по CONTRIBUTING.md; пакет сам не выдаётся policy и не сбрасывает budgets.
 
 ## Security invariants
-
 - Ключи, исходные и восстановленные значения не логируются, не включаются в
   ошибки и не попадают в `repr`/`str`.
 - Не ослабляй детекцию, независимую валидацию, fail-closed поведение или
@@ -81,12 +78,13 @@ Opt-in составной local gate разрешён только по прин
   гарантии по сравнению с каноническими источниками.
 
 ## Минимальный causal diff
-
 - Одна issue — один ограниченный PR; не делай попутный рефакторинг.
-- До изменений прочитай roadmap issue, task issue, связанные ADR и документы.
+- До изменений прочитай roadmap/task/ADR; опиши entry → wait/restart → terminal, зависимости и mock-границы.
+  До дорогого запуска проверь окружение и вместимость reads/bytes/calls/time; UNKNOWN раскрой до попытки.
 - Для подтверждённого дефекта сначала добавь regression/failure-path test,
   затем исправление.
-- Security- и contract-решения документируются до production-кода.
+- Security/contract решения документируются до production-кода; review частей заверши review полной композиции.
+  На втором однотипном сбое цепочки разбери общую причину до следующего разрешённого repair; бюджеты не пополняются.
 - В documentation-задаче не меняй runtime, публичные контракты, версию,
   CHANGELOG, workflows или dependency metadata.
 
@@ -110,9 +108,10 @@ roadmap-ветки; при обновлении `main` сначала обнов
 фактические head, base и SHA, а не только имена веток.
 
 ## Сопровождение запущенных процессов
-
 - Запуск runner не завершает сопровождение. Сохраняй process/session identity,
   task/phase, время последнего наблюдения и отдельно доказанного progress.
+- Веди один current handoff; прежние статусы исторические. Для разрешённого подагента queued message,
+  начатый turn и progress различны; проверь idle/running/terminal до ожидания и применяй действующий follow-up.
 - Живой процесс, тишина и checkpoint `RUNNING` не доказывают progress.
   Наблюдай до проверенного terminal result или конкретной блокировки.
 - Не завершай turn обещанием фонового наблюдения: сначала проверь поддержку,
