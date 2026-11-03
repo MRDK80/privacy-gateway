@@ -69,6 +69,32 @@ PASS касается только review; fresh identity/admission остают
 Нужные прошлые решения и ограничения передаются вместе с refs; сокращение
 не удаляет существенный контекст и не меняет требуемый role input/permissions.
 
+## Пример следующей задачи и готовность к дорогому запуску
+
+Для задачи уведомлений пример bounded плана: настоящий entry принимает
+synthetic question → mock transport фиксирует одну отправку → restart читает
+сохранённое состояние → повтор не создаёт duplicate → terminal receipt
+подтверждает ожидаемый outcome. Реальный Telegram recipient, credentials,
+внешняя отправка и production pilot не входят в этот synthetic proof и требуют
+своих approvals. Прямой вызов helper не заменяет entry-to-terminal сценарий.
+
+До запуска перечислите shared fixtures и полную композицию consumers, входные
+bytes/reads с revalidation, model-call overhead, setup/teardown и cleanup.
+Значение из конфигурации — лимит, а не доказательство fit; measured prefix —
+нижняя граница наблюдённой работы, не upper bound полного сценария. Сохраняйте
+неизвестности до admission. Разбор порогов и пример factual reporting — в
+[анализе #383](383-development-process-analysis.md).
+
+Пример current handoff после source review: «фаза: composition review;
+последний доказанный результат: scoped PASS на source S; blocker: full-path fit
+не доказан; next: bounded input/fixture assessment; process: не запущен;
+USED: прежние значения; pending effects: проверено по receipt Q». Не пишите
+«идёт выполнение», если только отправлено задание idle агенту. Сначала проверьте
+actual running/terminal состояние; разрешённый follow-up должен запустить turn,
+а продвижение подтверждается отдельным evidence. При повторном однотипном
+сбое используйте общий causal review из CONTRIBUTING.md, не новый бесконечный
+цикл repairs. Эти примеры не создают authority или новый runtime schema.
+
 ## Exit, CI_PENDING и решения владельца
 
 Exit code и terminal output процесса проверяются вместе с canonical state.
