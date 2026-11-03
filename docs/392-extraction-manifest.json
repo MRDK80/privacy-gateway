@@ -1,0 +1,3084 @@
+{
+  "status": "OWNER_APPROVED_SEMANTIC_PLAN_NOT_EXECUTION_OR_BYTE_COPY_AUTHORITY",
+  "counts": {
+    "split_or_recreate_project_specific": 24,
+    "retain_pgw": 88,
+    "candidate_engine_docs_copy_with_history": 84,
+    "candidate_engine_move": 298,
+    "candidate_engine_dependency": 8,
+    "boundary_split_required_before_transfer": 9
+  },
+  "method": "Semantic selection of exact public Git revision paths and modes; file bytes reproducible by pinned source revision. Executable bundle requires its own exact byte inventory/digest before installation.",
+  "section_selection": "392-extraction-sections.md",
+  "files": [
+    {
+      "path": ".agents/skills/pgw-epic/SKILL.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".env.example",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": ".github/CODEOWNERS",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".github/pull_request_template.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".github/workflows/main-source-guard.yml",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".github/workflows/pre-commit.yml",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": ".pre-commit-config.yaml",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": ".secrets.baseline",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "AGENTS.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "SECURITY.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "config.example/entities.yaml",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "config.example/routing.yaml",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "config.example/safety.yaml",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/303-preseed-source-implementation.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/383-development-process-analysis.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-150-cli-json-contract.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ADR-151-cli-introspection.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ADR-163-agent-verification-gate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-165-agent-orchestrator.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-166-agent-learning-memory.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-167-agent-pr-checks.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-168-agent-workflow-pilot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-185-executor-writable-scope.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-186-adapter-diagnostic-codes.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-189-scope-enforced-semantics.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-192-generation-schema-required.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-194-review-basis-trust-source.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-196-trusted-local-snapshot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-197-complete-gate-evidence.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-200-amendment-204-finding-fidelity.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-200-amendment-208-finding-text.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-200-persist-gate-evidence.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-207-controller-review-payload.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-211-patch-review-delivery-gates.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-219-repair-feedback.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-221-executor-task-envelope.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-223-executor-delivery-partition.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-225-executor-external-sandbox.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-233-agent-coordinator-contract.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-234-agent-coordinator-discovery.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-235-agent-coordinator-branch-preflight.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-236-agent-coordinator-handover.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-237-agent-coordinator-delivery.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-238-agent-coordinator-resume.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-239-agent-coordinator-pilot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-249-epic-runner-mandate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-250-epic-runner-queue.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-251-epic-runner-handover.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-252-epic-task-delivery.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-253-idempotent-epic-loop.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-254-rate-limit-pause.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-255-consumer-demo.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-256-final-epic-gate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-257-epic-runner-pilot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-259-verified-prompt-lessons.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-274-amendment-bootstrap.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-274-amendment-epic-continuation.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-274-amendment-phase-wiring.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-274-amendment-policy-binding.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-274-epic-runner-runtime-adapter.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-284-bootstrap-recovery.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-290-bounded-github-read-retries.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-295-autonomy-launch-contract.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-296-runtime-install-preflight.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-297-chat-entry-supervisor.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-298-bounded-plan-admission.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-299-durable-bounded-waits.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-300-quota-supervisor-wakeup.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-301-bounded-session-handoff.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-302-role-problem-sources-addendum.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-302-verified-role-retrospective.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-config8-policy-batch.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-final-source-event-joins.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-original-aggregate-environment.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-original-final-owner-sources.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-original-owner-wait-budget.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-owner-frame-capacity.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-owner-preseeded-final-counter-addendum.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-prepared-final-owner-gate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-303-prospective-workflow-learning-bindings.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-356-operator-ci-evidence-reuse.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-358-outbound-owner-notifications.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-377-local-repository-map.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-384-resumable-local-gate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/ADR-45-atomic-manifest-policy.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ADR-64-no-clobber-publication.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ADR-81-single-source-package-version.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ADR-86-spdx-license-metadata.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/ARCHITECTURE.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "docs/DECISIONS.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "docs/GITHUB_RULESETS.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "docs/LIBRARY_API.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/SECURITY.md",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "docs/agent-contracts.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/agent-coordinator-pilot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/agent-coordinator.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/agent-memory.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/article-sync-31.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/codex-adapters.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/detection.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/epic-runner-pilot.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/epic-runner-runtime-setup.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/epic-runner-supervision.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "engine operational or ADR content; preserve PGW historical links"
+    },
+    {
+      "path": "docs/resumable-local-gate.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/schemas/agent-learning-catalog.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/agent-learning-planning-catalog.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/agent-promotion.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/agent-retrospective.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/agent-verified-lesson.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/controller-verdict.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/executor-report.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/schemas/task-contract.schema.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "docs/testing/learning-test-progress.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "docs/threat-model.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "docs/token-format.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/01_quickstart.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/02_full_round_trip.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/03_blocked_secret.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/04_untrusted_response.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/05_key_rotation.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/06_cli_round_trip.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/README.md",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "examples/agent-contracts/README.md",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "examples/agent-contracts/controller-fail.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "examples/agent-contracts/controller-pass.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "examples/agent-contracts/executor-pass.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "examples/agent-contracts/task.json",
+      "mode": "100644",
+      "disposition": "candidate_engine_docs_copy_with_history",
+      "reason": "explicit orchestration ADR/runbook/example; retain PGW historical references"
+    },
+    {
+      "path": "pyproject.toml",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "project policy/bootstrap/build/test/CI; no wholesale transfer of approvals or PGW metadata"
+    },
+    {
+      "path": "src/privacy_gateway/__init__.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/__main__.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/cli.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/context_trust.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/crypto.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/detector.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/exceptions.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/facade.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/input_parser.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/keystore.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/manifest.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/models.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/pipeline.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/publish.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/py.typed",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/restore.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/routing.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/tokenizer.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "src/privacy_gateway/validator.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/__init__.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "package initialization needed by retained first-pass module layout"
+    },
+    {
+      "path": "tests/conftest.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "PGW crypto/CLI fixtures remain product; completed_learning_readers moves with engine consumers; sandbox helper reviewed separately, scope and lifetime preserved"
+    },
+    {
+      "path": "tests/fixtures/synthetic/not_a_txt.csv",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "tests/fixtures/synthetic/sample_message.txt",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "tests/fixtures/synthetic/utf8_sample.txt",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "tests/fixtures/synthetic/utf8bom_sample.txt",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "tests/learning_completed_reader_fixture.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tests/test_agent_epic_loop.py"
+    },
+    {
+      "path": "tests/learning_delivery_fixture.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/learning_planning_native_fixture.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tests/test_agent_learning_planning_native.py"
+    },
+    {
+      "path": "tests/learning_progress.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tests/test_agent_learning_measure.py"
+    },
+    {
+      "path": "tests/learning_session_factory_fixture.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: retain PGW with_local_gate_sut branch (actual product tree, metadata, hooks); engine factory uses a new explicit synthetic target package/profile/workflows. Preserve callsites, session scope and teardown characterization."
+    },
+    {
+      "path": "tests/learning_session_native_fixture.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tests/test_agent_final_children.py"
+    },
+    {
+      "path": "tests/learning_session_primary_fixture.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tests/test_agent_final_learning_lifecycle_genuine.py"
+    },
+    {
+      "path": "tests/test_adapter_diagnostics.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/test_agent_config8_policy_batch.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_consumer_demo.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_continuation.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_continuation_backend.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_continuation_factory.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_continuation_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_continuation_store.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_contracts.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_branch.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_contract.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_discovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_handover.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_pilot.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_coordinator_resume.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_delivery_gates_211.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_binding_reads.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_bootstrap.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_bootstrap_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_entry.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_final.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_final_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_final_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_final_transport.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_handover.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_install.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_loop.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_pinned_integration.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_planning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_planning_integration.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_planning_roles.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_planning_session.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_policy_binding.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_queue.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_recovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_recovery_bootstrap.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_runner_e2e.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_runtime_cli.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_session.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_session_cli.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_session_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_snapshot.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_transport.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "REVIEW: embedded target policy/workflow/package names are synthetic target fixtures; parameterize or retain as PGW profile integration after semantic check."
+    },
+    {
+      "path": "tests/test_agent_epic_wait.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_wait_frame.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_wait_profile.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_wait_reads.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_wait_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_wait_scope.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_epic_workflow.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_evidence_durations.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_evidence_persistence.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_children.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_ci_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_completed_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_current_projection.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_current_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_environment_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_fixture_portability.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_binding_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_collector.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_collector_genuine.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_lifecycle_genuine.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: retain original PGW SMOKE/product end-to-end integration; extract generic lifecycle assertions only after engine synthetic package scenario provides equivalent engine evidence."
+    },
+    {
+      "path": "tests/test_agent_final_learning_measurements.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_origin_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_packet.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_review.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_settings.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_task_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_workflow_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_learning_workflow_tasks.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_no_planning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_owner_wait_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_planning_contexts.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_planning_coverage.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_planning_history.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preaggregate_genuine.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_ci.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_driver.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_owner.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_report.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_review.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_role.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preparation_runtime.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "REVIEW: embedded metadata/profile fixture must be classified synthetic target vs PGW integration before unchanged move."
+    },
+    {
+      "path": "tests/test_agent_final_preparation_storage.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preseed_bootstrap.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_preseed_guard.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_final_review_pure_facts.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_finding_fidelity_204.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_finding_fields_204.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_finding_text_208.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_faults.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_identity.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_journal.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_portable.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_profile.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: preserve PGW package-probe cases; generic gate tests use distinct synthetic engine consumer, not fake privacy_gateway proof."
+    },
+    {
+      "path": "tests/test_agent_gate_recovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_runner.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_state.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_gate_timer.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_github_read.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_iteration_history_204.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_binding_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_bootstrap.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_companion_metadata.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_companions.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_evidence.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_gate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_hints.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_historical_demo.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_integration.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_invocation.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_measure.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_barrier.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_catalog.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_current.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_history.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_journal.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_native.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_predicates.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_planning_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_platform_rejection.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_session_native.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_store.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_verify.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_workflow_binding.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_learning_workflow_companions.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_legacy_policy_batch.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_memory.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_orchestrator.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_orchestrator_allowed_paths.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_orchestrator_gate_sequencing.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_orchestrator_review_basis.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_orchestrator_snapshot_provenance.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_owner_final_admission.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_owner_final_input.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_owner_final_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_owner_final_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_pilot_negative_182.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_planning_call_fact.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_planning_config8_inheritance.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_pr_checks.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_preaggregate_source_context.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_probe.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_readiness.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_role.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_supervisor.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_wait.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_quota_wakeup.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_rate_limit.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_resumable_gate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_role_app_server.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_verified_lessons.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_verify.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_wait_record_pure.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_workflow_call_fact.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_agent_workflow_pilot.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_check_secrets_baseline.py",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "tests/test_cli.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_characterization.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_introspection.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_json.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_key.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_prepare.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_cli_restore.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_codex_adapter.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_codex_adapter_prompt_stdin.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_codex_adapter_prune.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tests/test_crypto.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_detect_cli.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "Explicit retain by SECTION-ALLOCATION-DRAFT.md: product configs/API/CLI/docs/examples/fixtures remain PGW; no engine copy"
+    },
+    {
+      "path": "tests/test_detector.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_detector_crossplatform.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_development_dependencies.py",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "tests/test_discard_race_boundary.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_documentation_contracts.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_epic_runner_mandate_contract.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/test_examples_blocked_secret.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_examples_cli_round_trip.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_examples_full_round_trip.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_examples_quickstart.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_examples_untrusted_response.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_facade_prepare.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_facade_restore.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_input_parser.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_key_retention_policy.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_key_rotation.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_keystore.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_learning_progress.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/test_manifest.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_manifest_atomic_publish.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_models.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_package_license.py",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "tests/test_package_version.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_pipeline_prepare.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_pipeline_publication_order.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_pipeline_token_count.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_prepare_no_clobber_race.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_prepare_overwrite_collision_matrix.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_public_contract.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_repository_map.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "generic development map from377; explicit engine tooling, preserves optional enrollment restriction"
+    },
+    {
+      "path": "tests/test_restore_context_trust.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_restore_roundtrip.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_restore_temp_cleanup.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_restore_write_mkdir.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_route_integrity.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_routing.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_schema_generation_type.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/test_schema_validate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "explicit engine contract/adapter/schema/learning characterization not captured by agent filename prefix"
+    },
+    {
+      "path": "tests/test_tokenizer.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tests/test_validator.py",
+      "mode": "100644",
+      "disposition": "retain_pgw",
+      "reason": "product implementation or direct product consumer"
+    },
+    {
+      "path": "tools/__init__.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "package initialization needed by retained first-pass module layout"
+    },
+    {
+      "path": "tools/agent_consumer_demo.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_continuation.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_continuation_backend.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_continuation_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_continuation_store.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_coordinator_branch.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_coordinator_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_coordinator_discovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_coordinator_handover.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_coordinator_resume.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_bootstrap.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_entry.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_final.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_final_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_final_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_final_transport.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_handover.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_install.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_loop.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_planning.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: approved target policy file requirements belong in target profile; generic planner guards remain engine."
+    },
+    {
+      "path": "tools/agent_epic_planning_roles.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_policy_binding.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_queue.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_recovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_runtime_cli.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_session.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_session_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_snapshot.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_transport.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: project workflow/package assumptions become owner-approved target profile; preserve fresh source revalidation."
+    },
+    {
+      "path": "tools/agent_epic_wait.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_wait_frame.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_wait_scope.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_epic_workflow.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_binding_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_collector.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_domain.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_measurements.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_no_planning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_origin_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_packet.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_planning_coverage.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_settings.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_task_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_workflow_rows.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_learning_workflow_tasks.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_ci.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_ci_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_driver.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_owner.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_report.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_review.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_role.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_runtime.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preparation_storage.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_final_preseed_guard.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate.py",
+      "mode": "100644",
+      "disposition": "boundary_split_required_before_transfer",
+      "reason": "SPLIT: generic snapshot/evidence engine vs PGW package default/check profile. New parameterization contract needs approved ADR, deny-by-default."
+    },
+    {
+      "path": "tools/agent_gate_identity.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate_journal.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate_pytest.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate_recovery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate_runner.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_gate_state.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_github_read.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_binding_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_companions.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_delivery.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_evidence.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_gate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_gate_problem.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_hints.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_invocation.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_measure.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_observe.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_barrier.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_catalog.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_companions.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_current.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_history.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_journal.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_predicates.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_promotion.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_selection.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_planning_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_store.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_verify.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_workflow_binding.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_learning_workflow_companions.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_memory.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_orchestrate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_owner_final_admission.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_owner_final_approve.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_owner_final_input.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_owner_final_records.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_owner_final_sources.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_pr_checks.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_probe.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_process.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_role.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_source.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_supervisor.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_wait.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_quota_wakeup.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_rate_limit.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_resumable_gate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_role_app_server.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_verified_lessons.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/agent_verify.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/check_secrets_baseline.py",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    },
+    {
+      "path": "tools/codex_adapter.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "engine naming/schema inventory; dependency and runtime seam review required"
+    },
+    {
+      "path": "tools/repository_map.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_move",
+      "reason": "generic development map from377; explicit engine tooling, preserves optional enrollment restriction"
+    },
+    {
+      "path": "tools/schema_validate.py",
+      "mode": "100644",
+      "disposition": "candidate_engine_dependency",
+      "reason": "static transitive dependency of tools/agent_orchestrate.py"
+    },
+    {
+      "path": "tools/verify_package_build.py",
+      "mode": "100644",
+      "disposition": "split_or_recreate_project_specific",
+      "reason": "retain product policy/build checks in PGW; recreate engine-specific equivalents and reviewed shared passages, no blanket copy"
+    }
+  ],
+  "source_commit_url": "https://github.com/MRDK80/privacy-gateway/commit/e0b13d1128c91350092a5f146343edfc02c324a8",
+  "source_tree_url": "https://github.com/MRDK80/privacy-gateway/tree/d4cd93b3cbb27723c7088ed21b60ca76f952316f",
+  "roadmap_merge_url": "https://github.com/MRDK80/privacy-gateway/commit/27c8d2b458712c44b54d5fedd2ca78c398b6246e"
+}

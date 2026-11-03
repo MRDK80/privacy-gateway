@@ -1485,3 +1485,10 @@ typed registry: тесты доказывают включение в глоба
 **Статус:** действует.
 
 ---
+
+## ADR-392: выделение PrivacyAgents (design proposal)
+
+[Граница и provenance](ADR-392-privacyagents-extraction-boundary.md).
+Концептуальный design подтверждён владельцем 03 ноября 2026; delivery gates
+ещё не завершены. Документ не изменяет runtime/schema и не разрешает перенос кода,
+установку, activation, production pilot или main merge.
