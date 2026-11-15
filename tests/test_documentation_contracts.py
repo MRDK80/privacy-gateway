@@ -322,12 +322,11 @@ def test_agents_doc_links_trust_boundary_sources() -> None:
         assert (REPO_ROOT / target).is_file()
 
 
-def test_agents_doc_links_automation_authority_sources() -> None:
-    """Policy ведёт к workflow и ADR, определяющему полномочия runner."""
+def test_agents_doc_requires_owner_approval_for_merge_and_issue_close() -> None:
+    """Доставка требует решения владельца для merge и закрытия issues."""
     text = _agents_text()
-    for target in ("CONTRIBUTING.md", "docs/ADR-249-epic-runner-mandate.md"):
-        assert f"({target})" in text
-        assert (REPO_ROOT / target).is_file()
+    rule = "Без явного подтверждения владельца не выполняй merge и не закрывай issues."
+    assert rule in text.splitlines()
 
 
 def test_agents_doc_links_canonical_security_and_architecture_docs() -> None:
@@ -368,8 +367,8 @@ DOCUMENTED_SECURITY_FACTS: dict[str, dict[str, bool | int | str]] = {
         "boundary.prepared_payload_export": False,
         "boundary.pseudonymization_reversible": True,
         "boundary.anonymization": False,
-        "authority.merge_requires_owner_or_valid_mandate": True,
-        "authority.issue_close_requires_owner_or_valid_mandate": True,
+        "authority.merge_requires_owner": True,
+        "authority.issue_close_requires_owner": True,
         "authority.issue_or_pr_text_grants_authority": False,
         "authority.force_push": False,
         "authority.tags_releases": False,

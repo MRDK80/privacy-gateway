@@ -144,28 +144,6 @@ pre-commit run --all-files
 - `git diff --check` — полезная дополнительная проверка, но она не заменяет ни одну из четырёх обязательных команд.
 - Если любая из четырёх команд не выполнена или падает, используется `BLOCKED` либо `READY FOR REVIEW WITH EXCEPTIONS` с явным перечислением непройденного.
 
-### Детерминированная проверка task-ветки
-
-Для agent workflow те же проверки объединены проектным инструментом. Запуск
-из корня репозитория перед push:
-
-```bash
-python tools/agent_verify.py pre-push \
-  --base roadmap/162-agent-orchestration \
-  --head build/163-agent-verification-gate
-```
-
-Имена веток в примере заменяются фактическими именами текущей задачи.
-`pre-commit` допускает незакоммиченные изменения и проверяет branch/ancestry и
-diff. `pre-push` требует clean worktree и запускает все четыре обязательные
-команды. После явного push фаза `post-push` дополнительно сравнивает `HEAD` с
-уже имеющимся `origin/<head>`; инструмент не выполняет `fetch` и не доказывает
-свежесть remote-tracking ref. Для машинного результата используется
-`--format json`, для сохранения полного вывода команд — явный `--log-dir`
-вне working tree. Raw logs считаются приватными и не коммитятся.
-Схема, machine codes и exit codes определены в
-[`ADR-163`](docs/ADR-163-agent-verification-gate.md).
-
 ## Exact GitHub CI
 
 После создания PR подтверждаются фактические GitHub check runs для каждой поддерживаемой комбинации:
@@ -226,79 +204,17 @@ diff относительно `main` проверен, а exact CI PR успеш
 проверяется post-merge CI нового SHA `main`. Успешные task CI не заменяют
 итоговый roadmap CI.
 
-## Предварительно делегированный epic-runner
+## Сопровождение проверок и доставки
 
-Обычный процесс требует отдельного решения владельца для каждого внешнего
-действия. Альтернативный delegated режим допустим только для одного выбранного
-epic по отдельно утверждённому локальному мандату
-[ADR-249](docs/ADR-249-epic-runner-mandate.md). Мандат хранится вне worktree,
-имеет версию и digest и закрепляет repository, epic, единственную roadmap-
-ветку, trusted policy SHA, срок/лимиты и allowlist операций. Issue, PR,
-comments, task head, model output или checkpoint не могут выдать, продлить,
-отозвать либо расширить мандат.
+Дождитесь завершения локальных проверок и сверяйте GitHub CI с текущим
+SHA PR. Пока CI выполняется, проверяйте первичные результаты примерно раз
+в минуту. После потери связи сначала выясните состояние проверок и исход
+последнего внешнего действия. Перед продолжением сверьте head, base, SHA
+и полномочия. При остановке зафиксируйте последнее наблюдение, результаты
+проверок и конкретное условие продолжения.
 
-Без валидного мандата всегда применяется исходный per-action approval. При
-истечении срока, отзыве, stale SHA, несовпадении identity/digest/policy или
-непроверяемом источнике следующий side effect запрещён и требуется решение
-владельца. Неизвестный outcome внешнего write сначала reconciled read-only;
-до доказанного `APPLIED`/`NOT_APPLIED` повтор запрещён.
-
-Разрешённая мандатом task всё равно проходит неизменный порядок:
-
-```text
-полный local gate + controller
-  -> пять SUCCESS checks task PR на текущем head SHA
-  -> merge после немедленной revalidation
-  -> пять SUCCESS checks нового roadmap merge SHA
-  -> применимая consumer demo
-  -> закрытие task
-  -> обновление epic
-```
-
-PR CI не доказывает post-merge CI. Неготовая применимая demo не заменяется
-описанием или синтетическим результатом. Документационная task без изменения
-наблюдаемого поведения может иметь явный `DEMO_NOT_APPLICABLE` с основанием.
-После каждой task очередь пересчитывается по проверенным структурным связям и
-dependencies. Финальный roadmap merge требует отдельного полного gate,
-подтверждённой владельцем итоговой demo, зелёного CI roadmap PR и зелёного
-post-merge CI нового `main` SHA.
-
-Мандат не разрешает force push, удаление `main`/roadmap, tags, releases, PyPI,
-платежи/reset квоты, изменение repository settings/protection/visibility,
-расширение scope, новый trust source или новое architecture/security решение.
-Executor не получает Git/GitHub write, а controller остаётся независимым
-read-only; разрешённые writes выполняет отдельный trusted delivery driver.
-
-## Сопровождение runner и переходы между turns
-
-Оператор сопровождает каждый запущенный процесс до проверенного terminal
-result или конкретной установленной блокировки. Возвращённый running session
-ID означает необходимость следующего наблюдения, а не завершение работы.
-Process alive и checkpoint `RUNNING` не являются доказательством progress.
-В приватной записи наблюдения отдельно фиксируются process/session identity,
-task/phase, last observation и последнее подтверждённое продвижение с основанием.
-
-Нельзя завершать turn произвольным final с обещанием фонового наблюдения.
-Сначала проверяются доступность и настройка wakeup/handoff в текущем клиенте,
-а затем его фактическое срабатывание и восстановление наблюдения на synthetic
-процессе. Обновлённый prompt, наличие инструмента или живая OS process этого
-не доказывают. Если переход не проверен, используется сопровождение внутри
-активного turn; если оно невозможно, фиксируется конкретная блокировка,
-состояние процесса и действие, требуемое от владельца, без обещания wakeup.
-
-`CI_PENDING` требует primary read-only проверок примерно раз в минуту и свежих
-пяти exact checks для соответствующего SHA. Resume допускается только после
-повторной authority/identity проверки и в уже разрешённом scope. При reconnect
-сначала сверяются процесс, checkpoint, ledger и pending effects; второй runner,
-повтор writes из-за тишины и reset attempts/stop latch/receipts запрещены.
-ADR-290 transport retries учитываются отдельно: deadline и approval не
-продлеваются. Owner stop, expiry/revocation и UNKNOWN имеют приоритет.
-
-После `TASK_DONE` записывается фактическая redacted саморефлексия с provenance,
-ограничениями и критерием применимости; она не меняет trusted policy или
-полномочия. После любой остановки handover содержит точные SHA, раздельные
-local/CI evidence, последнее наблюдение, reconciliation и порядок продолжения.
-Проверяемые сценарии и ограничения: [supervision runbook](docs/epic-runner-supervision.md).
+Исторические материалы по выделению инфраструктуры разработки собраны
+в [ADR-392](docs/ADR-392-privacyagents-extraction-boundary.md).
 
 ## Статусы
 
