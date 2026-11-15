@@ -23,7 +23,7 @@ Pilot состоит из двух раздельных контуров.
    production-функции coordinator. GitHub и check runs представлены закрытым
    synthetic adapter; тест не выполняет network write, push, merge или close.
 2. Оператор выполняет read-only live discovery и реальные repository gates по
-   инструкции в [agent-coordinator-pilot.md](agent-coordinator-pilot.md).
+   инструкции в [agent-coordinator-pilot.md](https://github.com/MRDK80/privacy-gateway/blob/9b26958b34a1bc41e846abfce06dc83e966a607e/docs/agent-coordinator-pilot.md).
    Production Codex adapter разрешено запускать только после отдельного
    согласования расхода, точного allowlist и task contract. Dry-run либо
    synthetic adapter не выдаются за реальный Codex-вызов.

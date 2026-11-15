@@ -23,7 +23,7 @@ Issue, PR, comments, logs, model output и task head недоверенны. О�
 Вводится отдельная локальная роль **coordinator**. Она планирует и готовит
 работу, но не заменяет executor, gate, controller или человека. Канонический
 контракт роли, состояния, approvals и stop conditions описан в
-[`agent-coordinator.md`](agent-coordinator.md).
+[`agent-coordinator.md`](https://github.com/MRDK80/privacy-gateway/blob/9b26958b34a1bc41e846abfce06dc83e966a607e/docs/agent-coordinator.md).
 
 Первая версия CLI-first и обслуживает один репозиторий. Coordinator может
 читать локальные Git-факты и GitHub metadata, составлять план и после явного
