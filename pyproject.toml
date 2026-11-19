@@ -23,6 +23,7 @@ classifiers = [
   "Topic :: Security",
   "Topic :: Text Processing",
 ]
+# Base CLI/library runtime requirements; see docs/DEPENDENCIES.md.
 dependencies = [
   "cryptography>=42",
   "keyring>=25",
@@ -30,6 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Development tooling only. Product extras require a separate capability contract.
 dev = [
   "pytest>=8",
   "pytest-cov>=5",
