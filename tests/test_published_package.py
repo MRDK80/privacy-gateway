@@ -265,7 +265,8 @@ def test_global_pip_config_is_disabled(tmp_path: Path) -> None:
     )
     script = """import sys
 from pip._internal import configuration as c
-c.get_configuration_files=lambda:{c.kinds.GLOBAL:[sys.argv[1]],c.kinds.USER:[sys.argv[1]],c.kinds.SITE:[sys.argv[1]]}
+config_kinds=tuple(c.get_configuration_files())
+c.get_configuration_files=lambda:{kind:[sys.argv[1]] for kind in config_kinds}
 config=c.Configuration(isolated=True)
 config.load()
 assert not list(config.items()), 'global or extra-index configuration leaked'
