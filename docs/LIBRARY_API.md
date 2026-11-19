@@ -1,14 +1,15 @@
-# Библиотечный API Privacy Gateway
+# Privacy Gateway library API
 
-Документ описывает публичный контракт для интеграции Privacy Gateway во
-внешние приложения без вызова CLI и без обращения к внутренним модулям.
+This is the public integration contract, independent of the CLI. Use public
+imports rather than internal modules. Executable quickstart, round-trip,
+secret-blocking, untrusted-response and CLI/rotation scenarios are in the
+[examples index](../examples/README.md).
 
-Здесь зафиксирован контракт, а не сценарии запуска. Исполняемые примеры —
-quickstart, полный round-trip, блокировка секрета, обработка недоверенного
-ответа, ротация ключа и сквозной CLI-сценарий — собраны в
-[индексе примеров](../examples/README.md).
+Per the [language policy](LANGUAGE_POLICY.md), the canonical API reference and
+public docstrings are English-only; no Russian API mirror is required. Main
+Russian user journeys remain available through the bilingual examples guides.
 
-## Публичный путь импорта
+## Public imports
 
 ```python
 from privacy_gateway import (
@@ -21,11 +22,17 @@ from privacy_gateway import (
 )
 ```
 
-Пакет содержит маркер `py.typed`: аннотации доступны потребителю при
-проверке типов. Всё, что не перечислено в `__all__` пакета, считается
-внутренней реализацией и может измениться без предупреждения.
+The package includes `py.typed`. Names outside top-level `__all__` are internal
+and may change without notice. All supported exports are the six types above,
+`ConfigurationError`, `DetectionError`, `IntegrityError`, `KeyStoreError`,
+`RestoreError`, `StrictTokenError` and `__version__`. `__version__` is the package
+version string, consistent with installed distribution metadata; importing it
+is not an installation-readiness check.
 
-## Жизненный цикл
+## Lifecycle
+
+The following sketch assumes an available allowed keyring with an existing key.
+`text`, `correlation_id` and `external_processor` come from the consumer:
 
 ```python
 gateway = PrivacyGateway(GatewayConfig())
@@ -39,106 +46,101 @@ restored = gateway.restore(response_text, context=prepared.context)
 gateway.discard(prepared.context)
 ```
 
-`external_processor` — любая внешняя обработка текста. Privacy Gateway не
-выполняет сетевых вызовов и не знает, кто обрабатывает защищённый текст.
+The library does not invoke an external provider. Only the intended protected
+`prepared.text` crosses that boundary, never the payload/context, manifest, route,
+key material or restored text. Pseudonymization is reversible, not anonymity;
+[detector limitations](detection.md) still apply. Arrange explicit `discard` in
+application error handling (for example `finally`); the sketch does not guarantee
+cleanup after exceptions. There is no `PrivacyGateway` context-manager API.
 
-## Модели
+## Immutable models
 
-| Модель | Поля | Назначение |
-|--------|------|------------|
-| `GatewayConfig` | `routing_config_path`, `entities_config_path`, `workspace_dir`, `strict`, `keep_artifacts` | Конфигурация экземпляра; неизменяема |
-| `PreparedPayload` | `text`, `context`, `correlation_id`, `token_count` | Защищённый текст и контекст восстановления |
-| `RestoredPayload` | `text`, `correlation_id`, `tokens_restored`, `tokens_missing` | Восстановленный текст и счётчики |
-| `RestoreContext` | публичных полей с данными нет | Непрозрачная ссылка на защищённые артефакты |
+| Model | Fields | Purpose |
+| --- | --- | --- |
+| `GatewayConfig` | routing_config_path, entities_config_path, workspace_dir, strict, keep_artifacts | Instance configuration |
+| `PreparedPayload` | text, context, correlation_id, token_count | Protected text and local restoration context |
+| `RestoredPayload` | text, correlation_id, tokens_restored, tokens_missing | Sensitive restored text and counts |
+| `RestoreContext` | No public data fields | Opaque reference to protected artifacts |
 
-Все модели неизменяемы. Их `repr` не раскрывает текст, значения, имена
-токенов и содержимое защищённых артефактов.
+Their repr does not reveal text, source values, token names or protected-artifact
+contents. Correlation identifiers are consumer input: do not put sensitive values
+in them. No public candidate list, duplicate counter or warning list is added by
+this reference.
 
-## Контекст восстановления
+## Restoration context
 
-- **Непрозрачность.** Контекст не содержит открытый текст, ключи, шифртекст,
-  содержимое manifest и внутренние структуры детектора и токенизатора.
-- **Сериализация.** `context.to_token()` возвращает строку, из которой
-  контекст восстанавливается через `RestoreContext.from_token(token)`. Токен
-  содержит только служебные ссылки, версию формата и код аутентичности.
-  Текущая версия формата — `2`; токены версии `1`, выданные `0.4.0`, не
-  принимаются и приводят к `RestoreError` (ADR-34).
-- **Перезапуск процесса.** Контекст остаётся действительным, пока сохранены
-  защищённые артефакты и ключ доступен в хранилище ключей. Освобождение
-  ресурсов доступности ключа не требует.
-- **Повторное использование.** `restore` идемпотентен и не изменяет
-  артефакты; один контекст можно использовать несколько раз.
-- **Удаление.** Артефакты удаляет приложение-потребитель вызовом
-  `gateway.discard(context)`. Автоматического удаления нет: ответ внешнего
-  обработчика может прийти отложенно. При `keep_artifacts=True` удаление
-  полностью на стороне потребителя.
-- **Подтверждение владения.** Валидный owned context удаляет свой workspace.
-  Изменённый, чужой либо вышедший за пределы доверенной базы контекст приводит
-  к `RestoreError`, не давая права на рекурсивное удаление. Повторный вызов на
-  уже удалённом каталоге идемпотентен и ошибки не поднимает (ADR-34).
-- **Что именно удаляется.** Корневой workspace закрепляется descriptor/handle,
-  рекурсивный обход начинается от закреплённого объекта, а имена детей
-  разрешаются относительно закреплённого родителя. Если такое закрепление
-  подтвердить нельзя, вызов завершается fail closed с `RestoreError`; в
-  рабочей базе может остаться служебный каталог `.pgw-quarantine-*`.
-- **Граница гарантии.** API защищает от поддельного сериализованного контекста
-  и подмены namespace родительского каталога в принятой модели угроз. Он не
-  обещает защиту от процесса с той же OS identity, который уже имеет прямой
-  доступ к содержимому workspace или `.pgw-owner`, либо может удалить целевой
-  объект непосредственно средствами ОС. В сообщениях не раскрываются owner
-  secret, содержимое артефактов и локальные пути.
-- **Изоляция.** Каждая подготовка получает собственный рабочий подкаталог,
-  поэтому параллельные операции не мешают друг другу.
+- **Opaque:** no plaintext, keys, ciphertext, manifest contents or internal
+  detector/tokenizer structures are exposed as public data fields.
+- **Serialization:** `context.to_token()` and `RestoreContext.from_token(token)`
+  transfer references, format version and authentication code. Current format 2;
+  version 1 from 0.4.0 is rejected with `RestoreError` (ADR-34). Parsing alone does
+  not authenticate authority; checks precede the operation relying on the token.
+- **Restart:** context works while the protected artifacts remain and the required
+  key is available. Resource release does not require a key.
+- **Reuse:** repeated restore does not change artifacts and is idempotent for the
+  same inputs and relevant environment.
+- **Explicit removal:** the consumer calls `gateway.discard(context)`; delayed
+  external responses prevent automatic deletion. With `keep_artifacts=True`,
+  artifact removal remains entirely the consumer's responsibility.
+- **Ownership:** valid owned context can remove its workspace. Modified/foreign/
+  out-of-base context raises `RestoreError` without granting recursive-deletion
+  authority. A repeated call after removal is idempotent and does not raise.
+- **Pinned traversal:** a descriptor/handle pins the workspace; traversal begins
+  from that object and child names resolve relative to pinned parents. Unproven
+  pinning fails closed with `RestoreError`; `.pgw-quarantine-*` may remain.
+- **Threat assumptions:** this protects against forged serialized context and
+  parent-namespace replacement within the accepted model, not a same-OS-identity
+  actor with direct workspace/.pgw-owner access or OS authority to delete/rewrite
+  the target. Error messages exclude owner secrets, artifact contents and paths.
+- **Isolation:** each preparation has its own work subdirectory.
 
-## Рабочий каталог
+Protect tokens and artifacts like the source document; do not send context to the
+provider. See [security](SECURITY.md) and ADR-34 amendments for residual limits.
 
-При `workspace_dir=None` библиотека создаёт временный каталог с правами
-только для владельца и управляет им сама. При явном `workspace_dir`
-библиотека создаёт внутри него отдельный подкаталог на каждую подготовку.
-Каталог с артефактами следует защищать так же, как исходный документ.
+## Workspace and threads
 
-## Потокобезопасность
+With `workspace_dir=None`, the library creates/owns an owner-only temporary
+workspace. With an explicit base it creates a separate child for each preparation.
+Protect access to that base and its artifacts. Explicit discard manages lifecycle;
+there is no implicit automatic deletion after an external response.
 
-Экземпляр `PrivacyGateway` можно использовать из нескольких потоков:
-между вызовами он не хранит изменяемого состояния, конфигурация
-маршрутизации загружается на каждый вызов, ключ запрашивается на время
-операции, а рабочие подкаталоги не пересекаются. Объекты `GatewayConfig`,
-`PreparedPayload`, `RestoredPayload` и `RestoreContext` неизменяемы и
-безопасны для передачи между потоками.
+One PrivacyGateway instance may be used by multiple threads: it retains no mutable
+operation state between calls, reloads routing per call, requests keys for each
+operation and uses disjoint workspaces. Frozen models can be passed between
+threads. This is not a cross-process keyring-rotation transaction guarantee.
 
-## Строгий режим и fail-closed
+## Strict mode and fail closed
 
-- `prepare` не возвращает защищённый текст, если обнаружен секрет, сработало
-  блокирующее правило либо независимая проверка не подтвердила безопасность
-  результата. В этом случае поднимается `DetectionError`, а созданные
-  артефакты удаляются.
-- `restore` проверяет целостность защищённых артефактов **до** возврата
-  открытого текста. При нарушении целостности поднимается `IntegrityError`.
-- Строгий режим включён по умолчанию (`strict=True`). Неизвестный или
-  искажённый токен во внешнем ответе приводит к `StrictTokenError`, и
-  открытый текст не возвращается.
-- Мягкий режим включается только явным `GatewayConfig(strict=False)`.
-  Недопустимые кандидаты остаются в тексте без изменений.
-- Отсутствующий во внешнем ответе токен ошибкой не является и отражается
-  в счётчике `tokens_missing`.
+- `prepare` returns no protected payload when a secret, blocking rule or failed
+  independent validation rejects the result; it raises `DetectionError` and invokes
+  artifact cleanup under the documented cleanup limits.
+- `restore` verifies protected-artifact integrity before returning plaintext;
+  integrity failure raises `IntegrityError`.
+- Default `strict=True` rejects unknown/malformed response tokens with
+  `StrictTokenError`, returning no plaintext.
+- Only explicit `GatewayConfig(strict=False)` enables lenient restoration,
+  leaving unacceptable candidates unchanged.
+- A missing response token is not an error by itself; it increments `tokens_missing`.
 
-## Исключения
+## Public exceptions
 
-| Класс | Когда возникает |
-|-------|-----------------|
-| `PrivacyGatewayError` | Базовая категория: перехватывает любую ошибку библиотеки |
-| `ConfigurationError` | Некорректная конфигурация либо недоступный рабочий каталог |
-| `DetectionError` | Подготовка остановлена по правилу fail-closed; атрибут `status` содержит нейтральный признак решения |
-| `KeyStoreError` | Ключ отсутствует, хранилище недоступно либо backend небезопасен |
-| `IntegrityError` | Проверка целостности защищённых артефактов не пройдена |
-| `RestoreError` | Недействительный контекст либо невозможность восстановления |
-| `StrictTokenError` | Наследник `RestoreError`: внешний ответ содержит недопустимые токены |
+| Class | Meaning |
+| --- | --- |
+| `PrivacyGatewayError` | Base public library error category |
+| `ConfigurationError` | Invalid configuration or unavailable workspace |
+| `DetectionError` | Fail-closed preparation; neutral decision `status` attribute |
+| `KeyStoreError` | Missing key, unavailable store or disallowed backend |
+| `IntegrityError` | Protected-artifact integrity/authentication failure |
+| `RestoreError` | Invalid context or restoration cannot complete |
+| `StrictTokenError` | RestoreError subclass for unacceptable response tokens |
 
-Исходная причина сохраняется через `raise ... from exc`. Сообщения не
-содержат открытый текст, ключевой материал, шифртекст, имена токенов и
-содержимое manifest.
+Causes use `raise ... from exc`. Public messages exclude plaintext, key material,
+ciphertext, token names and manifest contents. This does not authorize exporting
+an arbitrary traceback, internal exception cause or application diagnostics.
 
-## Обработка ошибок в приложении-потребителе
+## Consumer error handling
+
+`text` and the `handle_*` functions below are application-provided placeholders:
 
 ```python
 from privacy_gateway import (
@@ -162,12 +164,13 @@ except PrivacyGatewayError:
     handle_unexpected()
 ```
 
-При восстановлении разделяются нарушение целостности (`IntegrityError`) и
-недопустимые токены во внешнем ответе (`StrictTokenError`): первое означает
-проблему с артефактами, второе — проблему с ответом обработчика.
+On restoration distinguish artifact problems (`IntegrityError`) from unacceptable
+provider tokens (`StrictTokenError`). The snippet illustrates preparation errors;
+if preparation succeeds, the consumer still owns the context and must release it.
 
-## Отношение к CLI
+## Relation to CLI
 
-Библиотечный API и CLI используют один и тот же внутренний конвейер, но
-контракты у них независимы. Коды завершения CLI к библиотеке отношения не
-имеют: библиотека сообщает об ошибках только исключениями.
+The library and CLI share internal pipelines but have independent contracts.
+CLI exit codes do not apply to library calls: library failures use exceptions.
+Changing documentation language does not change signatures, imports, exception
+hierarchy, strictness or context formats.

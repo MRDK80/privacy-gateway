@@ -1,20 +1,12 @@
-"""Публичные исключения Privacy Gateway — стабильный контракт интеграций.
+"""Stable public exceptions for Privacy Gateway integrations.
 
-Модуль задаёт единственную публичную иерархию ошибок библиотечного API.
-Внешнее приложение импортирует их из пакета верхнего уровня:
-
+Import from the top-level package, for example:
     from privacy_gateway import IntegrityError, PrivacyGatewayError
 
-Правила контракта:
-
-- Все публичные ошибки наследуют ``PrivacyGatewayError``: внешний код может
-  перехватить любую ошибку библиотеки одной категорией.
-- Внутренние исключения проекта частью публичного контракта не являются.
-  Библиотечный фасад транслирует их в классы этого модуля через
-  exception chaining: ``raise PublicError(...) from exc``.
-- Сообщения не содержат открытый текст, ключевой материал, шифртекст,
-  имена токенов и содержимое manifest.
-- Модуль не меняет поведение CLI и его коды завершения.
+All public errors derive from PrivacyGatewayError. Internal exceptions are not
+public contracts; the facade maps them using raise PublicError(...) from exc.
+Public messages exclude plaintext, keys, ciphertext, token names and manifest
+contents. This module does not change CLI behavior or process exit codes.
 """
 
 from __future__ import annotations
@@ -31,30 +23,26 @@ __all__ = [
 
 
 class PrivacyGatewayError(Exception):
-    """Базовая ошибка публичного API Privacy Gateway.
+    """Base public library error.
 
-    Внешнее приложение может обработать все ошибки библиотеки, перехватив
-    только этот класс.
+    Catch this class to handle the library's public error hierarchy.
     """
 
 
 class ConfigurationError(PrivacyGatewayError):
-    """Некорректная конфигурация библиотеки или конфигурационного файла.
+    """Invalid library/file configuration or unavailable workspace.
 
-    Поднимается до начала обработки текста: неизвестные ключи конфигурации,
-    недопустимые значения, недоступный рабочий каталог.
+    Raised before text processing for unknown configuration keys, invalid settings
+    or an inaccessible working directory.
     """
 
 
 class DetectionError(PrivacyGatewayError):
-    """Подготовка остановлена по принципу fail-closed.
+    """Preparation stopped fail closed, without returning protected text.
 
-    Означает, что защищённый текст не был сформирован: обнаружен секрет,
-    сработало безусловное блокирующее правило либо независимая проверка
-    не подтвердила безопасность результата.
-
-    Атрибут ``status`` содержит нейтральный признак решения
-    (например ``"BLOCKED"`` или ``"PENDING"``) и не раскрывает значений.
+    A secret, unconditional blocking rule or failed independent validation caused
+    rejection. The neutral status attribute (such as BLOCKED or PENDING) does not
+    contain detected source values.
     """
 
     def __init__(self, message: str, *, status: str | None = None) -> None:
@@ -63,36 +51,32 @@ class DetectionError(PrivacyGatewayError):
 
 
 class KeyStoreError(PrivacyGatewayError):
-    """Ошибка доступа к хранилищу ключей.
+    """The key is absent, the store unavailable or its backend disallowed.
 
-    Ключ отсутствует, хранилище недоступно либо его backend не признан
-    безопасным. Ключевой материал в сообщение не попадает.
+    Public error messages do not contain key material.
     """
 
 
 class IntegrityError(PrivacyGatewayError):
-    """Проверка целостности не пройдена.
+    """Protected-artifact integrity or authenticated decryption failed.
 
-    Поднимается до возврата открытого текста: рассинхронизация или
-    повреждение защищённых артефактов, несовпадение контрольной суммы,
-    невозможность аутентифицированной расшифровки.
+    Raised before returning plaintext for mismatched/corrupt artifacts, checksum
+    failure or inability to authenticate decryption.
     """
 
 
 class RestoreError(PrivacyGatewayError):
-    """Восстановление невозможно.
+    """Restoration is impossible.
 
-    Недействительный контекст восстановления, неподдерживаемая версия
-    формата либо иной отказ на этапе восстановления.
+    The context is invalid, its format unsupported, or another restoration
+    failure prevents completion.
     """
 
 
 class StrictTokenError(RestoreError):
-    """Строгий режим: во внешнем ответе обнаружены недопустимые токены.
+    """Strict restoration rejected unknown or malformed response tokens.
 
-    Структура защищённых данных корректна, но внешний обработчик вернул
-    токен, отсутствующий в контексте, либо искажённый токен. Класс намеренно
-    является наследником ``RestoreError``: внешний код может обработать
-    невозможность восстановления одной категорией и при необходимости
-    отделить именно этот случай.
+    The protected structure is valid but the response contains unacceptable tokens.
+    This derives from RestoreError so callers may catch the broad restoration
+    category or handle this case separately.
     """
