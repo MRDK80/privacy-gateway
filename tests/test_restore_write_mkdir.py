@@ -58,7 +58,7 @@ def test_mkdir_oserror_becomes_configuration_error(
         write_restored(PLAINTEXT, out_path)
 
     assert str(excinfo.value) == (
-        f"Не удалось записать результат в {out_path}: mkdir denied"
+        f'Could not write the result to {out_path}: mkdir denied'
     )
     assert isinstance(excinfo.value.__cause__, PermissionError)
     assert calls == []

@@ -3,7 +3,7 @@
 [English](06_cli_round_trip.md) | [Русский](06_cli_round_trip.ru.md)
 
 Translation of: 06_cli_round_trip.md  
-Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
+Reviewed against commit: 2c85e3f2938df0528313b215f2c03fad4db2ef0b
 Translation status: current
 
 Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего
@@ -34,13 +34,13 @@ pgw key status
 ```
 
 Если активного ключа нет, `pgw key status` завершается кодом `3` и печатает
-в stderr `Ключ не найден. Запустите 'pgw key create'.`. Создание ключа:
+в stderr `Key not found. Run 'pgw key create'.`. Создание ключа:
 
 ```bash
 pgw key create
 ```
 
-Успех даёт код `0` и stdout `Ключ успешно создан.`. Повторный
+Успех даёт код `0` и stdout `Key created successfully.`. Повторный
 `pgw key create` без `--force` завершается кодом `3`: существующий ключ
 не перезаписывается молча.
 
@@ -120,7 +120,7 @@ pgw restore ./pgw_demo/reply.txt \
 ```
 
 Код `0`. В stdout печатается `OK: <путь к restored.txt>`. Отчёт по токенам
-идёт в stderr и начинается со строки вида `Восстановлено: N/N токенов`.
+идёт в stderr и начинается со строки вида `Restored: N/N tokens`.
 Отчёт содержит только имена токенов и счётчики; исходные значения в него
 не попадают.
 
@@ -148,7 +148,7 @@ pgw restore ./pgw_demo/bad_reply.txt \
 ```
 
 Код `5`. В stderr печатается сообщение с префиксом
-`Строгий отказ по токенам:`. Файл `./pgw_demo/bad_restored.txt` не
+`Strict token rejection:`. Файл `./pgw_demo/bad_restored.txt` не
 создаётся: частичный результат не публикуется. Исходные значения в stderr
 не раскрываются.
 

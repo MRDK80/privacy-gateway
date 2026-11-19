@@ -146,9 +146,7 @@ def get_key() -> bytes:
     """
     raw = _get_raw(_ACTIVE_KEY)
     if raw is None:
-        raise KeyNotFoundError(
-            "Активный ключ не найден. Запустите 'pgw key create'."
-        )
+        raise KeyNotFoundError("Active key not found. Run 'pgw key create'.")
     keys = _decode_keys(raw)
     return keys[0]
 
@@ -165,9 +163,7 @@ def get_all_keys() -> list[bytes]:
     """
     raw = _get_raw(_ACTIVE_KEY)
     if raw is None:
-        raise KeyNotFoundError(
-            "Активный ключ не найден. Запустите 'pgw key create'."
-        )
+        raise KeyNotFoundError("Active key not found. Run 'pgw key create'.")
 
     keys = _decode_keys(raw)
 
@@ -195,9 +191,7 @@ def create_key(*, force: bool = False) -> bytes:
         KeyExistsError: если ключ уже есть и force=False.
     """
     if not force and key_exists():
-        raise KeyExistsError(
-            "Ключ уже существует. Используйте force=True для перезаписи."
-        )
+        raise KeyExistsError("Key already exists. Use force=True to overwrite it.")
     new_key = generate_key()
     _set_raw(_ACTIVE_KEY, _encode_keys([new_key]))
     _delete_raw(_RETIRED_KEY)
@@ -244,7 +238,7 @@ def rotate_key() -> bytes:
 
     if get_key() != new_key:
         raise KeystoreError(
-            "Ротация не подтверждена: активный ключ не соответствует новому."
+            "Rotation not verified: the active key does not match the new key."
         )
 
     _set_raw(_RETIRED_KEY, _encode_keys([current_active]))

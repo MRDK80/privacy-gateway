@@ -230,7 +230,7 @@ def test_prepare_unexpected_error_maps_to_code_1(
 
     captured = capsys.readouterr()
     assert code == 1
-    assert captured.err == "Непредвиденная ошибка: сбой конвейера\n"
+    assert captured.err == "Unexpected error: сбой конвейера\n"
     assert captured.out == ""
 
 
@@ -249,7 +249,7 @@ def test_prepare_keystore_error_maps_to_code_4(
 
     captured = capsys.readouterr()
     assert code == 4
-    assert captured.err == "Ошибка keystore: небезопасный backend\n"
+    assert captured.err == "Key-store error: небезопасный backend\n"
     assert captured.out == ""
     assert SYNTH_EMAIL not in captured.err
     assert not KEY_MATERIAL_RE.search(captured.err)
@@ -275,8 +275,9 @@ def test_prepare_existing_artifacts_blocked_without_overwrite(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "BLOCKED: Output file(s) already exist: prompt.txt, route.json, "
-        "manifest.json. Use --overwrite to allow replacement.\n"
+        "BLOCKED: Output file(s) already exist: prompt.txt, "
+        "route.json, manifest.json. Use --overwrite to allow "
+        "replacement.\n"
     )
 
 
@@ -358,12 +359,12 @@ def test_restore_report_lists_all_four_categories(
     captured = capsys.readouterr()
     assert code == 0
     assert captured.err == (
-        "ПРЕДУПРЕЖДЕНИЕ: Токен отсутствует в ответе LLM: EMAIL_2\n"
-        "Восстановлено: 1/3 токенов\n"
-        "  Не найдено в ответе: 1 (['EMAIL_2'])\n"
-        "  Неизвестных токенов: 1 (['HOST_9'])\n"
-        "  Искажённых кандидатов: 1 (['email_1'])\n"
-        "  Дублированных токенов: 1 (['EMAIL_1'])\n"
+        "WARNING: Токен отсутствует в ответе LLM: EMAIL_2\n"
+        "Restored: 1/3 tokens\n"
+        "  Missing from response: 1 (['EMAIL_2'])\n"
+        "  Unknown tokens: 1 (['HOST_9'])\n"
+        "  Malformed candidates: 1 (['email_1'])\n"
+        "  Duplicate tokens: 1 (['EMAIL_1'])\n"
     )
 
 
@@ -473,9 +474,9 @@ def test_restore_existing_out_without_overwrite_maps_to_code_3(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "Восстановлено: 0/0 токенов\n"
-        f"Ошибка: Файл уже существует: {out_path}. "
-        "Используйте флаг --overwrite для перезаписи.\n"
+        "Restored: 0/0 tokens\nError: File already exists: "
+        f"{out_path}"
+        ". Use --overwrite to replace it.\n"
     )
     assert captured.out == ""
     assert out_path.read_text(encoding="utf-8") == "исходное содержимое"
@@ -513,8 +514,7 @@ def test_restore_write_error_maps_to_code_3(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "Восстановлено: 0/0 токенов\n"
-        "Ошибка записи: нет доступа к каталогу\n"
+        "Restored: 0/0 tokens\nWrite error: нет доступа к каталогу\n"
     )
     assert captured.out == ""
     assert "секретный результат" not in captured.err
@@ -532,7 +532,7 @@ def test_restore_input_error_maps_to_code_3(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "Ошибка чтения ответа LLM: Cannot access file: 'missing.txt'.\n"
+        "Cannot read LLM response: Cannot access file: 'missing.txt'.\n"
     )
     assert captured.out == ""
 
@@ -552,7 +552,7 @@ def test_restore_configuration_error_maps_to_code_3(
 
     captured = capsys.readouterr()
     assert code == 3
-    assert captured.err == "Ошибка конфигурации: route.json повреждён\n"
+    assert captured.err == "Configuration error: route.json повреждён\n"
     assert captured.out == ""
 
 
@@ -571,7 +571,7 @@ def test_restore_restore_error_maps_to_code_3(
 
     captured = capsys.readouterr()
     assert code == 3
-    assert captured.err == "Ошибка восстановления: route.json не найден\n"
+    assert captured.err == "Restore error: route.json не найден\n"
     assert captured.out == ""
 
 
@@ -590,7 +590,7 @@ def test_restore_keystore_error_maps_to_code_4(
 
     captured = capsys.readouterr()
     assert code == 4
-    assert captured.err == "Ошибка keystore: ключ не найден\n"
+    assert captured.err == "Key-store error: ключ не найден\n"
     assert not KEY_MATERIAL_RE.search(captured.err)
 
 
@@ -609,7 +609,7 @@ def test_restore_strict_error_maps_to_code_5(
 
     captured = capsys.readouterr()
     assert code == 5
-    assert captured.err == "Строгий отказ по токенам: неизвестный токен\n"
+    assert captured.err == "Strict token rejection: неизвестный токен\n"
     assert captured.out == ""
 
 
@@ -628,16 +628,15 @@ def test_key_rotate_success(
     captured = capsys.readouterr()
     assert code == 0
     assert captured.out == (
-        "Ротация выполнена. Новый ключ активен. "
-        "Старый ключ сохранён для чтения манифестов, "
-        "созданных до ротации.\n"
+        "Rotation completed. The new key is active. The previous key "
+        "is retained to read manifests from the previous generation.\n"
     )
     assert captured.err == ""
     assert not KEY_MATERIAL_RE.search(captured.out)
 
 
 def test_key_rotate_key_not_found_maps_to_code_4(
-    capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """key rotate без ключа → код 4 и точная строка stderr."""
     with patch(
@@ -649,14 +648,14 @@ def test_key_rotate_key_not_found_maps_to_code_4(
     captured = capsys.readouterr()
     assert code == 4
     assert captured.err == (
-        "Ключ не найден. Запустите 'pgw key create' сначала. "
-        "Детали: активный ключ отсутствует\n"
+        "Key not found. Run 'pgw key create' first. Details: активный"
+        " ключ отсутствует\n"
     )
     assert captured.out == ""
 
 
 def test_key_rotate_keystore_error_maps_to_code_4(
-    capsys: pytest.CaptureFixture[str]
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """key rotate при ошибке keystore → код 4 и точная строка stderr."""
     with patch(
@@ -667,7 +666,7 @@ def test_key_rotate_keystore_error_maps_to_code_4(
 
     captured = capsys.readouterr()
     assert code == 4
-    assert captured.err == "Ошибка keystore: небезопасный backend\n"
+    assert captured.err == "Key-store error: небезопасный backend\n"
     assert captured.out == ""
     assert not KEY_MATERIAL_RE.search(captured.err)
 
@@ -688,6 +687,8 @@ def test_key_without_subcommand_exits_with_code_3(
     assert captured.out == ""
     assert captured.err.startswith("usage: pgw key")
     assert "error" in captured.err
+
+
 # ---------------------------------------------------------------------------
 # argparse: usage error -> код 3 (#26, ADR-29)
 # ---------------------------------------------------------------------------
@@ -836,9 +837,10 @@ def test_restore_mkdir_failure_maps_to_code_3(
     captured = capsys.readouterr()
     assert code == 3
     assert captured.err == (
-        "Восстановлено: 0/0 токенов\n"
-        f"Ошибка записи: Не удалось записать результат в {out_path}: "
-        "mkdir denied\n"
+        "Restored: 0/0 tokens\nWrite error: Could not write the r"
+        "esult to "
+        f"{out_path}"
+        ": mkdir denied\n"
     )
     assert captured.out == ""
     assert "секретный результат" not in captured.err

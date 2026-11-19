@@ -1502,3 +1502,8 @@ typed registry: тесты доказывают включение в глоба
 
 - [ADR-114-trusted-publishing.md](ADR-114-trusted-publishing.md) — ручной release workflow,
   отдельная проверка источника/environment/artifacts и минимальный OIDC boundary.
+
+## ADR-122: English-by-default CLI text
+
+[ADR-122](ADR-122-english-cli.md) records the owner-approved human-text
+compatibility change, unchanged machine/privacy contracts and required tests.

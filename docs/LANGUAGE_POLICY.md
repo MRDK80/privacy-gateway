@@ -150,3 +150,9 @@ registry of delivered pairs, reciprocal links, source-record format and ordered
 critical section identifiers. Register new mandatory pairs when their migration
 is actually delivered. Static structural success is not semantic equivalence,
 review approval or authentication of a source commit.
+
+## Approved CLI migration — #122
+
+[ADR-122](ADR-122-english-cli.md) records the separately owner-approved English
+default for CLI text. This fulfills the contract-decision prerequisite above;
+it does not translate detector data, caller values or out-of-scope Library errors.

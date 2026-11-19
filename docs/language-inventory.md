@@ -171,3 +171,10 @@ Four English security guides retain Russian companions, reporting links and
 structural source records. Private vulnerability reporting was explicitly
 approved and verified enabled before documenting its intake. Detection remains
 human-output only; no runtime behavior or security guarantee is expanded.
+
+## CLI migration — #122
+
+The owner-approved English CLI contract covers help, usage metavars, observable
+messages and catalog/JSON message prose. Machine structure and exit codes remain
+unchanged. Russian user guides quote the actual English CLI output. Synthetic
+fixtures and internal/library errors outside the approved scope remain unchanged.
