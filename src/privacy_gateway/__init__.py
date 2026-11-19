@@ -1,19 +1,10 @@
-"""Privacy Gateway — локальная защита текста перед передачей внешнему обработчику.
+"""Privacy Gateway: local text protection before external processing.
 
-Стабильный публичный путь импорта библиотечного API:
-
-    from privacy_gateway import (
-        GatewayConfig,
-        PreparedPayload,
-        PrivacyGateway,
-        PrivacyGatewayError,
-        RestoreContext,
-        RestoredPayload,
-    )
-
-Жизненный цикл: ``prepare`` → внешний обработчик → ``restore``. Всё, что не
-перечислено в ``__all__``, является внутренней реализацией и может меняться
-без предупреждения.
+Stable library imports are exposed from the top-level package, including
+GatewayConfig, PreparedPayload, PrivacyGateway, PrivacyGatewayError,
+RestoreContext and RestoredPayload. The lifecycle is prepare -> external
+processing of protected text only -> restore -> explicit discard.
+Names outside ``__all__`` are internal and may change without notice.
 """
 
 from __future__ import annotations

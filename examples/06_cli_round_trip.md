@@ -1,43 +1,37 @@
-# 06_cli_round_trip.md
+# 06_cli_round_trip — CLI end-to-end flow
 
-Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего
-ответа, восстановление значений и очистка артефактов. Пример показывает
-только фактически существующие команды и флаги `pgw`.
+[English](06_cli_round_trip.md) | [Русский](06_cli_round_trip.ru.md)
 
-Пример без исполняемого скрипта: сценарий состоит из вызовов CLI, а
-`pgw key create` изменяет системный keyring текущей учётной записи.
-Автоматическая проверка сценария выполняется в
-`tests/test_examples_cli_round_trip.py` на изолированном keystore.
+Prepare a request, simulate the external response locally, restore values and
+clean artifacts. Only implemented commands/flags are used. This is not a script:
+`pgw key create` changes the current account's system keyring. Automated tests in
+`tests/test_examples_cli_round_trip.py` use an isolated keystore instead.
 
-## Требования безопасности
+<!-- pgw-section: provider-boundary -->
+## Safety requirements
 
-- Внешний провайдер в примере не вызывается: ответ имитируется локальным
-  детерминированным преобразованием защищённого текста.
-- За границу доверия передаётся только `prompt.txt`.
-- `route.json` и `manifest.json` остаются локально и никуда не отправляются.
-- Ключевой материал не печатается ни одной командой.
-- Все рабочие файлы создаются в отдельном каталоге и удаляются на шаге
-  очистки.
+No external provider is called. A deterministic local transformation receives
+only protected `prompt.txt`. Routes/manifests stay local; key material is never
+printed. Work files live in a dedicated directory removed during cleanup.
 
-## Подготовка окружения
+## Environment
 
 ```bash
 pip install -e ".[dev]"
 pgw key status
 ```
 
-Если активного ключа нет, `pgw key status` завершается кодом `3` и печатает
-в stderr `Ключ не найден. Запустите 'pgw key create'.`. Создание ключа:
+Missing-key status returns 3 and stderr `Key not found. Run 'pgw key create'.`.
+CLI messages use the approved English-by-default contract (ADR-122).
 
 ```bash
 pgw key create
 ```
 
-Успех даёт код `0` и stdout `Ключ успешно создан.`. Повторный
-`pgw key create` без `--force` завершается кодом `3`: существующий ключ
-не перезаписывается молча.
+Success returns 0 and stdout `Key created successfully.`. Repeated create without
+`--force` returns 3 without silently overwriting the key.
 
-## Шаг 1. Синтетический запрос
+## Step 1: synthetic request
 
 Bash:
 
@@ -59,37 +53,31 @@ New-Item -ItemType Directory -Force -Path .\pgw_demo | Out-Null
 '@ | Set-Content -Encoding utf8 .\pgw_demo\request.txt
 ```
 
-Значения синтетические: домен `example.com`, адрес из документационного
-диапазона `192.0.2.0/24` и телефон из непубличного префикса.
+The unchanged Russian fixture prose is intentional: `example.com`, documentation
+address 192.0.2.10 and the test telephone value are synthetic repository fixtures,
+not real input or a claim that arbitrary telephone numbers are reserved.
 
-## Шаг 2. Подготовка запроса
+## Step 2: prepare
 
 ```bash
 pgw prepare ./pgw_demo/request.txt --out ./pgw_demo/work
 ```
 
-Код `0`, stdout одной строкой:
+Exit 0, one stdout line:
 
 ```text
 OK: <prompt.txt> / <route.json> / <manifest.json>
 ```
 
-В каталоге `./pgw_demo/work` появляются три файла: `prompt.txt`,
-`route.json` и `manifest.json`. Подкаталоги не создаются. Исходные
-значения отсутствуют в `prompt.txt` и в `route.json`; значения хранятся
-только в зашифрованных полях `manifest.json`.
+Three files appear directly in `./pgw_demo/work`, without subdirectories.
+Prompt and route exclude original values; manifest values are encrypted.
+Repeated prepare to the same directory without `--overwrite` returns 3 with
+`BLOCKED:` in stderr, preserving existing artifacts.
 
-Повторный `pgw prepare` в тот же каталог без `--overwrite` завершается
-кодом `3` и печатает в stderr строку с префиксом `BLOCKED:`; существующие
-артефакты не перезаписываются.
+## Step 3: simulate the response
 
-## Шаг 3. Имитация внешнего ответа
-
-За границу доверия уходит только `prompt.txt`. Вместо внешнего провайдера
-применяется детерминированное преобразование: к защищённому тексту
-добавляется строка статуса, токены не изменяются.
-
-Bash:
+Only prompt text crosses the provider boundary. Here a local status line is
+appended without changing tokens. Bash:
 
 ```bash
 cp ./pgw_demo/work/prompt.txt ./pgw_demo/reply.txt
@@ -103,7 +91,7 @@ Copy-Item .\pgw_demo\work\prompt.txt .\pgw_demo\reply.txt
 Add-Content -Encoding utf8 .\pgw_demo\reply.txt "`nСтатус: заявка принята."
 ```
 
-## Шаг 4. Восстановление
+## Step 4: restore
 
 ```bash
 pgw restore ./pgw_demo/reply.txt \
@@ -111,24 +99,16 @@ pgw restore ./pgw_demo/reply.txt \
   --out ./pgw_demo/restored.txt
 ```
 
-Код `0`. В stdout печатается `OK: <путь к restored.txt>`. Отчёт по токенам
-идёт в stderr и начинается со строки вида `Восстановлено: N/N токенов`.
-Отчёт содержит только имена токенов и счётчики; исходные значения в него
-не попадают.
+Exit 0; stdout is `OK: <path to restored.txt>`. Stderr reports token names/counts,
+starting with `Restored: N/N tokens`, without source values. The output file
+contains the original values and added status line, so it is sensitive. Without
+`--out`, plaintext goes to stdout with no added newline. Relative manifest paths
+resolve against the route directory; `--manifest` explicitly overrides the path.
 
-Файл `./pgw_demo/restored.txt` содержит исходные значения и добавленную
-строку статуса. Без `--out` восстановленный текст печатается в stdout без
-добавления перевода строки.
+<!-- pgw-section: strict-mode -->
+## Step 5: fail closed
 
-Путь к `manifest.json` по умолчанию разрешается относительно каталога
-`route.json`. Явный путь задаётся флагом `--manifest`.
-
-## Шаг 5. Fail-closed сценарий
-
-Строгий режим включён по умолчанию. Ответ с токеном, которого нет в
-манифесте, отклоняется целиком.
-
-Bash:
+Strict mode is the default. A token absent from the manifest rejects the response:
 
 ```bash
 cp ./pgw_demo/work/prompt.txt ./pgw_demo/bad_reply.txt
@@ -138,17 +118,14 @@ pgw restore ./pgw_demo/bad_reply.txt \
   --out ./pgw_demo/bad_restored.txt
 ```
 
-Код `5`. В stderr печатается сообщение с префиксом
-`Строгий отказ по токенам:`. Файл `./pgw_demo/bad_restored.txt` не
-создаётся: частичный результат не публикуется. Исходные значения в stderr
-не раскрываются.
+Exit 5; stderr begins `Strict token rejection:` without original values.
+No bad-restored output file is created: no partial result is published.
+`--lenient` instead warns and returns 0 for unknown/malformed tokens. Use it only
+consciously for investigation; strict mode rejects instead of partially restoring
+such a response.
 
-Флаг `--lenient` переводит неизвестные и искажённые токены в
-предупреждения и возвращает код `0`. Использовать его следует осознанно:
-строгий режим — единственный, который гарантирует отказ вместо
-частичного восстановления.
-
-## Шаг 6. Очистка
+<!-- pgw-section: cleanup -->
+## Step 6: cleanup
 
 Bash:
 
@@ -162,45 +139,31 @@ PowerShell:
 Remove-Item -Recurse -Force .\pgw_demo
 ```
 
-Удаляется весь рабочий каталог, включая `manifest.json`. Ключ в keyring
-командой очистки не затрагивается: CLI-команды удаления ключа не
-существует. Управление ключом ограничено `pgw key create`,
-`pgw key status` и `pgw key rotate`.
+The whole workspace, including manifest, is removed. The keyring key is unchanged;
+there is no CLI key-deletion command. Key management is create/status/rotate.
 
 ## Exit/result contract
 
-| Шаг | Команда | Код | Наблюдаемый результат |
-| --- | --- | --- | --- |
-| Проверка ключа | `pgw key status` | `0` | stdout: ключ присутствует |
-| Проверка ключа | `pgw key status` | `3` | stderr: ключ не найден |
-| Создание ключа | `pgw key create` | `0` | stdout: ключ создан |
-| Создание ключа | `pgw key create` повторно | `3` | stderr: ключ уже существует |
-| Подготовка | `pgw prepare` | `0` | stdout: `OK: ... / ... / ...`, три артефакта |
-| Подготовка | `pgw prepare` без `--overwrite` | `3` | stderr: префикс `BLOCKED:` |
-| Восстановление | `pgw restore --out` | `0` | stdout: `OK: <путь>`, отчёт в stderr |
-| Восстановление | неизвестный токен, строгий режим | `5` | stderr: строгий отказ, файла нет |
-| Любая команда | ключ недоступен | `4` | stderr: ошибка keystore |
+| Condition | Code | Observable result |
+| --- | --- | --- |
+| Existing key status |0 | Key-present stdout |
+| Missing key status |3 | Missing-key stderr |
+| Create key |0 | Created-key stdout |
+| Repeated create |3 | Existing-key stderr |
+| Prepare |0 | OK line, three artifacts |
+| Prepare collision without overwrite |3 | BLOCKED stderr |
+| Restore with output |0 | OK path stdout, report stderr |
+| Strict unknown token |5 | Rejection stderr, no output file |
+| Key unavailable |4 | Key-store stderr |
 
-Ошибка использования argparse даёт код `3`, а не `2`: код `2`
-зарезервирован для статуса `PENDING`.
+Argparse usage errors return 3, not 2:2 is reserved for `PENDING`.
+Prompt/route and reports exclude original values; restored text exactly contains
+them. Strict refusal creates no result. Cleanup removes the workspace. No network
+is used. The subprocess tests run the same flow on Linux/Windows, substituting
+keystore through isolated `PYTHONPATH` without real keyring or the user's home.
 
-## Проверяемые инварианты
-
-- `prompt.txt` и `route.json` не содержат исходных значений.
-- Отчёт восстановления не содержит исходных значений.
-- Round-trip точен: восстановленный текст содержит исходные значения
-  запроса.
-- При строгом отказе файл результата не создаётся.
-- Рабочий каталог полностью удаляется на шаге очистки.
-- Сценарий не обращается к сети.
-
-Автоматическая проверка: `tests/test_examples_cli_round_trip.py`. Тест
-запускает те же команды отдельными процессами на Linux и Windows,
-подменяя keystore в изолированном `PYTHONPATH`, поэтому системный keyring
-и домашний каталог пользователя не используются.
-
-
-## Автоматизация через JSON
+<!-- pgw-section: json-mode -->
+## JSON automation
 
 ```bash
 pgw --json prepare ./pgw_demo/request.txt --out ./pgw_demo/work
@@ -210,26 +173,24 @@ pgw --json restore ./pgw_demo/response.txt \
   --out ./pgw_demo/restored.txt
 ```
 
-`restore --json` требует `--out`: восстановленный чувствительный текст попадает
-только в указанный файл, а stdout содержит один служебный JSON object. Передавать
-`route.json`, `manifest.json` или восстановленный файл провайдеру нельзя.
-Контракт описан в
-[`docs/ADR-150-cli-json-contract.md`](../docs/ADR-150-cli-json-contract.md).
-## Машиночитаемый каталог для агента
+This optional snippet uses `response.txt`; first save your intended protected-text
+response there (the earlier flow used `reply.txt`). JSON restore requires `--out`:
+plaintext is written only to that file, stdout is one operational JSON object.
+Do not export route, manifest or restored output. See
+[ADR-150](../docs/ADR-150-cli-json-contract.md).
 
-До первого операционного вызова агент может получить фактический CLI-контракт
-без парсинга help:
+<!-- pgw-section: catalog -->
+## Machine-readable command catalog
+
+Before any operational call, obtain the actual contract without help parsing:
 
 ```bash
 pgw --describe
 ```
 
-Вывод — один JSON object: команды, параметры с признаком обязательности,
-машинные типы, допустимые значения, форматы вывода, side effects, process exit
-codes и machine error codes.
-
-Безопасный сценарий использования — выбрать команды, поддерживающие
-JSON-режим, до запуска операционного вызова:
+One JSON object describes commands, required parameters, machine types, choices,
+formats, side effects, exit codes and machine codes. For example, select commands
+supporting JSON before running them:
 
 ```bash
 pgw --describe > ./pgw_demo/catalog.json
@@ -246,13 +207,10 @@ for command in catalog["commands"]:
 PY
 ```
 
-`pgw --describe` не читает `request.txt`, `route.json` и `manifest.json`, не
-обращается к keyring и не создаёт файлов, поэтому его можно выполнять до
-`pgw key create`. Каталог не содержит ключевого материала, исходных значений,
-локальных абсолютных путей и значений окружения. Повторный вызов на той же
-версии кода даёт побайтово одинаковый результат.
-
-Каталог отражает фактическое состояние: `detect` работает только в
-человекочитаемом режиме, а `restore` в JSON-режиме требует `--out`. Контракт
-каталога описан в
-[`docs/ADR-151-cli-introspection.md`](../docs/ADR-151-cli-introspection.md).
+Run the file-producing catalog example before Step 6 removes `pgw_demo` (or create
+the directory again). The bare `pgw --describe` itself reads no request/route/
+manifest, accesses no keyring and creates no files; shell redirection creates the
+shown file. It may run before key creation. The catalog excludes key material,
+source values, absolute local paths and environment values; the same code version
+produces identical bytes. It reflects actual support: detect is human-readable
+only, JSON restore needs an output path. See [ADR-151](../docs/ADR-151-cli-introspection.md).

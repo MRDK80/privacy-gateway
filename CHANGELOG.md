@@ -7,6 +7,12 @@
 
 ### Changed
 
+- CLI (#122, ADR-122): help, usage display metavars, human stdout/stderr,
+  JSON `error.message` and catalog summaries now default to English. This breaks
+  scripts matching Russian prose; use supported machine codes/JSON structure or
+  `pgw --describe`. Commands, options, token grammar, exit codes and JSON schema
+  versions remain unchanged. No runtime language switch is introduced.
+
 <!-- issue-86-spdx-license-metadata -->
 - packaging: license metadata мигрирована на PEP 639: `project.license` теперь
   содержит SPDX-выражение `MIT`, файл объявлен через

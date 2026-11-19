@@ -1,39 +1,66 @@
 # Contributing
 
-Этот документ — канонический и обязательный Definition of Done для `privacy-gateway`. Он действует для людей и для автоматизированных исполнителей (coding agents). Краткая императивная версия для агентов — [`AGENTS.md`](AGENTS.md); операционный checklist — [`.github/pull_request_template.md`](.github/pull_request_template.md). При расхождении формулировок приоритет у этого файла.
+This document is the mandatory canonical Definition of Done for people and coding
+agents working on Privacy Gateway. [AGENTS.md](AGENTS.md) is the short agent policy;
+[the PR template](.github/pull_request_template.md) is the operational checklist.
+If wording differs, this document takes precedence. Existing repository/owner
+security and approval requirements remain binding.
 
-## Окружение
+## Documentation language
 
-### Состав зависимостей
+The [language policy](docs/LANGUAGE_POLICY.md) and
+[inventory](docs/language-inventory.md) define migration scope. Language changes
+do not change public contracts or security guarantees. English is preferred for
+issues and pull requests; Russian questions/reports are welcome. Accepted technical
+decisions and new canonical documentation use English. Do not post sensitive data
+in either language. Existing issues/ADRs need not be translated retroactively.
 
-Карта runtime, build и development dependencies и граница optional extras
-зафиксированы в [контракте базовой установки](docs/DEPENDENCIES.md).
+Run `python tools/check_doc_languages.py` for the delivered bilingual pairs.
+The local pre-commit hook also runs it; [scope and limitations](docs/DOC_LANGUAGE_CHECKS.md)
+explain why structural success does not replace translation/security review.
+
+## Environment
+
+### Dependency groups
+
+The [base-installation contract](docs/DEPENDENCIES.md) records runtime, build,
+development and optional-extra boundaries. Use a separate virtual environment.
+Install the project in editable mode with declared development requirements:
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+This installs pytest, Ruff, mypy and pre-commit. Do not invent extras/commands or
+require separate global gate-tool installs.
 
 ### Python policy
 
-Разделяются четыре разных понятия: совместимость установки, поддерживаемые minor-версии, exact CI matrix и фактическая версия локального gate.
+Distinguish installation compatibility, supported minor versions, exact CI and
+the actual interpreter used for local checks.
 
-- Нижняя граница совместимости установки объявлена в `pyproject.toml`: `project.requires-python = ">=3.11"`. Она разрешает установку на Python 3.11 и новее, но сама по себе не является обещанием поддержки каждой будущей minor-версии Python.
-- Поддерживаемые minor-версии перечисляются Python classifiers в `pyproject.toml` и обязаны совпадать с версиями в exact CI matrix. В текущей конфигурации поддерживаются Python 3.11 и 3.12.
-- Exact CI обязателен для каждой поддерживаемой minor-версии на Ubuntu latest и Windows latest. Текущая matrix: Python 3.11 и 3.12 на обеих ОС, плюс отдельный pre-commit workflow.
-- Python 3.13 и новее не считаются поддерживаемыми, пока соответствующий classifier не добавлен в `pyproject.toml` и exact CI не подтверждён на всех поддерживаемых ОС. Отсутствие верхней границы в `requires-python` не заменяет это решение о поддержке.
-- Локальный gate выполняется на любой версии, удовлетворяющей `requires-python`. Фактический вывод `python --version` обязательно приводится в PR и handover.
-- Локальная minor-версия, отличающаяся от поддерживаемой CI matrix, допустима для локальной разработки, если она удовлетворяет `requires-python`, но её успешный gate не является доказательством официальной поддержки этой minor-версии и не заменяет exact CI.
-- Если локальная версия не удовлетворяет `requires-python`, работа блокируется до смены окружения.
-- Если `requires-python`, Python classifiers, CI matrix и документация расходятся, это блокирующее расхождение support policy. Оно исправляется в отдельной issue или в явно согласованном corrective scope, после чего повторяются полный local gate и exact CI.
-- Используйте отдельное виртуальное окружение для репозитория.
-- Проект устанавливается в editable-режиме вместе с dev-зависимостями ровно так, как они объявлены в `pyproject.toml`. Не выдумывайте команды и extras, которых нет в конфигурации проекта.
-- Каноническая команда `python -m pip install -e ".[dev]"` устанавливает все
-  инструменты обязательного local quality gate: `pytest`, `ruff`, `mypy` и
-  `pre-commit`. Отдельная глобальная установка этих инструментов не требуется.
+- `project.requires-python = ">=3.11"` permits installation on 3.11 or later; it is
+  not support for every future minor version.
+- Supported minor versions are the Python classifiers and must match exact CI:
+  currently 3.11 and 3.12 on both Ubuntu latest and Windows latest, plus a separate
+  pre-commit workflow.
+- Python 3.13+ is unsupported until its classifier and all corresponding OS/minor
+  CI cells are added and pass. An absent upper installation bound is not support.
+- Local gate may use any interpreter satisfying requires-python. Report its
+  actual `python --version` in PR/handover separately from CI versions. A different
+  compatible local minor does not prove official support or replace exact CI.
+- An incompatible local interpreter blocks work until changed.
+- Conflicting requires-python/classifier/matrix/docs are a blocking support-policy
+  mismatch. Resolve in a separate issue or explicitly approved corrective scope,
+  then repeat the full local gate and exact CI.
 
-Фактическую нижнюю границу установки можно проверить непосредственно из конфигурации:
+Check the installation lower bound from actual configuration:
 
 ```bash
 python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))['project']['requires-python'])"
 ```
 
-Поддерживаемые minor-версии проверяются одновременно по Python classifiers в `pyproject.toml` и matrix в `.github/workflows/tests.yml`; эти списки должны совпадать.
+Compare classifiers with `.github/workflows/tests.yml`, not local assumptions.
 
 ### Linux (bash)
 
@@ -45,7 +72,9 @@ python -m pip install -e ".[dev]"
 pre-commit install
 ```
 
-Команда `python3.11` приведена как поддерживаемая версия и доступна не во всех дистрибутивах. Допустимо создать venv любым установленным интерпретатором, удовлетворяющим `>=3.11` (например `python3 -m venv .venv` или полный путь к интерпретатору); использованная версия фиксируется в отчёте. Такой локальный запуск не расширяет официальный список поддерживаемых minor-версий.
+If python3.11 is unavailable, use another installed interpreter satisfying >=3.11,
+such as python3 or its absolute path. Record the actual version; this does not
+expand officially supported minor versions.
 
 ### Windows (PowerShell)
 
@@ -57,86 +86,86 @@ python -m pip install -e ".[dev]"
 pre-commit install
 ```
 
-Если Python Launcher (`py`) отсутствует, используйте полный путь к интерпретатору, удовлетворяющему `requires-python`. Команды для `cmd.exe` здесь не приводятся, так как не проверялись.
+If the py launcher is unavailable, use an absolute compatible interpreter path.
+cmd.exe instructions are not supplied because they were not verified.
 
-### Источник версии пакета
+### Package version and build metadata
 
-Версия дистрибутива задаётся ровно в одном месте — литерал `__version__` в `src/privacy_gateway/__init__.py`. В `pyproject.toml` поле версии объявлено динамическим (`dynamic = ["version"]` и `[tool.setuptools.dynamic]` с `version = {attr = "privacy_gateway.__version__"}`) и при release не редактируется (ADR-81, #81).
+The only version source is the simple string literal `__version__` in
+`src/privacy_gateway/__init__.py`. pyproject uses dynamic version lookup through
+`privacy_gateway.__version__` (ADR-81/#81); do not edit another version field.
 
-- `__version__` обязан оставаться простым строковым литералом, совместимым с `ast.literal_eval`. Вычисления, вызовы функций, конкатенация и производные от импортов запрещены: setuptools читает атрибут статически из AST, а при неудаче попытается импортировать ещё не установленный пакет, и сборка упадёт.
-- После изменения литерала обязателен повторный `python -m pip install -e ".[dev]"`. Metadata editable-установки не обновляется автоматически, поэтому до переустановки `tests/test_cli.py::test_version_matches_distribution_metadata` сравнит новый литерал с устаревшей metadata и упадёт.
-- Тихий fallback на литерал при отсутствии distribution metadata не вводится: отсутствие метаданных не маскируется.
-- Инварианты формы version policy проверяются `tests/test_package_version.py`; SPDX/license policy — `tests/test_package_license.py`.
-- Фактические метаданные дистрибутива проверяет build gate exact CI (`tools/verify_package_build.py`, #85, #86): в каждой matrix cell из одноразовой копии `HEAD` собирается sdist, затем wheel из sdist, wheel устанавливается в чистое виртуальное окружение. Проверяются `METADATA` -> `Version`, `License-Expression: MIT`, `License-File: LICENSE`, отсутствие legacy `License` и license classifiers, расположение LICENSE в обоих архивах, отсутствие целевых deprecation warnings, `importlib.metadata.version("privacy-gateway")` и `privacy_gateway.__version__`. Ожидаемая версия берётся из AST литерала `__version__`, третий источник версии не вводится.
-- Нижняя граница backend `setuptools>=77.0.3` проверяется отдельной boundary-сборкой на Ubuntu latest / Python 3.11: точный пин `77.0.3` в отдельном окружении и `python -m build --no-isolation`, с проверкой поля `Generator` в метаданных wheel. Обычная изолированная сборка нижнюю границу не доказывает, потому что ставит последнюю подходящую версию backend (ADR-86, #86).
-- Артефакты сборки не создаются внутри рабочего дерева: `mypy` работает в режиме `strict` без `exclude`, а `detect-secrets` не исключает `build/` и `dist/`, поэтому загрязнение checkout ломало бы обязательные проверки.
+- Keep a plain literal readable by ast.literal_eval, not concatenation, calls or
+  computation. Otherwise setuptools may try importing an uninstalled package.
+- After changing that literal, repeat `python -m pip install -e ".[dev]"`:
+  editable distribution metadata does not update itself. The CLI version-metadata
+  regression must compare actual metadata, not silently fall back to the literal.
+- `tests/test_package_version.py` enforces version form;
+  `tests/test_package_license.py` enforces SPDX/license policy.
+- Every exact CI cell runs `tools/verify_package_build.py`: archive HEAD to a
+  disposable source copy, build sdist then wheel from sdist, install in clean
+  venvs. Check AST version, METADATA Version, License-Expression: MIT,
+  License-File: LICENSE, absence of legacy License/license classifiers, LICENSE
+  locations, relevant deprecation warnings, installed metadata and module version.
+- A separate Ubuntu/Python 3.11 floor build pins setuptools 77.0.3, uses
+  `python -m build --no-isolation`, and checks wheel Generator (ADR-86/#86).
+  Normal isolated builds resolving the latest backend do not prove that floor.
+- Keep build artifacts outside checkout: strict mypy has no exclude, and secret
+  scanning must not hide build/dist pollution.
 
-### Фиксация фактической версии
-
-После активации окружения зафиксируйте версию и приведите её в PR и handover:
+After activating the environment, record:
 
 ```bash
 python --version
 ```
 
-## Модель ветвления
+## Branching
 
-- `main` — защищённая релизная ветка.
-- `roadmap/<roadmap-issue>-<slug>` — временная интеграционная ветка roadmap,
-  созданная от актуального `main`.
-- `<type>/<issue>-<slug>` — ветка отдельной задачи, созданная от
-  соответствующей roadmap-ветки.
-
-Разрешены только направления PR:
+Use main as the protected release branch, a temporary integration branch
+`roadmap/<roadmap-issue>-<slug>` from current main, and a task branch from that
+roadmap. Only these PR directions are allowed:
 
 ```text
 <task-branch> -> roadmap/<roadmap-issue>-<slug>
 roadmap/<roadmap-issue>-<slug> -> main
 ```
 
-Task PR непосредственно в `main`, прямой push в `main` и прямой push в
-существующую roadmap-ветку запрещены. Фактические head, base и SHA проверяются
-через GitHub. Force push и удаление `main` или roadmap-ветки запрещены.
+Task→main PRs, direct pushes to main/existing roadmap, force push and deleting
+main/roadmap branches are forbidden. Verify actual head/base/SHA through GitHub.
+When main changes, update roadmap first, then task branches. Delete a task branch
+after merge. Preserve roadmap branches unless separately authorized; document
+retention at completion. Prepared private-repository rulesets without plan-level
+enforcement are not active protection; verify actual enforcement separately if
+the repository is made public. Do not change visibility/settings automatically.
 
-Если `main` изменился, сначала обновляется roadmap-ветка, затем task-ветки.
-Task-ветка удаляется после merge. Roadmap-ветка удаляется после успешного
-merge в `main` и post-merge CI.
+## Starting a task
 
-Rulesets, созданные для приватного репозитория на тарифе без enforcement,
-считаются подготовленными, но не действующими. После публикации репозитория
-их фактическое применение проверяется отдельно.
+1. Identify roadmap issue and branch; check it against current main.
+2. Record main/roadmap/future-base SHA and create the task branch from roadmap.
+3. Read task, roadmap, related ADRs, SECURITY and architecture documents first.
+4. State the causal scope and exclusions. If roadmap membership is unknown,
+   stop and obtain an owner decision.
 
-## Начало работы
+## Scope and security discipline
 
-1. Определите roadmap issue и соответствующую roadmap-ветку.
-2. Проверьте актуальность roadmap-ветки относительно `main`.
-3. Зафиксируйте SHA `main`, roadmap-ветки и будущую base PR.
-4. Создайте task-ветку от соответствующей roadmap-ветки.
-5. Прочитайте task issue, roadmap issue, связанные ADR, `SECURITY.md` и
-   архитектурные документы до изменения файлов.
-6. Подтвердите causal scope и явно перечислите то, что в него не входит.
-7. Если принадлежность задачи к roadmap неизвестна, остановитесь и запросите
-   решение владельца.
+One issue, one bounded causal PR. No unrelated refactors/reformatting/improvements.
+Record unrelated findings as separate issues; do not implement them without
+explicit scope approval. Roadmap/audit/security issues, tags, releases, visibility
+and settings are not changed automatically. Closing keywords such as Fixes #N
+require complete gates, verified CI and owner acceptance.
 
-## Scope discipline
+Document threat-model/contract decisions before production code. For confirmed
+defects add a reproducible regression/failure-path test before fixing. Never put
+real secrets, credentials, PII, internal hosts or user paths into source, tests,
+fixtures, issues, PRs or reports. Use synthetic fixtures only. Pre-commit secret
+scanning is mandatory; explain any `.secrets.baseline` change. Report security
+issues privately according to [SECURITY.md](SECURITY.md), never in public issue
+content. Do not disable security controls to make tests pass.
 
-- Одна причинная область — одна issue и один ограниченный PR.
-- Несвязанный рефакторинг, переформатирование и «попутные улучшения» в PR не входят.
-- Новые находки описываются отдельной issue; они не исправляются в текущем PR без явного согласования.
-- Roadmap-, audit- и security-issues, tags, releases, visibility и настройки репозитория не меняются автоматически.
-- Closing keyword (`Fixes #N`) применяется только после полного gate, подтверждённого CI и принятия результата владельцем.
+## Mandatory full local quality gate
 
-## Security-sensitive изменения
-
-- Threat model и контрактное решение фиксируются документально до production-кода.
-- Для подтверждённого дефекта сначала добавляется воспроизводящий regression/failure-path тест, затем исправление.
-- Реальные secrets, credentials, PII, внутренние хосты и пользовательские пути не попадают в код, тесты, fixtures, issues, PR и отчёты.
-- Все fixtures и воспроизведения — синтетические и изолированные.
-- `detect-secrets` из pre-commit обязателен; изменения `.secrets.baseline` объясняются в PR.
-
-## Обязательный локальный quality gate
-
-Для любого изменения code, tests, configuration **или** documentation перед статусом `READY FOR REVIEW` или `DONE` выполняются все четыре команды:
+Every code, test, config or documentation change requires all four commands before
+READY FOR REVIEW or DONE. Documentation-only changes are not exempt.
 
 ```bash
 pytest -q
@@ -145,134 +174,128 @@ mypy .
 pre-commit run --all-files
 ```
 
-- Documentation-only diff **не** освобождает от полного gate.
-- `git diff --check` — полезная дополнительная проверка, но она не заменяет ни одну из четырёх обязательных команд.
-- Если любая из четырёх команд не выполнена или падает, используется `BLOCKED` либо `READY FOR REVIEW WITH EXCEPTIONS` с явным перечислением непройденного.
+`git diff --check` is additional, not a substitute. If a command is missing/fails,
+use BLOCKED or READY FOR REVIEW WITH EXCEPTIONS and list the missing evidence.
 
 ## Exact GitHub CI
 
-После создания PR подтверждаются фактические GitHub check runs для каждой поддерживаемой комбинации:
+Require primary results for Ubuntu 3.11/3.12, Windows 3.11/3.12 and pre-commit on the
+current PR head. Each matrix cell also runs the distribution build/version check;
+Ubuntu 3.11 additionally checks the setuptools 77.0.3 floor. These are steps within
+the same five checks, not extra matrix cells. Diagnose the actual failed step.
+A new supported minor must be added simultaneously to metadata classifiers and
+both OS CI cells, then pass. Confirm run/job IDs and conclusions from GitHub;
+merge, executor prose or local results do not prove CI.
 
-- Ubuntu latest, Python 3.11;
-- Ubuntu latest, Python 3.12;
-- Windows latest, Python 3.11;
-- Windows latest, Python 3.12;
-- отдельный pre-commit workflow.
+## PR and handover reporting
 
-В каждой из четырёх matrix cells после `pytest`, `ruff check .`, `mypy .` и
-`detect-secrets` выполняется build gate — шаг «Сборка дистрибутива и сверка
-версии»; на Ubuntu latest / Python 3.11 дополнительно выполняется шаг «Нижняя
-граница setuptools 77.0.3». Число обязательных check runs при этом не меняется и
-остаётся равным пяти: packaging-проверки входят в существующие cells, а не
-образуют отдельную matrix.
+Report all of the following:
 
-Падение build gate окрашивает тот же check run, что и падение тестов, поэтому
-причину смотрят по имени упавшего шага в логе job.
+- Branch, base SHA, HEAD SHA and actual merge SHA if merged.
+- Actual local Python version, requires-python lower bound, supported classifiers
+  and exact matrix, each separately.
+- Exact developer installation command and all four local gate commands.
+- Actual pytest passed/failed/skipped/xfailed/xpassed counts, mypy file count,
+  Ruff result and every pre-commit hook including detect-secrets.
+- Separate GitHub checks with conclusions and run/job IDs where possible.
+- Changed files, causal scope, compatibility/breaking/release impact, residual
+  risks and exceptions.
+- GitHub Review status only from an actual GitHub Review; merge is not proof.
 
-При добавлении новой поддерживаемой Python minor-версии она одновременно добавляется в classifiers и exact CI matrix на обеих ОС. До успешного выполнения этих check runs поддержка новой версии не считается подтверждённой.
+A bare statement that a gate is green without primary results is insufficient.
 
-CI-результат подтверждается только первичными артефактами GitHub (check runs, run/job ID, conclusion). Он не выводится из факта merge, из текста исполнителя и из локальных результатов. Локальные результаты и CI указываются отдельными блоками.
+## Task and roadmap gates
 
-## Отчётность в PR и handover
+A task PR needs full local gate, correct task→roadmap direction and exact CI on
+its current head. After merge verify the actual new roadmap SHA and its separate
+post-merge CI; PR CI is not CI for the new merge SHA.
 
-Обязательно указывается:
+Before a roadmap→main PR, finish all tasks, synchronize roadmap with current main,
+repeat the full local gate, review the full diff against main and obtain successful
+exact PR CI (including main-source-guard). After merge separately verify CI of
+the new main SHA. Task CI never replaces final roadmap CI.
 
-- base SHA, имя ветки, HEAD SHA (и merge SHA, если merge выполнен);
-- фактический вывод `python --version` окружения, в котором выполнялся локальный gate;
-- значение `project.requires-python` как нижняя граница совместимости установки;
-- поддерживаемые minor-версии из classifiers и соответствующая exact CI matrix;
-- локальная версия Python отдельно от всех exact CI versions;
-- точная команда установки dev-зависимостей: `python -m pip install -e ".[dev]"`;
-- точные выполненные команды локального gate;
-- фактическое число passed/skipped тестов;
-- фактическое число файлов, проверенных `mypy`;
-- результат `ruff check .`;
-- результат `pre-commit run --all-files`, включая `detect-secrets`;
-- отдельный список GitHub check runs с conclusion и, по возможности, run/job ID;
-- список изменённых файлов и causal scope;
-- compatibility/breaking/release impact;
-- остаточные риски и exceptions;
-- статус review только по фактическому GitHub Review.
+## Mandatory pre-merge owner demonstration
 
-Формулировка «gate зелёный» без первичных результатов недопустима.
+Before every task→roadmap merge and final roadmap→main merge, deliver all three:
 
-## Два уровня gate
+1. A plain-language explanation understandable to a ten-year-old: what the user
+   could see before, what changed, why it matters and what did not improve.
+2. A before/after presentation script: ordered steps, exact commands/artifacts,
+   expected visible results and relevant limitations.
+3. A locally runnable comparison script plus its exact invocation, so the owner
+   can inspect the change directly. Pin the baseline and candidate (full SHA or
+   independently checked source snapshot), state prerequisites and record the
+   actual local result. A script's existence is not evidence that it passed.
 
-Для task PR необходимы полный локальный gate текущего SHA, правильное
-направление task-ветка → roadmap-ветка и успешный exact CI. После merge
-получаются новый SHA roadmap-ветки и его post-merge CI; CI до merge не является
-CI нового merge SHA.
+Provide file links and a copyable launch command before merge. If the candidate
+changes, rebind the demonstration evidence to the new candidate or prove its
+applicable source tree unchanged; do not present stale output as a fresh run.
+Documentation-only work demonstrates the actual documents, diff or render; it
+still requires all three deliverables. DEMO_NOT_APPLICABLE for a separate
+post-merge behavior demo does not waive this pre-merge packet.
 
-Перед roadmap PR в `main` все задачи roadmap должны быть завершены, roadmap
-синхронизирована с актуальным `main`, полный локальный gate повторён, итоговый
-diff относительно `main` проверен, а exact CI PR успешен. После merge отдельно
-проверяется post-merge CI нового SHA `main`. Успешные task CI не заменяют
-итоговый roadmap CI.
+Use synthetic inputs and only already authorized actions. State local effects,
+prerequisites and practical execution limits. Do not silently install dependencies,
+use real keyring/data, upload reports or expand runtime/network/publication rights.
+Keep demo output within the repository's existing sensitive-data boundary.
 
-## Заранее данное разрешение на дочерние задачи epic
+These are mandatory deliverables, not an extra approval cycle when valid standing
+approval already covers a task merge. Existing separate exact-SHA approval for
+final main merge and all other authority restrictions remain unchanged.
 
-Владелец может явно разрешить оператору доставку дочерних задач одного
-ограниченного epic без повторного подтверждения каждой операции. До первой
-внешней записи handoff фиксирует источник решения, repository, номер epic,
-roadmap-ветку, разрешённые действия task merge / issue close / epic update,
-условия и ограничения времени. Текст issue, PR или результат модели
-самостоятельно такого разрешения не создаёт.
+## Standing approval for bounded epic children
 
-Для каждой задачи обязателен порядок:
+An owner may explicitly pre-authorize task merge, child closure and updates of
+one bounded epic. Before the first external write, handoff must record the owner
+source, repository, epic, roadmap, actions, conditions and time restrictions.
+Issue/PR text and model output cannot create authority.
 
-1. Полный local gate текущего кандидата и независимый read-only controller.
-2. Пять SUCCESS exact PR CI на текущем head SHA task PR в roadmap-ветку.
-3. Свежая сверка authority, identity, head/base SHA, временного окна и STOP;
-   затем task merge в roadmap.
-4. Пять SUCCESS actual post-merge CI точного нового roadmap SHA.
-5. Применимая consumer demo; для documentation-only без изменения поведения
-   допустимо явное DEMO_NOT_APPLICABLE с основанием.
-6. Закрытие задачи после подтверждения результата.
-7. Обновление epic, выбор следующей задачи по фактическим dependencies и
-   сообщение владельцу, какая задача взята следующей.
+For every child, follow this order:
 
-Продолжайте этот цикл, пока не закончатся разрешённые дочерние задачи либо
-не возникнет конкретная блокировка. Состояния PR и post-merge CI проверяйте
-по первичным результатам; один уровень не заменяет другой. При неизвестном
-исходе внешнего write сначала сверяйте фактическое состояние read-only.
-Не повторяйте write из-за тишины, timeout или потери соединения.
+1. Full local gate and independent read-only controller.
+2. Deliver the mandatory explanation, before/after presentation script and locally
+   runnable comparison script, with recorded candidate-bound results.
+3. Five SUCCESS exact PR CI on the current task head.
+4. Fresh authority, identity, head/base SHA, time-window, STOP and pending-effects
+   checks; then task merge into roadmap.
+5. Five SUCCESS actual post-merge CI on the exact new roadmap SHA.
+6. Applicable consumer demo; docs-only behavior-neutral work may explicitly use
+   DEMO_NOT_APPLICABLE with its reason.
+7. Close the task only after confirmed acceptance.
+8. Update the epic, announce the next dependency-appropriate child, and continue.
 
-Заранее данное разрешение не переносится на другой repository/epic и не
-продлевает сроки или бюджеты. Итоговый roadmap → main merge требует отдельного
-одобрения актуальных SHA и итоговой demo. Release, tags, публикация пакета,
-настройки репозитория и новые architecture/security/public-contract решения
-также требуют отдельного применимого решения владельца. Запреты force push
-и изменения доверенной границы сохраняются.
+Continue until approved children are exhausted or a concrete blocker occurs.
+Check actual outcomes read-only before repeating any write after timeout,
+connection loss or uncertainty; silence is never permission to repeat.
+Standing approval does not transfer across repositories/epics or extend deadlines,
+budgets or scope. Final roadmap→main merge needs separate owner approval of exact
+SHA and final demo. Release/tags/publication/settings and new architecture,
+security or public-contract decisions also remain separate approvals. Force push
+and trust-boundary expansion remain forbidden.
 
-## Сопровождение проверок и доставки
+## Supervision
 
-Дождитесь завершения локальных проверок и сверяйте GitHub CI с текущим
-SHA PR. Пока CI выполняется, проверяйте первичные результаты примерно раз
-в минуту. После потери связи сначала выясните состояние проверок и исход
-последнего внешнего действия. Перед продолжением сверьте head, base, SHA
-и полномочия. При остановке зафиксируйте последнее наблюдение, результаты
-проверок и конкретное условие продолжения.
+Observe launched checks through verified completion or a concrete blocker. While
+CI is pending, inspect primary results roughly once a minute. After connection
+loss reconcile checks/processes/pending effects read-only, never launch a duplicate
+runner or repeat writes just because of silence. Before continuing, recheck SHA,
+direction and authority. At a stop record observations, results and the exact
+condition for continuation. Extraction history is in
+[ADR-392](docs/ADR-392-privacyagents-extraction-boundary.md).
 
-Исторические материалы по выделению инфраструктуры разработки собраны
-в [ADR-392](docs/ADR-392-privacyagents-extraction-boundary.md).
+## Statuses
 
-## Статусы
+- TASK READY FOR REVIEW: complete local gate, correct task PR and successful
+  exact current-head CI.
+- TASK READY FOR REVIEW WITH EXCEPTIONS: explicitly list missing evidence.
+- TASK DONE: task PR merged and actual new-roadmap post-merge CI passed.
+- ROADMAP READY FOR RELEASE: all tasks done, roadmap synchronized, final local
+  gate and roadmap→main PR CI successful.
+- ROADMAP READY FOR RELEASE WITH EXCEPTIONS: state unverified limits explicitly.
+- ROADMAP DONE: roadmap PR merged, new main SHA/post-merge CI confirmed, and
+  roadmap branch removed if authorized or its retention explained.
+- BLOCKED: required checks fail/missing, SHA or direction is unknown, or continuation
+  is unsafe.
 
-- `TASK READY FOR REVIEW` — task-изменения применены, локальный gate зелёный,
-  task PR направлен в правильную roadmap-ветку и exact CI текущего SHA успешен.
-- `TASK READY FOR REVIEW WITH EXCEPTIONS` — task готов, но перечислены
-  неподтверждённые ограничения.
-- `TASK DONE` — task PR слит и post-merge CI нового SHA roadmap-ветки успешен.
-- `ROADMAP READY FOR RELEASE` — все задачи имеют `TASK DONE`, roadmap
-  синхронизирована с `main`, полный gate зелёный, PR в `main` создан и его CI
-  успешен.
-- `ROADMAP READY FOR RELEASE WITH EXCEPTIONS` — явно перечислены оставшиеся
-  неподтверждённые ограничения.
-- `ROADMAP DONE` — roadmap PR слит, новый SHA `main` подтверждён, post-merge CI
-  успешен, а roadmap-ветка удалена либо объяснено её сохранение.
-- `BLOCKED` — обязательная проверка падает или не выполнена, SHA/head/base
-  неизвестны, направление PR неверно либо продолжение небезопасно.
-
-Статус `DONE` без префикса `TASK` или `ROADMAP` запрещён. Merge сам по себе не
-является доказательством review. Если отдельный GitHub Review отсутствует,
-пишите: «GitHub Review отсутствует».
+Do not use DONE without TASK/ROADMAP prefix. If no GitHub Review exists, say so.

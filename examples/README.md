@@ -1,47 +1,50 @@
-# Примеры использования Privacy Gateway
+# Privacy Gateway examples
 
-Раздел содержит воспроизводимые примеры публичного library API. Все
-исполняемые примеры запускаются локально, не выполняют сетевых вызовов и
-работают только с явно синтетическими данными.
+[English](README.md) | [Русский](README.ru.md)
 
-Исключение — `05_key_rotation.md` и `06_cli_round_trip.md`: управление
-ключом и сквозной сценарий CLI описаны командами, а не скриптом.
+Reproducible public-library examples run locally on synthetic data without
+network calls. `05_key_rotation.md` and `06_cli_round_trip.md` are command guides,
+not executable scripts; key management/rotation affects the current system keyring.
 
-## Требования безопасности
+<!-- pgw-section: provider-boundary -->
+## Safety requirements
 
-- Только публичный API `privacy_gateway`; внутренние модули не вызываются.
-- Только синтетические значения: `user@example.com`, `192.0.2.10`,
-  `2001:db8::1`, `+7 900 000-00-00`, `https://example.com/status`, а также
-  словарные значения из `config.example/entities.yaml`
-  (`Синтетический Иванов`, `ООО Северный Маяк`, `Проект-Орион`,
-  `Технический директор`, `staging-test`).
-- Наружу передаётся только защищённый текст `prepared.text`.
-- Контекст восстановления, `manifest.json`, `route.json` и ключевой
-  материал не печатаются и не передаются внешнему обработчику.
-- `discard()` вызывается из `finally`, даже если обработка завершилась
-  исключением.
-- Восстановленный текст снова считается чувствительным.
+- Use only public `privacy_gateway` APIs, not internal modules.
+- Use only synthetic values: `user@example.com`, `192.0.2.10`, `2001:db8::1`,
+  `+7 900 000-00-00`, `https://example.com/status` and dictionary fixtures in
+  `config.example/entities.yaml` (`Синтетический Иванов`, `ООО Северный Маяк`,
+  `Проект-Орион`, `Технический директор`, `staging-test`). Fixture strings are
+  intentionally unchanged by translation.
+- Only protected `prepared.text` crosses the provider boundary. Never print or
+  export context, manifests, routes or key material. Restored text is sensitive.
+- Examples invoke `discard()` in `finally`; this is an observed tested path,
+  not a promise that cleanup can never fail.
 
-## Подготовка окружения
+## Environment
+
+Run from a separate repository checkout; wheels/pipx do not install these examples.
+See the [installation guide](../docs/INSTALLATION.md) for packaged CLI/library
+choices. For the documented developer checkout:
 
 ```bash
 pip install -e ".[dev]"
 pgw key create
 ```
 
-Активный ключ хранится в системном keyring. Без него пример завершится
-ошибкой хранилища ключей: это ожидаемое fail-closed поведение.
+An active system key is required for manual runs; absence produces a key-store
+failure (fail closed). Automated tests substitute an in-memory key and disable
+network/real keyring access; they do not establish real-vault readiness.
 
+<!-- pgw-section: quickstart -->
 ## 01_quickstart.py
 
-Минимальный цикл `prepare` -> локальный детерминированный ответ ->
-`restore` -> `discard`.
+Minimal `prepare` → local deterministic response → `restore` → `discard`.
 
 ```bash
 python examples/01_quickstart.py
 ```
 
-Ожидаемый вывод состоит из шести строк вида `ключ=значение`:
+Expected six `key=value` lines:
 
 ```text
 tokens_prepared=<N>
@@ -52,39 +55,25 @@ roundtrip_exact=True
 workspace_clean=True
 ```
 
-Проверяемые инварианты:
-
-- код завершения равен `0`;
-- `protected_leak_free=True` — защищённый текст не содержит исходных
-  синтетических значений;
-- `tokens_restored` равно `tokens_prepared`, а `tokens_missing=0`;
-- `roundtrip_exact=True` — восстановленный текст побайтово равен ожидаемому
-  локальному ответу;
-- `workspace_clean=True` — после `discard()` рабочий каталог пуст;
-- вывод не содержит значений, путей артефактов и ключевого материала.
-
-Конкретное значение `<N>` зависит от конфигурации детектора
-`config.example/entities.yaml`, поэтому в инвариантах фиксируются
-соотношения, а не абсолютное число.
-
-Автоматическая проверка примера: `tests/test_examples_quickstart.py`. Тест
-запускает файл в изолированном окружении без сети, без реального keyring и
-без домашнего каталога пользователя.
+Exit 0, matching prepared/restored counts, zero missing tokens, no supported source
+values in protected text, exact restored response and empty workspace are checked.
+Output contains no values, artifact paths or key material. `<N>` depends on
+`config.example/entities.yaml`; relationships, not a fixed count, are the contract.
+`tests/test_examples_quickstart.py` runs the actual file without network, real
+keyring or the user's home and checks cleanup on injected failures.
 
 ## 02_full_round_trip.py
 
-Полный цикл detect -> policy check -> prepare -> локальный обработчик ->
-validate -> restore -> discard на синтетическом письме с несколькими типами
-сущностей: словарные `PERSON`, `ROLE`, `ORG`, `PROJECT`, `ENVIRONMENT` и
-regex-типы `EMAIL`, `PHONE`, `HOST`, `ENDPOINT`, `DATE`, `AMOUNT`.
+Detection/policy → prepare → local provider → validation/restore → discard on a
+synthetic letter. Dictionary types: `PERSON`, `ROLE`, `ORG`, `PROJECT`,
+`ENVIRONMENT`; regex types: `EMAIL`, `PHONE`, `HOST`, `ENDPOINT`, `DATE`, `AMOUNT`.
 
 ```bash
 python examples/02_full_round_trip.py
 ```
 
-Пример печатает пять разделов: исходный документ, защищённый текст,
-переданный обработчику, ответ обработчика, восстановленный ответ и
-публичную статистику:
+It displays the synthetic original, protected provider input, provider response,
+restored response and public statistics:
 
 ```text
 tokens_prepared=<N>
@@ -96,54 +85,31 @@ roundtrip_exact=True
 workspace_clean=True
 ```
 
-Проверяемые инварианты:
+Exit 0 requires a pure deterministic single-argument provider receiving only
+protected text, no supported values leaking in that text, matching counts, exact
+restoration and cleanup. The `DOCUMENT` contract number intentionally stays visible:
+this unsupported class is a detector limitation, not protected real document data.
+No manifest/route/workspace paths or key material are printed.
 
-- код завершения равен `0`;
-- обработчик получает единственный аргумент — защищённый текст, и является
-  чистой детерминированной функцией без сетевых вызовов;
-- `protected_leak_free=True` — защищённый текст не содержит исходных
-  значений поддерживаемых сущностей;
-- `unsupported_document_visible=True` — номер договора остаётся видимым,
-  потому что тип `DOCUMENT` детекторами текущей реализации не выделяется;
-- `tokens_restored` равно `tokens_prepared`, а `tokens_missing=0`;
-- `roundtrip_exact=True` — восстановленный ответ побайтово равен ожидаемому
-  ответу обработчика с исходными значениями;
-- `workspace_clean=True` — после `discard()` рабочий каталог пуст;
-- вывод не содержит `manifest.json`, `route.json`, служебных каталогов и
-  ключевого материала.
-
-Отдельного публичного метода `validate()` в библиотеке нет. Детекция и
-блокирующие правила выполняются внутри `prepare` и при срабатывании
-fail-closed поднимают `DetectionError`, не возвращая защищённый текст.
-Валидация ответа обработчика выполняется внутри `restore` в строгом режиме:
-неизвестный или искажённый токен приводит к `StrictTokenError`, нарушение
-целостности артефактов — к `IntegrityError`. Подробности —
-[`docs/token-format.md`](../docs/token-format.md) и
-[`docs/LIBRARY_API.md`](../docs/LIBRARY_API.md).
-
-Номер договора показан как документированное ограничение детектора, а не как
-защищённая сущность: реальные идентификаторы документов такой пример
-защищёнными не делает.
-
-Автоматическая проверка примера: `tests/test_examples_full_round_trip.py`.
-Тест дополнительно фиксирует границу доверия и очистку рабочего каталога при
-исключении обработчика и при исключении `restore`.
+There is no public `validate()` method. `prepare` performs detection/blocking and
+raises `DetectionError` without a protected payload on failure. `restore` validates
+strictly: unknown/malformed tokens raise `StrictTokenError`; bad artifact integrity
+raises `IntegrityError`. See [tokens](../docs/token-format.md) and
+[library API](../docs/LIBRARY_API.md). `tests/test_examples_full_round_trip.py`
+checks provider boundaries and cleanup when provider/restore fails.
 
 ## 03_blocked_secret.py
 
-Отрицательный пример fail-closed. Синтетический запрос содержит обычную
-псевдонимизируемую сущность (`user@example.com`, `Проект-Орион`) и один
-заведомо тестовый секрет вида `пароль: <значение>`. Секреты имеют высший
-приоритет детектора, поэтому подготовка прерывается целиком: защищённый
-текст не формируется, `prepare` поднимает `DetectionError` со статусом
-`BLOCKED`, рабочий каталог освобождается, а обработчик-шпион не получает
-ни одного вызова.
+Negative fail-closed example: ordinary pseudonymizable entities plus an explicitly
+synthetic keyword-pattern secret (`пароль: <значение>`). Secret priority blocks the
+whole prepare operation: `DetectionError`/`BLOCKED`, no protected payload, no spy
+provider calls, empty workspace.
 
 ```bash
 python examples/03_blocked_secret.py
 ```
 
-Ожидаемый вывод состоит из семи строк вида `ключ=значение`:
+Expected seven lines:
 
 ```text
 secret_blocked=True
@@ -155,48 +121,25 @@ pseudonymizable_entity_present=True
 workspace_clean=True
 ```
 
-Exit/result contract:
-
-- `0` — ожидаемая блокировка произошла, защищённый payload не создан и
-  обработчик не вызывался; это успешный результат демонстрации;
-- `1` — инвариант нарушен: блокировки не было либо обработчик получил
-  вызов. Пример сообщает об этом строками статистики, без traceback;
-- `2` — пример запущен не из корня репозитория.
-
-Проверяемые инварианты:
-
-- блокировка происходит до границы обработчика, `provider_calls=0`;
-- `protected_payload_created=False` — защищённый текст не возвращается;
-- `failure_class=DetectionError` и `failure_status=BLOCKED` — публичный
-  класс ошибки и нейтральный статус решения;
-- `pseudonymizable_entity_present=True` — обычная сущность во входе есть,
-  но итоговый отказ определяет именно secret finding;
-- `workspace_clean=True` — рабочий каталог после отказа пуст;
-- вывод не содержит значения секрета, исходного запроса, сообщения
-  исключения, `manifest.json`, `route.json`, `prompt.txt` и путей.
-
-Ключ читается из keyring до детекции, поэтому без активного ключа пример
-завершится `KeyStoreError` — это отдельное ожидаемое fail-closed поведение,
-а не сценарий блокировки секрета.
-
-Автоматическая проверка примера: `tests/test_examples_blocked_secret.py`.
-Тест дополнительно доказывает, что шпион упал бы при вызове, что тот же
-вход без секрета успешно токенизируется, и что вывод детерминирован.
+Exit 0 means expected blocking/no payload/no provider call; exit 1 means an invariant
+failed and is reported as statistics without traceback; exit 2 means wrong cwd.
+The ordinary entity remains present but the secret finding determines rejection.
+Output excludes secret/input/exception text, artifacts and paths. The key is read
+before detection; a missing key gives separate `KeyStoreError`, not this blocking
+scenario. `tests/test_examples_blocked_secret.py` proves the spy would fail if
+called, the same input without the secret succeeds, and output is deterministic.
 
 ## 04_untrusted_response.py
 
-Ответ внешней модели — недоверенный ввод. Пример готовит один
-синтетический запрос и прогоняет пять вариантов ответа: токен сохранён,
-удалён, повторён, искажён и выдуман. Каждый вариант выполняется в строгом
-и в мягком режиме, поэтому различие режимов видно на одних и тех же
-данных. Классификация кандидатов и отказ выполняются внутри `restore`
-до подстановки исходных значений.
+One synthetic request, five response variants (retained, removed, duplicated,
+malformed and invented token), each in strict and lenient mode. Classification
+and rejection happen inside `restore` before substituting source values.
 
 ```bash
 python examples/04_untrusted_response.py
 ```
 
-Пример печатает десять строк вариантов и четыре итоговые строки:
+Ten variant rows and four summary rows:
 
 ```text
 variant=<имя> mode=<strict|lenient> outcome=<restored|StrictTokenError> ...
@@ -206,73 +149,47 @@ workspace_clean=True
 all_variants_expected=True
 ```
 
-Ожидаемые результаты, где `<T>` — число токенов подготовленного запроса:
+`<имя>` is the original placeholder for a variant name, not translated output.
+Let `<T>` be the prepared token count:
 
-| Вариант ответа | Строгий режим | Мягкий режим |
-|----------------|---------------|--------------|
-| Токен сохранён | `restored`, `tokens_restored=<T>`, `tokens_missing=0` | то же |
-| Токен удалён | `restored`, `tokens_restored=<T-1>`, `tokens_missing=1` | то же |
-| Токен повторён | `restored`, `tokens_restored=<T>`, `tokens_missing=0` | то же |
-| Токен искажён | `StrictTokenError`, текст не возвращается | `restored`, `tokens_restored=<T-1>`, `tokens_missing=1` |
-| Токен выдуман | `StrictTokenError`, текст не возвращается | `restored`, `tokens_restored=<T>`, `tokens_missing=0` |
+| Variant | Strict | Lenient |
+| --- | --- | --- |
+| Retained | restored, `<T>` restored /0 missing | Same |
+| Removed | restored, `<T-1>` restored /1 missing | Same |
+| Duplicated | restored, `<T>` restored /0 missing | Same |
+| Malformed | StrictTokenError, no plaintext | restored, `<T-1>` restored /1 missing |
+| Invented | StrictTokenError, no plaintext | restored, `<T>` restored /0 missing |
 
-Exit/result contract:
+Exit 0 means all variants match expectations, provider receives only protected text
+and every workspace is cleaned; exit 1 reports an invariant failure without
+traceback; exit 2 means wrong cwd. Removed tokens differ from unknown tokens:
+missing counts do not themselves cause rejection. A known duplicate is restored
+at every occurrence; restored count is unchanged, and the example detects this
+anomaly itself. Invented values are never restored; lenient mode leaves the
+invented token literal. `discard()` is called in `finally` for every variant.
+No source values, token names, context, artifact names or paths are printed.
 
-- `0` — все варианты дали ожидаемый результат, обработчик получил только
-  защищённый текст, рабочий каталог очищен после каждого варианта;
-- `1` — инвариант нарушен; пример сообщает об этом строками отчёта, без
-  traceback;
-- `2` — пример запущен не из корня репозитория.
+`RestoredPayload` exposes only `text`, `correlation_id`, `tokens_restored` and
+`tokens_missing`, not candidate lists, duplicate counters or warnings. Unbracketed
+`PROJECT_1` is not a candidate: it is invisible to restore and counts as missing,
+not malformed. Lenient mode leaves unknown/malformed candidates and continues;
+it is for human investigation, not a safe automatic pipeline.
+`tests/test_examples_untrusted_response.py` checks all ten cases, cleanup,
+determinism and absence of source values in output.
 
-Проверяемые инварианты:
-
-- удалённый токен отличается от неизвестного: удалённый уменьшает
-  `tokens_restored`, увеличивает `tokens_missing` и отказа не вызывает,
-  а выдуманный в строгом режиме даёт `StrictTokenError`;
-- повторённый известный токен подставляется во всех вхождениях, поэтому
-  `tokens_restored` не меняется; это аномалия ответа, а не ошибка;
-- ни один вариант не восстанавливает выдуманное значение: в строгом
-  режиме открытый текст не возвращается вовсе, в мягком выдуманный токен
-  остаётся в тексте буквально;
-- `discard()` вызывается в `finally` для каждого варианта, поэтому
-  `workspace_clean=True` проверяется после каждого сценария;
-- вывод не содержит исходного текста, значений, имён токенов, контекста,
-  `manifest.json`, `route.json`, `prompt.txt` и путей.
-
-Границы публичного контракта, которые пример не переступает:
-
-- `RestoredPayload` содержит только `text`, `correlation_id`,
-  `tokens_restored` и `tokens_missing`; перечня оставшихся кандидатов,
-  счётчика дублей и предупреждений в публичном API нет, поэтому пример их
-  не обещает, а аномалию повтора фиксирует сам, зная построенный ответ;
-- запись без квадратных скобок (`PROJECT_1`) кандидатом не считается
-  вовсе: `restore` её не видит, и соответствующий токен попадает в
-  пропавшие. Это ограничение классификатора, а не «искажённый токен»;
-- мягкий режим не является безопасным для автоматического конвейера: он
-  оставляет неизвестные и искажённые кандидаты в тексте и продолжает
-  работу, поэтому пригоден только для разбора ответа человеком.
-
-Автоматическая проверка примера:
-`tests/test_examples_untrusted_response.py`. Тест параметризован по всем
-десяти сочетаниям варианта и режима, проверяет очистку после каждого
-варианта, детерминизм повторного запуска и отсутствие значений в выводе.
-
+<!-- pgw-section: rotation -->
 ## 05_key_rotation.md
 
-Ротация ключа и восстановление запроса, подготовленного предыдущим ключом.
-Единственный пример раздела без исполняемого скрипта: управление ключами
-доступно только через CLI, а ротация необратимо изменяет системный keyring
-текущей учётной записи. Полное описание —
-[`05_key_rotation.md`](05_key_rotation.md).
-
-Предусловия: установленный пакет и проверка состояния ключа.
+See the [rotation guide](05_key_rotation.md) for restoring a request from the
+previous key. Rotation irreversibly changes the current account's keyring and
+must not be run against a working keyring without a deliberate decision.
 
 ```bash
 pip install -e ".[dev]"
 pgw key status
 ```
 
-Сценарий выполняется реальными командами:
+Commands in the scenario:
 
 ```bash
 pgw prepare request.txt --out ./work
@@ -281,50 +198,29 @@ pgw restore reply.txt --route ./work/route.json
 pgw key rotate
 ```
 
-Exit/result contract:
+Exit 0: key create/status/rotate success. Exit 3: status without a key, repeated
+create without `--force`, or restore beyond retention. Exit 4: key-store failure,
+rotate without an active key, carry/active-write/verification/prune failure.
+K0 remains readable after one rotation, not two. The API window is immediately
+`[active, retired]`; physical retention changes only through explicit operations.
+`--force` is reset, not rotation: it removes retired history. Rotation is not a
+keyring transaction; verification/prune failure is not rollback. ADR-23/ADR-46
+and the [security guide](../docs/SECURITY.md) define this boundary.
+`tests/test_documentation_contracts.py` verifies real subcommands, the generation
+table and bounded retention references; key tests use a fake backend.
 
-- `0` — команда `key create`, `key status` или `key rotate` выполнена;
-- `3` — `key status` без активного ключа, повторный `key create` без
-  `--force` либо `restore` манифеста старше окна retention;
-- `4` — ошибка хранилища ключей: `key rotate` без активного ключа, сбой
-  carry, записи active, verification или prune.
-
-Проверяемые инварианты:
-
-- запрос, подготовленный при K0, восстанавливается после первой ротации
-  без ручного перешифрования;
-- после второй ротации манифест поколения K0 недоступен штатным API, а
-  ключевой материал в сообщении не раскрывается;
-- окно читаемости ограничено `[active, retired]`; цепочки из трёх и более
-  ключей не гарантируются;
-- API retention действует немедленно, physical retention меняется только
-  явными операциями;
-- `--force` у `key create` — сброс, а не ротация: retired-ключ удаляется.
-
-Ротация не является транзакцией keyring, поэтому verification и prune
-failure не описываются как rollback. Подробности — `docs/SECURITY.md`,
-раздел «Ротация ключа».
-
-Автоматическая проверка документа:
-`tests/test_documentation_contracts.py`. Тесты сверяют документ с
-фактическим набором подкоманд `pgw key`, требуют явного окна
-`[active, retired]` со ссылками на ADR-23 и ADR-46 и запрещают обещание
-отсутствующих команд управления ключом.
-
+<!-- pgw-section: cli-flow -->
 ## 06_cli_round_trip.md
 
-Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего
-ответа, восстановление значений и очистка артефактов. Полное описание —
-[`06_cli_round_trip.md`](06_cli_round_trip.md).
-
-Предусловия: установленный пакет и активный ключ.
+See the [CLI guide](06_cli_round_trip.md) for request preparation, a local simulated
+response, restoration and cleanup, with Bash/PowerShell differences.
 
 ```bash
 pip install -e ".[dev]"
 pgw key status
 ```
 
-Сценарий выполняется реальными командами:
+Commands in the scenario:
 
 ```bash
 pgw prepare ./pgw_demo/request.txt --out ./pgw_demo/work
@@ -334,35 +230,16 @@ pgw restore ./pgw_demo/reply.txt \
 rm -rf ./pgw_demo
 ```
 
-Различия Bash и PowerShell для подготовки входного файла, имитации ответа
-и очистки описаны в документе явно.
+Exit 0: prepared three artifacts or restored output. Exit 3: collision without
+`--overwrite`, invalid input/configuration or argparse usage. Exit 4: unavailable
+key or disallowed backend. Exit 5: strict rejection of unknown/malformed tokens.
+Prompt/route and token reports exclude source values, restored text contains them,
+strict failure publishes no output, and cleanup removes the working directory.
+The scenario makes no network calls. Isolated tests also avoid the user's home
+and real system keyring: `tests/test_examples_cli_round_trip.py` runs subprocesses
+on Linux/Windows with a test-only keystore through isolated `PYTHONPATH`.
 
-Exit/result contract:
+## Further examples
 
-- `0` — `prepare` создал три артефакта либо `restore` записал результат;
-- `3` — повторный `prepare` без `--overwrite`, ошибка входных данных или
-  ошибка конфигурации; usage error argparse также даёт `3`;
-- `4` — ключ недоступен или backend keyring небезопасен;
-- `5` — строгий отказ `restore`: ответ содержит неизвестный или
-  искажённый токен.
-
-Проверяемые инварианты:
-
-- `prompt.txt` и `route.json` не содержат исходных значений, а отчёт
-  восстановления печатает только имена токенов и счётчики;
-- round-trip точен: восстановленный текст содержит исходные значения;
-- при строгом отказе файл результата не создаётся;
-- рабочий каталог полностью удаляется на шаге очистки;
-- сценарий не обращается к сети и не пишет в домашний каталог.
-
-Автоматическая проверка: `tests/test_examples_cli_round_trip.py`. Тест
-запускает те же команды отдельными процессами на Linux и Windows, подменяя
-keystore через `sitecustomize` в изолированном `PYTHONPATH`, поэтому
-системный keyring и домашний каталог пользователя не используются.
-
-## Запланированные примеры
-
-Дальнейшие сценарии ведутся в epic
-[#96](https://github.com/MRDK80/privacy-gateway/issues/96) и добавляются
-отдельными задачами. Запланированных сценариев без файла в каталоге
-на текущий момент нет.
+[Epic #96](https://github.com/MRDK80/privacy-gateway/issues/96) tracks examples.
+No currently planned scenario is represented as delivered without its file.

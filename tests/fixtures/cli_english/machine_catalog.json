@@ -1,0 +1,478 @@
+{
+  "schema_version": "1.0",
+  "kind": "cli_catalog",
+  "program": "pgw",
+  "operational_json_schema_version": "1.0",
+  "global_controls": [
+    {
+      "option_string": "--describe",
+      "kind": "introspection",
+      "position": "only_argument"
+    },
+    {
+      "option_string": "--json",
+      "kind": "output_mode",
+      "position": "before_command"
+    }
+  ],
+  "exit_codes": [
+    {
+      "code": 0,
+      "meaning": "success"
+    },
+    {
+      "code": 1,
+      "meaning": "unexpected_error"
+    },
+    {
+      "code": 2,
+      "meaning": "pending"
+    },
+    {
+      "code": 3,
+      "meaning": "usage_input_config_integrity_or_blocked"
+    },
+    {
+      "code": 4,
+      "meaning": "keystore_error"
+    },
+    {
+      "code": 5,
+      "meaning": "strict_restore_rejection"
+    }
+  ],
+  "machine_error_codes": [
+    "blocked",
+    "configuration_error",
+    "input_error",
+    "internal_error",
+    "invalid_arguments",
+    "key_exists",
+    "key_not_found",
+    "keystore_error",
+    "output_error",
+    "pending",
+    "restore_error",
+    "restore_output_required",
+    "strict_restore_error",
+    "unsupported_command"
+  ],
+  "cli_level_machine_error_codes": [
+    "invalid_arguments",
+    "unsupported_command"
+  ],
+  "side_effect_values": [
+    "reads_artifacts",
+    "reads_config",
+    "reads_input",
+    "reads_keyring",
+    "writes_artifacts",
+    "writes_keyring",
+    "writes_output"
+  ],
+  "commands": [
+    {
+      "id": "detect",
+      "path": [
+        "detect"
+      ],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "option_strings": [],
+          "required": true,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "encoding",
+          "kind": "option",
+          "option_strings": [
+            "--encoding"
+          ],
+          "required": false,
+          "type": "string",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "config",
+          "kind": "option",
+          "option_strings": [
+            "--config"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        }
+      ],
+      "output_formats": [
+        "human"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        3
+      ],
+      "machine_error_codes": [],
+      "side_effects": [
+        "reads_config",
+        "reads_input"
+      ]
+    },
+    {
+      "id": "doctor",
+      "path": [
+        "doctor"
+      ],
+      "arguments": [
+        {
+          "name": "entities_config",
+          "kind": "option",
+          "option_strings": [
+            "--entities-config"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        }
+      ],
+      "output_formats": [
+        "human"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        3
+      ],
+      "machine_error_codes": [],
+      "side_effects": [
+        "reads_config",
+        "reads_keyring"
+      ]
+    },
+    {
+      "id": "key create",
+      "path": [
+        "key",
+        "create"
+      ],
+      "arguments": [
+        {
+          "name": "force",
+          "kind": "option",
+          "option_strings": [
+            "--force"
+          ],
+          "required": false,
+          "type": "boolean",
+          "cardinality": "flag",
+          "choices": null,
+          "default": false
+        }
+      ],
+      "output_formats": [
+        "human",
+        "json"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "machine_error_codes": [
+        "internal_error",
+        "invalid_arguments",
+        "key_exists",
+        "keystore_error"
+      ],
+      "side_effects": [
+        "reads_keyring",
+        "writes_keyring"
+      ]
+    },
+    {
+      "id": "key rotate",
+      "path": [
+        "key",
+        "rotate"
+      ],
+      "arguments": [],
+      "output_formats": [
+        "human",
+        "json"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "machine_error_codes": [
+        "internal_error",
+        "invalid_arguments",
+        "key_not_found",
+        "keystore_error"
+      ],
+      "side_effects": [
+        "reads_keyring",
+        "writes_keyring"
+      ]
+    },
+    {
+      "id": "key status",
+      "path": [
+        "key",
+        "status"
+      ],
+      "arguments": [],
+      "output_formats": [
+        "human",
+        "json"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        3,
+        4
+      ],
+      "machine_error_codes": [
+        "internal_error",
+        "invalid_arguments",
+        "key_not_found",
+        "keystore_error"
+      ],
+      "side_effects": [
+        "reads_keyring"
+      ]
+    },
+    {
+      "id": "prepare",
+      "path": [
+        "prepare"
+      ],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "option_strings": [],
+          "required": true,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "out",
+          "kind": "option",
+          "option_strings": [
+            "--out"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "routing",
+          "kind": "option",
+          "option_strings": [
+            "--routing"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "config",
+          "kind": "option",
+          "option_strings": [
+            "--config"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "encoding",
+          "kind": "option",
+          "option_strings": [
+            "--encoding"
+          ],
+          "required": false,
+          "type": "string",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "overwrite",
+          "kind": "option",
+          "option_strings": [
+            "--overwrite"
+          ],
+          "required": false,
+          "type": "boolean",
+          "cardinality": "flag",
+          "choices": null,
+          "default": false
+        }
+      ],
+      "output_formats": [
+        "human",
+        "json"
+      ],
+      "json_mode_requires": [],
+      "exit_codes": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "machine_error_codes": [
+        "blocked",
+        "configuration_error",
+        "input_error",
+        "internal_error",
+        "invalid_arguments",
+        "keystore_error",
+        "pending"
+      ],
+      "side_effects": [
+        "reads_config",
+        "reads_input",
+        "reads_keyring",
+        "writes_artifacts"
+      ]
+    },
+    {
+      "id": "restore",
+      "path": [
+        "restore"
+      ],
+      "arguments": [
+        {
+          "name": "file",
+          "kind": "positional",
+          "option_strings": [],
+          "required": true,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "route",
+          "kind": "option",
+          "option_strings": [
+            "--route"
+          ],
+          "required": true,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "out",
+          "kind": "option",
+          "option_strings": [
+            "--out"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "overwrite",
+          "kind": "option",
+          "option_strings": [
+            "--overwrite"
+          ],
+          "required": false,
+          "type": "boolean",
+          "cardinality": "flag",
+          "choices": null,
+          "default": false
+        },
+        {
+          "name": "manifest",
+          "kind": "option",
+          "option_strings": [
+            "--manifest"
+          ],
+          "required": false,
+          "type": "path",
+          "cardinality": "one",
+          "choices": null,
+          "default": null
+        },
+        {
+          "name": "lenient",
+          "kind": "option",
+          "option_strings": [
+            "--lenient"
+          ],
+          "required": false,
+          "type": "boolean",
+          "cardinality": "flag",
+          "choices": null,
+          "default": false
+        }
+      ],
+      "output_formats": [
+        "human",
+        "json"
+      ],
+      "json_mode_requires": [
+        "--out"
+      ],
+      "exit_codes": [
+        0,
+        1,
+        3,
+        4,
+        5
+      ],
+      "machine_error_codes": [
+        "configuration_error",
+        "input_error",
+        "internal_error",
+        "invalid_arguments",
+        "keystore_error",
+        "output_error",
+        "restore_error",
+        "restore_output_required",
+        "strict_restore_error"
+      ],
+      "side_effects": [
+        "reads_artifacts",
+        "reads_input",
+        "reads_keyring",
+        "writes_output"
+      ]
+    }
+  ]
+}

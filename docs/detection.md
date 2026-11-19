@@ -1,113 +1,108 @@
-# Обнаружение сущностей
+# Entity detection
 
-## Назначение и границы модуля
+[English](detection.md) | [Русский](detection.ru.md)
 
-Обнаружение — это **диагностическое ядро** системы: безопасное чтение
-текстового входа (Э2) и детерминированное выявление потенциально
-чувствительных сущностей (Э3).
+<!-- pgw-section: security-boundary -->
+## Purpose and boundary
 
-**Что относится к обнаружению:**
-- Чтение `.txt`-файлов и stdin с контролем кодировки и размера.
-- Regex-детекторы и словарные сущности из YAML-конфига.
-- CLI-команда `pgw detect` с JSON-выводом метаданных.
-- Unit-тесты на синтетических данных.
-- Поддержка Windows и Linux (в т.ч. Linux Mint).
+Detection is the diagnostic core: controlled text-input reading and deterministic
+identification of potentially sensitive entities. It covers `.txt`/stdin with
+encoding/size controls, regex and YAML dictionaries, metadata-only diagnostic
+CLI output, synthetic unit tests and Linux/Windows support.
 
-**Что за его границами** — реализовано в других модулях:
-- Псевдонимизация и замена текста токенами — `tokenizer.py`, формат описан в
-  [`token-format.md`](token-format.md).
-- Шифрование, ключи и манифесты — `crypto.py`, `keystore.py`, `manifest.py`.
-- Конвейер `prepare` — `pipeline.py`; восстановление `restore` — `restore.py`.
-- Сетевые вызовы и обращения к внешнему обработчику не выполняются нигде в
-  пакете — это проектное ограничение, а не незавершённая работа.
+The `pgw detect` command has human-readable output; operational JSON mode is not
+supported (ADR-150/ADR-151). Use `pgw --describe` for actual command/output-format
+capabilities. Do not confuse JSON-like entity lines in a human report with a
+versioned operational JSON envelope.
 
-Общая архитектура конвейеров — в [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Other modules handle tokenization ([token format](token-format.md)), encryption/
+keys/manifests, preparation and restoration. Privacy Gateway does not send text
+to an external provider. Doctor's separately approved local D-Bus capability
+queries are not external-provider calls; see ADR-113. See the
+[pipeline architecture](ARCHITECTURE.md).
 
-## Поддерживаемые сущности
+## Supported entities
 
-### Regex-детекторы
+### Regex detection
 
-| Тип | Описание | Уверенность |
-|---|---|---|
-| `EMAIL` | Адреса email | HIGH |
-| `PHONE` | Российские и международные телефоны | MEDIUM |
-| `HOST` | IPv4-адреса | HIGH |
-| `ENDPOINT` | HTTP/HTTPS URL | HIGH |
-| `RESOURCE` | UNC-пути, Windows-пути (`C:\...`), POSIX-пути (`/opt/...`) | HIGH |
-| `DATE` | `YYYY-MM-DD`, `DD.MM.YYYY`, `DD/MM/YYYY` | HIGH |
-| `AMOUNT` | Денежные суммы с символом или словом валюты | MEDIUM |
+| Type | Pattern class | Confidence |
+| --- | --- | --- |
+| `EMAIL` | Email addresses | HIGH |
+| `PHONE` | Russian/international telephone patterns | MEDIUM |
+| `HOST` | IPv4 addresses | HIGH |
+| `ENDPOINT` | HTTP/HTTPS URLs | HIGH |
+| `RESOURCE` | UNC, Windows drive and POSIX paths | HIGH |
+| `DATE` | YYYY-MM-DD, DD.MM.YYYY, DD/MM/YYYY | HIGH |
+| `AMOUNT` | Amounts with a currency symbol/word | MEDIUM |
 
-### Внутренние детекторы секретов
+`HOST` detection is IPv4, not a promise to tokenize every IPv6 address. The
+independent output validator has its own IPv6/entropy checks and may block
+residual data the detector did not replace. Detection and validation scopes are
+not interchangeable.
 
-Обнаруживаются, но значения в публичную модель не попадают:
+### Internal secret findings
 
-| secret_kind | Паттерн |
-|---|---|
-| `PASSWORD` | `password=...`, `passwd=...` |
-| `API_TOKEN` | `api_token=...`, `api_key=...` |
-| `PRIVATE_KEY` | PEM-заголовок `-----BEGIN ... PRIVATE KEY-----` |
-| `CONNECTION_STRING` | `Server=...;Database=...` |
+Secret values are not exposed in the public entity model:
 
-### Словарные сущности (из `entities.yaml`)
+| secret_kind | Pattern examples |
+| --- | --- |
+| `PASSWORD` | password/passwd assignment |
+| `API_TOKEN` | api_token/api_key assignment |
+| `PRIVATE_KEY` | PEM private-key header |
+| `CONNECTION_STRING` | Server/Database connection-string pattern |
 
-`PERSON`, `ORG`, `SYSTEM`, `PROJECT`, `DEPARTMENT`, `ROLE`, `ENVIRONMENT`
+These are pattern classes, not exhaustive recognition of secrets. Multiline or
+unknown formats and passwords outside keyword patterns can be missed.
 
-Все значения словарей должны быть **синтетическими**. Обнаружение выполняется по точному нечувствительному к регистру вхождению.
+### YAML dictionary entities
 
-Типы `METRIC`, `DOCUMENT` и `DURATION` присутствуют в `EntityType`, но
-детекторов для них в текущей реализации нет.
+`PERSON`, `ORG`, `SYSTEM`, `PROJECT`, `DEPARTMENT`, `ROLE`, `ENVIRONMENT`.
+Dictionary values must be synthetic. Matching is exact case-insensitive occurrence,
+not NER. `METRIC`, `DOCUMENT` and `DURATION` exist in EntityType but have no current
+detectors.
 
-## Кроссплатформенность
+## Cross-platform paths
 
-Детектор `RESOURCE` поддерживает три формата путей независимо от того, на какой ОС выполняется анализ:
+RESOURCE patterns operate on text, not filesystem access. UNC `\\server\share\dir`,
+Windows `C:\path\to\file` and POSIX `/opt/app/data/file` can be recognized regardless
+of the host OS. CI uses Ubuntu/Windows; recognition of POSIX/macOS-style text is
+not proof of a macOS runtime CI matrix.
 
-| Формат | Пример | Происхождение |
-|---|---|---|
-| UNC | `\\server\share\dir` | Windows |
-| Диск | `C:\path\to\file` | Windows |
-| POSIX | `/opt/app/data/file` | Linux / macOS |
+## Limits and false negatives
 
-Важно: паттерны применяются к **содержимому текста**, а не к файловой системе. Поэтому Windows-пути распознаются и при запуске на Linux Mint, и наоборот.
+Regex does not verify that a domain, telephone number or other object exists.
+Dictionaries are a deliberately limited MVP, not NER. False positives and false
+negatives are possible; diagnostic output is not a disclosure authorization.
+Encoding is not guessed. POSIX patterns require at least two segments (`/a/b`)
+to reduce false matches on fractions/dates. Indirect identification from context
+and combinations of fields remains possible. Pseudonymization is reversible,
+not guaranteed anonymization.
 
-CI запускается на `ubuntu-latest` и `windows-latest`.
+## Overlap resolution
 
-## Ограничения regex и словарей
+Choose lower numerical priority first, then a longer match, then smaller `start`.
+Do not create duplicate findings at the same position.
 
-- Regex не валидируют реальное существование объектов (номера телефонов, домены).
-- Словари — намеренно ограниченный MVP, не заменяют NER.
-- Возможны ложные срабатывания и пропуски — команда носит **диагностический** характер.
-- Автоугадывание кодировок не применяется.
-- POSIX-паттерн требует минимум два сегмента (`/a/b`), чтобы снизить ложные срабатывания на дробях и датах.
+| Priority | Type |
+| --- | --- |
+|0 | PRIVATE_KEY, CONNECTION_STRING, API_TOKEN, PASSWORD |
+|1 | ENDPOINT |
+|2 | EMAIL |
+|3 | RESOURCE |
+|4 | HOST |
+|5 | PHONE |
+|6 | AMOUNT |
+|7 | DATE |
+|8 | Dictionary entities |
 
-## Политика разрешения перекрытий
+## Output safety
 
-При пересечении диапазонов применяется детерминированная политика:
+Diagnostic stdout/stderr excludes original input/entity values. `fingerprint`
+is the first 12 hex characters of SHA-256 over the UTF-8 value, not encrypted data
+or proof of anonymity. Models' repr/str do not expose values. Keep any diagnostic
+metadata within the documented trust boundary; the external payload is only the
+intended protected text, not arbitrary diagnostics.
 
-1. Выбирается сущность с **наибольшим приоритетом** (меньший номер).
-2. При равном приоритете — **более длинное** совпадение.
-3. При равной длине — совпадение с **меньшим `start`**.
-4. Дубликаты на одинаковой позиции не создаются.
-
-### Таблица приоритетов
-
-| Приоритет | Тип |
-|---|---|
-| 0 | `PRIVATE_KEY`, `CONNECTION_STRING`, `API_TOKEN`, `PASSWORD` |
-| 1 | `ENDPOINT` |
-| 2 | `EMAIL` |
-| 3 | `RESOURCE` |
-| 4 | `HOST` |
-| 5 | `PHONE` |
-| 6 | `AMOUNT` |
-| 7 | `DATE` |
-| 8 | Словарные сущности |
-
-## Безопасность вывода
-
-- Исходный текст и значения сущностей **никогда не выводятся** в stdout/stderr.
-- Вместо значений — `fingerprint`: первые 12 hex-символов SHA-256 от UTF-8 значения.
-- `repr()` и `str()` моделей не раскрывают значения.
-
-## Важное ограничение
-
-> Результаты команды `pgw detect` **не создают статус `READY`** и **не являются юридической гарантией безопасности** данных. Команда предназначена исключительно для технической диагностики в процессе разработки.
+`pgw detect` does not create `READY` and offers no legal safety guarantee. It is
+technical diagnostics, not permission to send the original document. See the
+[security model](SECURITY.md) for preparation, restoration and residual risks.

@@ -1,19 +1,13 @@
 \
-"""Минимальный quickstart публичного library API Privacy Gateway.
+"""Minimal quickstart for the public Privacy Gateway library API.
 
-Пример выполняет локальный цикл prepare -> локальный ответ -> restore ->
-discard на синтетическом тексте. Сетевых вызовов нет: внешний обработчик
-заменён детерминированной локальной функцией.
+Run a local prepare -> deterministic local response -> restore -> discard flow
+on synthetic text without network calls. Only protected ``prepared.text`` is
+passed to the provider substitute; never context, manifests, keys or source text.
 
-Наружу передаётся только защищённый текст ``prepared.text``. Контекст
-восстановления, manifest, ключевой материал и исходный текст внешнему
-обработчику не передаются и не печатаются.
-
-Запуск из корня репозитория:
-
-    python examples/01_quickstart.py
-
-Требуется активный ключ в системном keyring: ``pgw key create``.
+Run from the repository root: python examples/01_quickstart.py
+An active system-keyring key is required for manual runs: ``pgw key create``.
+Tests substitute a synthetic in-memory key instead of using the real keyring.
 """
 
 from __future__ import annotations
@@ -25,7 +19,7 @@ from privacy_gateway import GatewayConfig, PreparedPayload, PrivacyGateway
 
 ENTITIES_CONFIG = Path("config.example") / "entities.yaml"
 
-# Только синтетические значения, разрешённые политикой репозитория.
+# Only synthetic fixtures permitted by repository policy.
 SYNTHETIC_EMAIL = "user@example.com"  # pragma: allowlist secret
 SYNTHETIC_HOST = "192.0.2.10"
 SYNTHETIC_PHONE = "+7 900 000-00-00"
@@ -39,22 +33,21 @@ RESPONSE_PREFIX = "Ответ обработчика:\n"
 
 
 def external_processor(protected_text: str) -> str:
-    """Вернуть детерминированный локальный ответ на защищённый текст.
+    """Return a deterministic local response to protected text.
 
-    Заменитель внешнего обработчика получает только защищённый текст и не
-    выполняет сетевых вызовов.
+    The provider substitute receives only protected text and makes no network calls.
     """
     return RESPONSE_PREFIX + protected_text
 
 
 def _protected_is_leak_free(prepared: PreparedPayload) -> bool:
-    """Проверить отсутствие синтетических значений в защищённом тексте."""
+    """Check that protected text excludes the synthetic source values."""
     values = (SYNTHETIC_EMAIL, SYNTHETIC_HOST, SYNTHETIC_PHONE)
     return all(value not in prepared.text for value in values)
 
 
 def main() -> int:
-    """Выполнить quickstart и напечатать проверяемые инварианты."""
+    """Run the quickstart and print testable invariants."""
     if not ENTITIES_CONFIG.is_file():
         print("Запустите пример из корня репозитория privacy-gateway.")
         return 2

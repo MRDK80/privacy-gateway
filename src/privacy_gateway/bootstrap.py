@@ -22,7 +22,7 @@ def main() -> None:
                     "error": {
                         "code": "unsupported_command",
                         "type": "usage_error",
-                        "message": "Команда не поддерживает JSON-режим.",
+                        "message": "This command does not support JSON output.",
                     },
                 },
                 ensure_ascii=False,

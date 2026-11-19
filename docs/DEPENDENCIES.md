@@ -1,95 +1,90 @@
-# Зависимости базовой установки
+# Base-installation dependency contract
 
-Текущий состав установки закреплён в [pyproject.toml](../pyproject.toml).
-Базовая установка предоставляет CLI `pgw` и публичный Library API. Для работы
-с ключами дополнительно нужен доступный безопасный системный keyring backend.
-Установка Python-пакета сама по себе не настраивает системное хранилище ключей.
+[English](DEPENDENCIES.md) | [Русский](DEPENDENCIES.ru.md)
 
-## Карта прямых зависимостей
+[pyproject.toml](../pyproject.toml) defines the installation requirements. The base
+package provides the `pgw` CLI and public library API. Key operations additionally
+need an available allowed system keyring backend; installing the Python package
+does not configure that system service.
 
-| Группа | Объявление | Назначение |
+<!-- pgw-section: base-dependencies -->
+## Direct dependencies
+
+| Group | Requirement | Purpose |
 | --- | --- | --- |
-| Runtime | `cryptography>=42` | Fernet-шифрование и проверка целостности в `crypto.py` |
-| Runtime | `keyring>=25` | Доступ к системному хранилищу через `keystore.py` |
-| Runtime | `PyYAML>=6` | Чтение конфигурации детектора и маршрутизации через `yaml.safe_load` |
-| Build | `setuptools>=77.0.3`, `wheel` | Backend сборки wheel/sdist и license metadata |
-| Development, extra `dev` | `pytest>=8`, `pytest-cov>=5` | Тесты и измерение покрытия |
-| Development, extra `dev` | `ruff>=0.6`, `mypy>=1.11`, `types-PyYAML` | Линтинг и статическая типизация |
-| Development, extra `dev` | `pre-commit>=3.7`, `detect-secrets>=1.5` | Локальные hooks и проверка секретов |
+| Runtime | `cryptography>=42` | Fernet encryption and integrity checks in `crypto.py` |
+| Runtime | `keyring>=25` | System key storage through `keystore.py` |
+| Runtime | `PyYAML>=6` | Detector/routing configuration through `yaml.safe_load` |
+| Build | `setuptools>=77.0.3`, `wheel` | wheel/sdist backend and license metadata |
+| Development, `dev` | `pytest>=8`, `pytest-cov>=5` | Tests and coverage |
+| Development, `dev` | `ruff>=0.6`, `mypy>=1.11`, `types-PyYAML` | Lint and static typing |
+| Development, `dev` | `pre-commit>=3.7`, `detect-secrets>=1.5` | Hooks and secret scanning |
 
-Это карта прямых требований. Их транзитивные зависимости определяются resolver
-установщика и могут различаться между ОС и версиями Python. Например,
-`cryptography` и `keyring` могут устанавливать дополнительные платформенные
-пакеты. Зависимости development tools также не входят в базовые требования.
+These are direct requirements. The installer resolves transitive dependencies,
+which may differ by OS and Python version; `cryptography` and `keyring`, for
+example, may add platform packages. Development dependencies are not base runtime
+requirements. There is no lockfile pinning the full runtime graph. Lower bounds
+do not promise identical resolved versions; record actual versions for a specific
+environment. Exact CI covers Python 3.11/3.12 on Ubuntu/Windows. Installation
+compatibility `requires-python >=3.11` does not expand that support list.
 
-В репозитории нет lock-файла с полным зафиксированным графом runtime-зависимостей.
-Нижние границы в metadata не гарантируют одинаковые версии при разных установках.
-Воспроизводимость конкретного окружения требует сохранения фактических версий.
-Exact CI проверяет Python 3.11 и 3.12 на Ubuntu и Windows; установочная нижняя
-граница `requires-python >=3.11` сама по себе не расширяет этот список.
+<!-- pgw-section: optional-boundary -->
+## Base and extras
 
-## База и расширения
+Base imports and `pgw --help` use the runtime requirements above without selecting
+a system keyring backend or operating on keys. Subprocess tests enforce that
+boundary. The only declared extra is `dev`; it adds development tools, not product
+features. There are no product extras for NER, HTTP proxy, provider adapters or
+model downloads, nor a public path requiring such an optional package.
 
-Базовые imports и `pgw --help` используют runtime-зависимости, объявленные
-выше. При этих вызовах системный keyring backend не выбирается и операции
-с ключами не выполняются. Проверки границы запускаются в отдельном Python-процессе.
+Names `ner` and `proxy` are reserved in the plan for possible separately approved
+features; they are not published as empty extras. Before implementation, define
+capability, dependencies, lazy-import boundary and the tested missing-extra error
+in a separate decision. A provider SDK also needs an explicit adapter contract;
+an extra name is not that decision.
 
-Единственный объявленный extra — `dev`. Он устанавливает инструменты разработки
-и не добавляет продуктовых возможностей. Для NER, HTTP proxy, provider adapters
-или загрузки моделей продуктовых extras сейчас нет. Нет и публичного пути,
-который требовал бы установить такой extra при отсутствии optional package.
+This document changes no base dependencies, public commands, exceptions or
+security guarantees. See the [security guide](SECURITY.md) for keyring requirements
+and the trust boundary.
 
-Если появятся согласованные возможности NER или proxy, для них предполагаются
-имена `ner` и `proxy`. Они зарезервированы в этом плане, но не публикуются
-в metadata как пустые extras. Перед реализацией нужно определить capability,
-зависимости, lazy-import boundary и проверяемую ошибку при отсутствии extra
-в отдельном решении. Подключение provider SDK также требует определённого
-контракта конкретного адаптера. Имена extras не заменяют это решение.
+## Checks
 
-Состав базовых зависимостей, публичные команды, исключения и security-гарантии
-этой фиксацией не изменяются. Требования безопасного keyring и граница доверия
-описаны в [security-документации](SECURITY.md).
+`tests/test_installation_dependencies.py` checks direct base requirements, extras
+and consistency of Python support with CI. A separate process tests public import
+and help while forbidding development/NER/framework/provider imports and keyring
+backend selection.
 
-## Проверки
+These complement `tools/verify_package_build.py`, which installs wheel and sdist
+in two separate clean venvs. It checks modules, `py.typed`, license/build metadata
+and absence of known private/cache/environment paths, then runs installed `pgw`,
+compares versions and performs a synthetic API round trip outside checkout.
+Network access and system-keyring selection are forbidden in that smoke; keys
+exist only in memory and key access is replaced by local test doubles. Membership
+checks are not an arbitrary-secret scanner for file contents.
 
-`tests/test_installation_dependencies.py` фиксирует прямые базовые требования,
-состав extras и согласованность поддерживаемых Python с CI. Отдельный процесс
-проверяет публичный импорт и help при запрете импортов development tools,
-NER/framework packages и provider SDK, а также вызова keyring backend.
-
-Эти проверки дополняют build gate `tools/verify_package_build.py`.
-Build gate устанавливает wheel и sdist в два отдельных чистых venv.
-Он проверяет наличие модулей, `py.typed`, лицензии и build metadata, а также
-отсутствие известных private/cache/env путей. Затем запускает установленный
-`pgw`, сверяет версии и выполняет синтетический API round trip вне checkout.
-В smoke запрещены сеть и выбор системного keyring; ключ создаётся только
-в памяти, а функции получения ключей заменены локальными test doubles.
-Проверка состава не является сканером произвольных секретов внутри файлов.
-
-Локальная команда из чистого Git checkout:
+From a clean Git checkout:
 
 ```bash
 python tools/verify_package_build.py --temp-root /path/to/temporary-directory
 ```
 
-Укажите реальный временный каталог вне checkout. Build и установка могут
-получать build/runtime зависимости из package index; сеть запрещена именно
-во время API smoke. Этот тест не заменяет установку в полностью offline-среде.
-В CI команда выполняется для Python 3.11/3.12 на Windows/Ubuntu. Результаты
-каждой ОС и каждого SHA подтверждаются отдельно первичными jobs.
+Supply an actual temporary directory outside checkout. Build/installation may
+fetch dependencies from a package index; the network ban applies to the API
+smoke, not to a claim of fully offline installation. CI runs this on Python
+3.11/3.12 and Windows/Ubuntu; each OS/SHA needs its own primary job results.
+An import check alone cannot prove all optional-library graphs or platform
+keyring operation.
 
-Полный граф всех возможных optional libraries и платформенная работоспособность
-keyring одной проверкой импорта не доказываются.
+<!-- pgw-section: diagnostics -->
+## Safe initial diagnostics
 
-## Безопасная первичная диагностика
+[ADR-113](ADR-113-safe-doctor.md) defines doctor; `pgw --describe` gives current
+syntax. It checks installation, required imports, supported Python and capability
+of the platform's standard keyring. Configuration is checked only when explicitly
+selected. There is no automatic repair, extra installation, key read or report
+upload.
 
-Диагностика doctor описана в [ADR-113](ADR-113-safe-doctor.md), а актуальный
-синтаксис доступен через `pgw --describe`. Она проверяет установку, обязательные
-импорты, поддерживаемый Python и capability штатного платформенного keyring.
-Конфигурация проверяется только при явном выборе файла. Автоматического ремонта,
-установки extras, чтения ключей или отправки отчёта нет.
-
-Пример отчёта исправной установки с доступным штатным backend:
+Example for a healthy installation with an available standard backend:
 
 ```text
 PACKAGE: OK
@@ -101,20 +96,18 @@ OPTIONAL: NOT_AVAILABLE
 SUMMARY: OK
 ```
 
-Команда печатает только эти имена проверок и статусы: пользовательские пути,
-имена backend, credentials и содержимое конфигурации не включаются. Публиковать
-можно сам отчёт; не прикладывайте выбранный конфигурационный файл или окружение.
-Недоступный backend даёт WARNING и exit 0; отсутствие обязательной зависимости
-или ошибка выбранной конфигурации — FAILURE и exit 3. Успешный predicate не
-доказывает, что конкретный vault разблокирован или содержит ключ. Проверяется
-штатный backend, а не пользовательские overrides. На Linux разрешены только
-локальные D-Bus capability queries, без активации сервиса, prompt или unlock;
-внешняя сеть запрещена. Дочерняя проверка ограничена одним ожиданием 5 секунд
-и 1024 байтами вывода, без повтора; отказ или timeout дают WARNING.
+Only these check names and closed statuses are printed, not user paths, backend
+names, credentials or configuration contents. The report itself may be shared;
+do not attach the chosen configuration file or environment. An unavailable backend
+gives WARNING/exit 0; a missing required dependency or invalid selected config
+gives FAILURE/exit 3. A successful predicate does not prove a vault is unlocked
+or contains a key. It checks the standard backend, not custom overrides. Linux
+permits only local D-Bus capability queries without activation, prompting or
+unlocking; external networking is forbidden. The child check has one 5-second
+wait and 1024 output bytes, no retry; failure/timeout gives WARNING.
 
-Read-only относится к диагностическим проверкам, пользовательским данным,
-конфигурации и keyring. Обычный `pgw doctor` может создать стандартный Python
-`__pycache__` при импорте. Для исключения этих import-cache writes запустите
-`python -B -m privacy_gateway doctor` интерпретатором выбранного окружения.
-Это не гарантия полного отсутствия любых записей процесса или ОС; подробная
-граница зафиксирована в [ADR-113](ADR-113-safe-doctor.md).
+Read-only covers diagnostic checks, user data, configuration and keyring. Ordinary
+`pgw doctor` may create standard Python `__pycache__` during imports. To exclude
+those writes, use `python -B -m privacy_gateway doctor` with the selected
+environment's interpreter. This does not promise zero writes by the process or
+OS; see the exact boundary in ADR-113.

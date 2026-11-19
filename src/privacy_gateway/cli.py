@@ -99,11 +99,9 @@ def _emit_json_success(command: str, result: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
 
 
-def _emit_json_error(
-    command: str, code: str, error_type: str, message: str
-) -> None:
+def _emit_json_error(command: str, code: str, error_type: str, message: str) -> None:
     if code not in _JSON_ERROR_CODES:
-        raise AssertionError(f"незарегистрированный machine error code: {code}")
+        raise AssertionError(f"unregistered machine error code: {code}")
     payload = {
         "schema_version": _JSON_SCHEMA_VERSION,
         "ok": False,
@@ -143,7 +141,7 @@ def _report_exception(
     exc: Exception,
     rules: tuple[_ExceptionRule, ...],
     *,
-    default_prefix: str = "Непредвиденная ошибка",
+    default_prefix: str = "Unexpected error",
     default_code: int = 1,
 ) -> int:
     """Напечатать `{prefix}: {exc}` в stderr и вернуть код завершения.
@@ -164,9 +162,7 @@ def _report_exception(
             )
             print(f"{rule.prefix}: {exc}", file=sys.stderr)
             return rule.exit_code
-    _record_machine_error(
-        "internal_error", "internal_error", "Внутренняя ошибка."
-    )
+    _record_machine_error("internal_error", "internal_error", "Internal error.")
     print(f"{default_prefix}: {exc}", file=sys.stderr)
     return default_code
 
@@ -177,29 +173,25 @@ _INPUT_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(
         InputError,
         3,
-        "Ошибка чтения",
-        _MachineError(
-            "input_error", "input_error", "Не удалось прочитать входные данные."
-        ),
+        "Read error",
+        _MachineError("input_error", "input_error", "Could not read input data."),
     ),
 )
 _LLM_INPUT_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(
         InputError,
         3,
-        "Ошибка чтения ответа LLM",
-        _MachineError(
-            "input_error", "input_error", "Не удалось прочитать входные данные."
-        ),
+        "Cannot read LLM response",
+        _MachineError("input_error", "input_error", "Could not read input data."),
     ),
 )
 _CONFIG_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(
         ConfigurationError,
         3,
-        "Ошибка конфигурации",
+        "Configuration error",
         _MachineError(
-            "configuration_error", "configuration_error", "Недопустимая конфигурация."
+            "configuration_error", "configuration_error", "Invalid configuration."
         ),
     ),
 )
@@ -207,11 +199,11 @@ _KEYSTORE_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(
         KeystoreError,
         4,
-        "Ошибка keystore",
+        "Key-store error",
         _MachineError(
             "keystore_error",
             "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
+            "Key-store operation failed.",
         ),
     ),
 )
@@ -222,14 +214,14 @@ _RESTORE_WRITE_RULES: tuple[_ExceptionRule, ...] = (
     _ExceptionRule(
         FileExistsError,
         3,
-        "Ошибка",
-        _MachineError("output_error", "output_error", "Не удалось записать результат."),
+        "Error",
+        _MachineError("output_error", "output_error", "Could not write the result."),
     ),
     _ExceptionRule(
         ConfigurationError,
         3,
-        "Ошибка записи",
-        _MachineError("output_error", "output_error", "Не удалось записать результат."),
+        "Write error",
+        _MachineError("output_error", "output_error", "Could not write the result."),
     ),
 )
 
@@ -237,117 +229,114 @@ _RESTORE_WRITE_RULES: tuple[_ExceptionRule, ...] = (
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pgw",
-        description="Privacy Gateway — безопасная подготовка текста для LLM.",
+        description="Privacy Gateway: local text preparation for an LLM.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     # --- doctor ---
     from privacy_gateway.doctor import configure_parser
 
-    doctor_parser = sub.add_parser("doctor", help="Проверка базовой установки.")
+    doctor_parser = sub.add_parser("doctor", help="Check the base installation.")
     configure_parser(doctor_parser)
 
     # --- detect ---
     detect_parser = sub.add_parser(
-        "detect", help="Диагностика: найти сущности без шифрования."
+        "detect", help="Diagnostic entity detection without encryption."
     )
     detect_parser.add_argument(
         "file",
-        metavar="ФАЙЛ",
-        help="Путь к файлу или '-' для stdin.",
+        metavar="FILE",
+        help="File path, or '-' for stdin.",
     )
     detect_parser.add_argument(
         "--encoding",
         metavar="ENC",
         default=None,
-        help="Кодировка входного файла (utf-8, cp1251 и др.).",
+        help="Input encoding (utf-8, cp1251, etc.).",
     )
     detect_parser.add_argument(
         "--config",
         metavar="ENTITIES_CONFIG",
         default=None,
-        help="Путь к entities.yaml детектора.",
+        help="Path to the detector entities.yaml configuration.",
     )
 
     # --- prepare ---
     prepare_parser = sub.add_parser(
         "prepare",
-        help="Подготовка: токенизация, шифрование, запись артефактов.",
+        help="Prepare text: tokenize, encrypt and write artifacts.",
     )
     prepare_parser.add_argument(
         "file",
-        metavar="ФАЙЛ",
-        help="Путь к файлу или '-' для stdin.",
+        metavar="FILE",
+        help="File path, or '-' for stdin.",
     )
     prepare_parser.add_argument(
         "--out",
-        metavar="КАТАЛОГ",
+        metavar="DIRECTORY",
         default=None,
-        help="Каталог для артефактов (prompt.txt, route.json, manifest.json).",
+        help="Artifact directory (prompt.txt, route.json, manifest.json).",
     )
     prepare_parser.add_argument(
         "--routing",
         metavar="ROUTING_YAML",
         default=None,
-        help="Путь к YAML-конфигу маршрутизации.",
+        help="Path to the routing YAML configuration.",
     )
     prepare_parser.add_argument(
         "--config",
         metavar="ENTITIES_CONFIG",
         default=None,
-        help=(
-            "Путь к entities.yaml детектора. "
-            "По умолчанию: config.example/entities.yaml."
-        ),
+        help=("Path to detector entities.yaml. Default: config.example/entities.yaml."),
     )
     prepare_parser.add_argument(
         "--encoding",
         metavar="ENC",
         default=None,
-        help="Кодировка входного файла.",
+        help="Input file encoding.",
     )
     prepare_parser.add_argument(
         "--overwrite",
         action="store_true",
         default=False,
-        help="Перезаписывать существующие артефакты.",
+        help="Overwrite existing artifacts.",
     )
 
     # --- restore ---
     restore_parser = sub.add_parser(
         "restore",
-        help="Восстановление исходных значений из ответа LLM.",
+        help="Restore original values in an LLM response.",
     )
     restore_parser.add_argument(
         "file",
-        metavar="ФАЙЛ",
-        help="Путь к файлу с ответом LLM или '-' для stdin.",
+        metavar="FILE",
+        help="LLM response file path, or '-' for stdin.",
     )
     restore_parser.add_argument(
         "--route",
         metavar="ROUTE_JSON",
         required=True,
-        help="Путь к route.json от соответствующего запуска prepare.",
+        help="Path to route.json from the corresponding prepare run.",
     )
     restore_parser.add_argument(
         "--out",
-        metavar="ФАЙЛ",
+        metavar="FILE",
         default=None,
-        help="Путь к файлу результата. Если не указан — вывод в stdout.",
+        help="Result file path. If omitted, write to stdout.",
     )
     restore_parser.add_argument(
         "--overwrite",
         action="store_true",
         default=False,
-        help="Перезаписывать существующий файл результата.",
+        help="Overwrite an existing result file.",
     )
     restore_parser.add_argument(
         "--manifest",
         metavar="MANIFEST_JSON",
         default=None,
         help=(
-            "Явный путь к manifest.json. По умолчанию разрешается "
-            "относительно каталога route.json (ADR-15)."
+            "Explicit manifest.json path. The default is resolved "
+            "relative to the route.json directory (ADR-15)."
         ),
     )
     restore_parser.add_argument(
@@ -355,46 +344,46 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         default=False,
         help=(
-            "Мягкий режим: неизвестные и искажённые токены дают предупреждение, "
-            "а не ошибку. По умолчанию применяется строгий режим (ADR-16)."
+            "Lenient mode: unknown or malformed tokens produce warnings "
+            "instead of errors. Strict mode is the default (ADR-16)."
         ),
     )
 
     # --- key ---
     key_parser = sub.add_parser(
         "key",
-        help="Управление Fernet-ключом в keyring.",
+        help="Manage the Fernet key in the system keyring.",
     )
     key_sub = key_parser.add_subparsers(dest="key_command", required=True)
 
     # key create
     key_create = key_sub.add_parser(
         "create",
-        help="Создать новый Fernet-ключ в keyring.",
+        help="Create a new Fernet key in the system keyring.",
     )
     key_create.add_argument(
         "--force",
         action="store_true",
         default=False,
         help=(
-            "Перезаписать существующий ключ. "
-            "ВНИМАНИЕ: все ранее созданные манифесты станут нечитаемыми. "
-            "Для безопасной ротации используйте 'pgw key rotate'."
+            "Overwrite the existing key. WARNING: all previously created "
+            "manifests will become unreadable. To rotate instead, use "
+            "'pgw key rotate'."
         ),
     )
 
     # key status
     key_sub.add_parser(
         "status",
-        help="Проверить наличие ключа без вывода его значения.",
+        help="Check key presence without printing its value.",
     )
 
     # key rotate
     key_sub.add_parser(
         "rotate",
         help=(
-            "Ротация ключа: новый становится активным, "
-            "старый остаётся для чтения манифестов."
+            "Rotate the key: activate a new key and retain the previous "
+            "one for manifest reads."
         ),
     )
 
@@ -494,13 +483,13 @@ def _cmd_prepare(args: argparse.Namespace) -> int:
         return 0
     elif result.status == ProcessingStatus.PENDING:
         _record_machine_error(
-            "pending", "processing_state", "Требуется ручное подтверждение."
+            "pending", "processing_state", "Manual approval is required."
         )
         print(f"PENDING: {result.message}", file=sys.stderr)
         return 2
     else:  # BLOCKED
         _record_machine_error(
-            "blocked", "processing_state", "Обработка заблокирована политикой."
+            "blocked", "processing_state", "Processing was blocked by policy."
         )
         print(f"BLOCKED: {result.message}", file=sys.stderr)
         return 3
@@ -523,40 +512,38 @@ def _cmd_restore(args: argparse.Namespace) -> int:
     # токенам (5) проверяется раньше общей ошибки восстановления (3).
     restore_rules: tuple[_ExceptionRule, ...] = (
         _ExceptionRule(
-        ConfigurationError,
-        3,
-        "Ошибка конфигурации",
-        _MachineError(
-            "configuration_error", "configuration_error", "Недопустимая конфигурация."
+            ConfigurationError,
+            3,
+            "Configuration error",
+            _MachineError(
+                "configuration_error", "configuration_error", "Invalid configuration."
+            ),
         ),
-    ),
         _ExceptionRule(
-        KeystoreError,
-        4,
-        "Ошибка keystore",
-        _MachineError(
-            "keystore_error",
-            "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
+            KeystoreError,
+            4,
+            "Key-store error",
+            _MachineError(
+                "keystore_error",
+                "keystore_error",
+                "Key-store operation failed.",
+            ),
         ),
-    ),
         _ExceptionRule(
             RestoreStrictError,
             5,
-            "Строгий отказ по токенам",
+            "Strict token rejection",
             _MachineError(
                 "strict_restore_error",
                 "restore_error",
-                "Строгое восстановление отклонено.",
+                "Strict restoration was rejected.",
             ),
         ),
         _ExceptionRule(
             RestoreError,
             3,
-            "Ошибка восстановления",
-            _MachineError(
-                "restore_error", "restore_error", "Восстановление не выполнено."
-            ),
+            "Restore error",
+            _MachineError("restore_error", "restore_error", "Restoration failed."),
         ),
     )
 
@@ -571,32 +558,32 @@ def _cmd_restore(args: argparse.Namespace) -> int:
         return _report_exception(exc, restore_rules)
 
     for warning in result.warnings:
-        print(f"ПРЕДУПРЕЖДЕНИЕ: {warning}", file=sys.stderr)
+        print(f"WARNING: {warning}", file=sys.stderr)
 
     report_lines = [
         (
-            f"Восстановлено: {result.tokens_found_count}/"
-            f"{result.tokens_expected_count} токенов"
+            f"Restored: {result.tokens_found_count}/"
+            f"{result.tokens_expected_count} tokens"
         ),
     ]
     if result.tokens_missing_count:
         report_lines.append(
-            f"  Не найдено в ответе: {result.tokens_missing_count} "
+            f"  Missing from response: {result.tokens_missing_count} "
             f"({sorted(result.tokens_missing)})"
         )
     if result.tokens_unknown_count:
         report_lines.append(
-            f"  Неизвестных токенов: {result.tokens_unknown_count} "
+            f"  Unknown tokens: {result.tokens_unknown_count} "
             f"({sorted(result.tokens_unknown)})"
         )
     if result.tokens_malformed_count:
         report_lines.append(
-            f"  Искажённых кандидатов: {result.tokens_malformed_count} "
+            f"  Malformed candidates: {result.tokens_malformed_count} "
             f"({result.tokens_malformed})"
         )
     if result.tokens_duplicated:
         report_lines.append(
-            f"  Дублированных токенов: {len(result.tokens_duplicated)} "
+            f"  Duplicate tokens: {len(result.tokens_duplicated)} "
             f"({sorted(result.tokens_duplicated)})"
         )
     for line in report_lines:
@@ -622,35 +609,35 @@ def _cmd_key_create(args: argparse.Namespace) -> int:
 
     rules: tuple[_ExceptionRule, ...] = (
         _ExceptionRule(
-        KeystoreError,
-        4,
-        "Ошибка keystore",
-        _MachineError(
-            "keystore_error",
-            "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
+            KeystoreError,
+            4,
+            "Key-store error",
+            _MachineError(
+                "keystore_error",
+                "keystore_error",
+                "Key-store operation failed.",
+            ),
         ),
-    ),
     )
 
     try:
         create_key(force=args.force)
     except KeyExistsError:
-        _record_machine_error(
-            "key_exists", "keystore_error", "Ключ уже существует."
-        )
+        _record_machine_error("key_exists", "keystore_error", "Key already exists.")
         # Фиксированное безопасное сообщение без str(exc).
         print(
-            "Ключ уже существует. Используйте --force для перезаписи "
-            "(внимание: все существующие манифесты станут нечитаемыми). "
-            "Для безопасной ротации используйте 'pgw key rotate'.",
+            (
+                "Key already exists. Use --force to overwrite it (WARNING: "
+                "all existing manifests will become unreadable). To rotate "
+                "instead, use 'pgw key rotate'."
+            ),
             file=sys.stderr,
         )
         return 3
     except Exception as exc:  # noqa: BLE001
         return _report_exception(exc, rules)
 
-    print("Ключ успешно создан.")
+    print("Key created successfully.")
     return 0
 
 
@@ -660,15 +647,15 @@ def _cmd_key_status(_args: argparse.Namespace) -> int:
 
     rules: tuple[_ExceptionRule, ...] = (
         _ExceptionRule(
-        KeystoreError,
-        4,
-        "Ошибка keystore",
-        _MachineError(
-            "keystore_error",
-            "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
+            KeystoreError,
+            4,
+            "Key-store error",
+            _MachineError(
+                "keystore_error",
+                "keystore_error",
+                "Key-store operation failed.",
+            ),
         ),
-    ),
     )
 
     try:
@@ -677,12 +664,10 @@ def _cmd_key_status(_args: argparse.Namespace) -> int:
         return _report_exception(exc, rules)
 
     if exists:
-        print("Ключ присутствует в keyring.")
+        print("Key is present in the system keyring.")
     else:
-        _record_machine_error(
-            "key_not_found", "keystore_error", "Ключ не найден."
-        )
-        print("Ключ не найден. Запустите 'pgw key create'.", file=sys.stderr)
+        _record_machine_error("key_not_found", "keystore_error", "Key not found.")
+        print("Key not found. Run 'pgw key create'.", file=sys.stderr)
         return 3
     return 0
 
@@ -696,19 +681,19 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
         _ExceptionRule(
             KeyNotFoundError,
             4,
-            "Ключ не найден. Запустите 'pgw key create' сначала. Детали",
-            _MachineError("key_not_found", "keystore_error", "Ключ не найден."),
+            "Key not found. Run 'pgw key create' first. Details",
+            _MachineError("key_not_found", "keystore_error", "Key not found."),
         ),
         _ExceptionRule(
-        KeystoreError,
-        4,
-        "Ошибка keystore",
-        _MachineError(
-            "keystore_error",
-            "keystore_error",
-            "Операция с хранилищем ключей не выполнена.",
+            KeystoreError,
+            4,
+            "Key-store error",
+            _MachineError(
+                "keystore_error",
+                "keystore_error",
+                "Key-store operation failed.",
+            ),
         ),
-    ),
     )
 
     try:
@@ -717,10 +702,11 @@ def _cmd_key_rotate(_args: argparse.Namespace) -> int:
         return _report_exception(exc, rules)
 
     print(
-        "Ротация выполнена. Новый ключ активен. "
-        "Старый ключ сохранён для чтения манифестов, созданных до ротации."
+        "Rotation completed. The new key is active. The previous key "
+        "is retained to read manifests from the previous generation."
     )
     return 0
+
 
 # ---------------------------------------------------------------------------
 # Машиночитаемая интроспекция CLI-контракта (#151, ADR-151)
@@ -750,8 +736,8 @@ _SIDE_EFFECT_VALUES: tuple[str, ...] = (
 )
 
 _METAVAR_TYPES: dict[str, str] = {
-    "ФАЙЛ": "path",
-    "КАТАЛОГ": "path",
+    "FILE": "path",
+    "DIRECTORY": "path",
     "ROUTE_JSON": "path",
     "MANIFEST_JSON": "path",
     "ROUTING_YAML": "path",
@@ -786,13 +772,13 @@ _GLOBAL_CONTROLS: tuple[_GlobalControl, ...] = (
         "--describe",
         "introspection",
         "only_argument",
-        "Печатает машиночитаемый каталог CLI-контракта.",
+        "Print the machine-readable CLI contract catalog.",
     ),
     _GlobalControl(
         "--json",
         "output_mode",
         "before_command",
-        "Включает JSON-режим поддерживаемых операционных команд.",
+        "Enable JSON output for supported operational commands.",
     ),
 )
 
@@ -933,9 +919,7 @@ def _describe_argument(action: argparse.Action) -> dict[str, Any]:
     else:
         metavar = action.metavar if isinstance(action.metavar, str) else None
         if metavar is None or metavar not in _METAVAR_TYPES:
-            raise AssertionError(
-                f"нет машинного типа для параметра {action.dest!r}"
-            )
+            raise AssertionError(f"no machine type for parameter {action.dest!r}")
         argument_type = _METAVAR_TYPES[metavar]
         cardinality = "one"
     raw_default = action.default
@@ -1040,7 +1024,7 @@ def _run_describe(argv: list[str]) -> int:
     """Напечатать каталог. Побочные эффекты отсутствуют (ADR-151)."""
     if argv != [_DESCRIBE_FLAG]:
         print(
-            f"{_DESCRIBE_FLAG} не принимает дополнительные аргументы.",
+            f"{_DESCRIBE_FLAG} does not accept additional arguments.",
             file=sys.stderr,
         )
         return 3
@@ -1066,7 +1050,7 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
                     _json_command_identifier(parse_argv),
                     "invalid_arguments",
                     "usage_error",
-                    "Недопустимые аргументы командной строки.",
+                    "Invalid command-line arguments.",
                 )
             raise SystemExit(3) from None
         raise
@@ -1088,8 +1072,8 @@ def _dispatch(args: argparse.Namespace) -> int:
             return _cmd_key_status(args)
         if args.key_command == "rotate":
             return _cmd_key_rotate(args)
-        raise AssertionError(f"нераспознанная key-подкоманда: {args.key_command!r}")
-    raise AssertionError(f"нераспознанная команда: {args.command!r}")
+        raise AssertionError(f"unrecognized key subcommand: {args.key_command!r}")
+    raise AssertionError(f"unrecognized command: {args.command!r}")
 
 
 def _json_success_result(command: str, args: argparse.Namespace) -> dict[str, Any]:
@@ -1103,7 +1087,7 @@ def _json_success_result(command: str, args: argparse.Namespace) -> dict[str, An
         return {"present": True}
     if command == "key rotate":
         return {"rotated": True}
-    raise AssertionError(f"JSON не поддерживается для {command!r}")
+    raise AssertionError(f"JSON is not supported for {command!r}")
 
 
 def _run_json_command(args: argparse.Namespace) -> int:
@@ -1115,7 +1099,7 @@ def _run_json_command(args: argparse.Namespace) -> int:
             "cli",
             "unsupported_command",
             "usage_error",
-            "Команда не поддерживает JSON-режим.",
+            "This command does not support JSON output.",
         )
         return 3
     if command == "restore" and not args.out:
@@ -1123,7 +1107,7 @@ def _run_json_command(args: argparse.Namespace) -> int:
             command,
             "restore_output_required",
             "usage_error",
-            "JSON-режим restore требует --out.",
+            "JSON restore requires --out.",
         )
         return 3
 
@@ -1140,7 +1124,7 @@ def _run_json_command(args: argparse.Namespace) -> int:
                 command,
                 "internal_error",
                 "internal_error",
-                "Внутренняя ошибка.",
+                "Internal error.",
             )
             return 1
     finally:
@@ -1155,7 +1139,7 @@ def _run_json_command(args: argparse.Namespace) -> int:
             command,
             "internal_error",
             "internal_error",
-            "Внутренняя ошибка.",
+            "Internal error.",
         )
         return 1
 

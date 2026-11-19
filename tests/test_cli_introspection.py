@@ -391,15 +391,28 @@ def test_architecture_and_decisions_record_adr_151() -> None:
     assert "ADR-151" in decisions
 
 
-def test_agent_example_documents_safe_introspection() -> None:
+@pytest.mark.parametrize(
+    ("relative", "safety_phrase"),
+    [
+        (
+            "examples/06_cli_round_trip.md",
+            "accesses no keyring and creates no files",
+        ),
+        (
+            "examples/06_cli_round_trip.ru.md",
+            "не обращается к keyring и не создаёт файлов",
+        ),
+    ],
+)
+def test_agent_example_documents_safe_introspection(
+    relative: str, safety_phrase: str
+) -> None:
     """Пример содержит безопасный agent-сценарий без побочных эффектов."""
-    text = (_DOCS_ROOT / "examples" / "06_cli_round_trip.md").read_text(
-        encoding="utf-8"
-    )
+    text = (_DOCS_ROOT / relative).read_text(encoding="utf-8")
     assert "pgw --describe" in text
     assert "(../docs/ADR-151-cli-introspection.md)" in text
-    collapsed = _collapsed("examples/06_cli_round_trip.md")
-    assert "не обращается к keyring и не создаёт файлов" in collapsed
+    collapsed = _collapsed(relative)
+    assert safety_phrase in collapsed
 
 _LEAF_COMMAND_ARGV: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("detect", ("detect", "--unexpected")),
