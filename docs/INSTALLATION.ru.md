@@ -37,7 +37,7 @@ Python 3.11 вместо используемого по умолчанию 3.12
 ```bash
 set -e
 Python="${PGW_PYTHON:-python3.12}"
-Source="git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843"
+Source="git+https://github.com/MRDK80/privacy-gateway.git@21509e10055c36931fd51d71cbaeafdd3e73570a"
 "$Python" -m venv .pipx-tools
 PipxPython="$PWD/.pipx-tools/bin/python"
 "$PipxPython" -m pip install pipx
@@ -59,7 +59,7 @@ Pgw="$PipxBin/pgw"
 ```powershell
 $ErrorActionPreference = 'Stop'
 $Python = if ($env:PGW_PYTHON) { $env:PGW_PYTHON } else { 'python' }
-$Source = 'git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843'
+$Source = 'git+https://github.com/MRDK80/privacy-gateway.git@21509e10055c36931fd51d71cbaeafdd3e73570a'
 & $Python -m venv .pipx-tools
 if ($LASTEXITCODE -ne 0) { throw 'venv failed' }
 $PipxPython = Join-Path $PWD '.pipx-tools\Scripts\python.exe'
@@ -92,7 +92,7 @@ metadata: у `pgw` нет отдельного флага `--version`.
 ```bash
 set -e
 Python="${PGW_PYTHON:-python3.12}"
-Source="git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843"
+Source="git+https://github.com/MRDK80/privacy-gateway.git@21509e10055c36931fd51d71cbaeafdd3e73570a"
 "$Python" -m venv .venv
 VenvPython="$PWD/.venv/bin/python"
 "$VenvPython" -m pip install "$Source"
@@ -108,7 +108,7 @@ VenvPython="$PWD/.venv/bin/python"
 ```powershell
 $ErrorActionPreference = 'Stop'
 $Python = if ($env:PGW_PYTHON) { $env:PGW_PYTHON } else { 'python' }
-$Source = 'git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843'
+$Source = 'git+https://github.com/MRDK80/privacy-gateway.git@21509e10055c36931fd51d71cbaeafdd3e73570a'
 & $Python -m venv .venv
 if ($LASTEXITCODE -ne 0) { throw 'venv failed' }
 $VenvPython = Join-Path $PWD '.venv\Scripts\python.exe'

@@ -14,10 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize("name", ["README.md", "README.ru.md"])
 def test_readme_language_links_and_local_targets(name: str) -> None:
     text = (ROOT / name).read_text(encoding="utf-8")
-    assert "[English](README.md) | [Русский](README.ru.md)" in text.splitlines()[:5]
+    prefix = "https://github.com/MRDK80/privacy-gateway/blob/main/"
+    switch = f"[English]({prefix}README.md) | [Русский]({prefix}README.ru.md)"
+    assert switch in text.splitlines()[:5]
     links = re.findall(r"\[[^\]]*\]\(([^)]+)\)", text)
     assert links
     for link in links:
+        if link.startswith(prefix):
+            link = link[len(prefix):]
         parsed = urlsplit(link)
         if parsed.scheme or parsed.netloc or not parsed.path:
             continue

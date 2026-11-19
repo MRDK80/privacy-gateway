@@ -74,3 +74,12 @@ Positive/mutation tests live in `tests/test_doc_language_checker.py`.
 
 The #121 security migration also registers `SECURITY.md`, `docs/SECURITY.md`,
 `docs/threat-model.md` and `docs/detection.md` with preserved Russian companions.
+
+## Package-index root links — #126
+
+Only exact HTTPS `github.com/MRDK80/privacy-gateway/blob/main/` links are mapped
+to repository-root files for the same path/private/symlink/encoding/anchor checks.
+Queries on these repository links fail. Root README language switches may use
+this exact absolute base; other pairs retain the relative switch. Other external
+URLs are not fetched or certified. This validates local candidate targets and
+does not claim that candidate English documents already exist on remote main.
