@@ -61,21 +61,32 @@ Backend выбирается средствами библиотеки `keyring`
 
 ## Установка
 
+Для CLI используйте pipx с Python 3.11/3.12. До отдельно подтверждённой PyPI
+публикации устанавливайте проверенный исходный commit, а не одноимённый пакет
+из index. Если pipx уже установлен:
+
 ```bash
-git clone https://github.com/MRDK80/privacy-gateway.git
-cd privacy-gateway
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+pipx install --python python3.12 "git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843"
+pgw --help
+pgw doctor
 ```
 
-В Windows PowerShell используйте `py -3.11 -m venv .venv` и
-`.venv\Scripts\Activate.ps1`, далее та же команда установки. Варианты
-developer-окружения, включая единую установку всех инструментов quality gate,
-и политика поддерживаемых версий Python — в
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+Если `pgw` ещё не доступен в PATH, используйте путь, показанный pipx.
+[Полная инструкция](docs/INSTALLATION.md) содержит отдельные Linux/Windows
+PowerShell команды без изменения shell profile, bootstrap pipx, Library API
+через venv/pip, обновление, удаление и безопасную диагностику.
+
+Для разработки и quality gate используйте [CONTRIBUTING.md](CONTRIBUTING.md).
+Карта зависимостей и единственный extra `dev` — в
+[DEPENDENCIES.md](docs/DEPENDENCIES.md). Продуктовых NER/proxy/provider extras нет.
 
 ## Первый запуск
+
+Пример ниже запускается из отдельного checkout репозитория с каталогом
+`examples`; pipx и wheel не устанавливают repository examples. См.
+[инструкцию установки](docs/INSTALLATION.md) для выбора CLI и Library API
+окружения. Для CLI key-команды используйте установленный `pgw`, а Python-пример
+выполняйте интерпретатором venv с установленным Library API.
 
 ```bash
 pgw key create

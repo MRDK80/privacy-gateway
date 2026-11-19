@@ -622,6 +622,13 @@ def main(argv: list[str] | None = None) -> int:
         if observed["version"] != expected or observed["metadata"] != expected:
             raise BuildGateError(f"{label}: installed version does not match canonical")
 
+    if not setuptools_pin:
+        run([
+            sys.executable, str(source / "tools" / "verify_installation_docs.py"),
+            "--document", str(source / "docs" / "INSTALLATION.md"),
+            "--temp-root", str(temp_root / "documented-installations"),
+        ])
+
     ensure_unchanged(repo_root, before_state)
     print(
         f"build gate ({mode}) пройден: версия {expected}, "
