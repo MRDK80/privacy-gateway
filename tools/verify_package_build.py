@@ -26,9 +26,10 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import tomllib
 import zipfile
 from dataclasses import dataclass
-from email import message_from_bytes
+from email import message_from_bytes, message_from_string
 from email.message import Message
 from pathlib import Path, PurePosixPath
 
@@ -337,6 +338,55 @@ def verify_artifact_contents(source: Path, sdist: Path, wheel: Path) -> None:
         raise BuildGateError("sdist omits build metadata, README or license")
 
 
+
+def verify_public_metadata(source: Path, sdist: Path, wheel: Path) -> None:
+    """Check both distribution descriptions against canonical source metadata."""
+    project = tomllib.loads((source / "pyproject.toml").read_text("utf-8"))["project"]
+    if project.get("readme") != "README.md":
+        raise BuildGateError("public long description must use README.md")
+    readme = (source / "README.md").read_text("utf-8").rstrip("\n")
+    expected = {
+        "Name": project["name"],
+        "Summary": project["description"],
+        "Requires-Python": project["requires-python"],
+        "Description-Content-Type": "text/markdown",
+        "Keywords": ",".join(project["keywords"]),
+    }
+    urls = sorted(f"{name}, {url}" for name, url in project["urls"].items())
+    payloads: list[bytes] = []
+    with zipfile.ZipFile(wheel) as archive:
+        names = [n for n in archive.namelist() if n.endswith(".dist-info/METADATA")]
+        if len(names) != 1:
+            raise BuildGateError("expected one wheel public metadata document")
+        payloads.append(archive.read(names[0]))
+    with tarfile.open(sdist) as archive:
+        members = [
+            m for m in archive.getmembers()
+            if len(PurePosixPath(m.name).parts) == 2
+            and PurePosixPath(m.name).name == "PKG-INFO" and m.isfile()
+        ]
+        if len(members) != 1:
+            raise BuildGateError("expected one root sdist public metadata document")
+        handle = archive.extractfile(members[0])
+        if handle is None:
+            raise BuildGateError("cannot read sdist public metadata")
+        with handle:
+            payloads.append(handle.read())
+    for raw in payloads:
+        message = message_from_string(raw.decode("utf-8").replace("\r\n", "\n"))
+        for name, value in expected.items():
+            if header_values(message, name) != (value,):
+                raise BuildGateError(f"public metadata mismatch: {name}")
+        if sorted(header_values(message, "Project-URL")) != urls:
+            raise BuildGateError("public metadata mismatch: Project-URL")
+        classifiers = sorted(project["classifiers"])
+        if sorted(header_values(message, "Classifier")) != classifiers:
+            raise BuildGateError("public metadata mismatch: Classifier")
+        payload = message.get_payload()
+        if not isinstance(payload, str) or payload.rstrip("\n") != readme:
+            raise BuildGateError("public metadata does not embed canonical README")
+
+
 def validate_artifact_paths(names: set[str]) -> None:
     forbidden = {
         ".git", ".venv", ".agent-private", "__pycache__", ".pytest_cache",
@@ -597,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     sdist, wheel = artifacts(outdir)
     sdist_license = verify_sdist_license(sdist)
     verify_artifact_contents(source, sdist, wheel)
+    verify_public_metadata(source, sdist, wheel)
     facts = wheel_facts(wheel)
     validate_license_contract(facts)
 
