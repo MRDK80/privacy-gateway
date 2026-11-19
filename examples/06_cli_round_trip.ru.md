@@ -3,7 +3,7 @@
 [English](06_cli_round_trip.md) | [Русский](06_cli_round_trip.ru.md)
 
 Translation of: 06_cli_round_trip.md  
-Reviewed against commit: 8b578b2ca7a6ec70c0d311c54a2e0e1c432f419c  
+Reviewed against commit: 2c85e3f2938df0528313b215f2c03fad4db2ef0b
 Translation status: current
 
 Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего

@@ -3,7 +3,7 @@
 [English](README.md) | [Русский](README.ru.md)
 
 Translation of: README.md  
-Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
+Reviewed against commit: 2c85e3f2938df0528313b215f2c03fad4db2ef0b
 Translation status: current
 
 Локальный CLI-инструмент и библиотека для безопасной подготовки корпоративных
