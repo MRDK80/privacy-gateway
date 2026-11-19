@@ -132,3 +132,12 @@ New policy/inventory files in #118 are English engineering documentation.
 Both have reciprocal language links. The Russian companion records the committed
 English source reviewed for synchronization. Other baseline rows remain a record
 of the starting state, not a claim that those documents are translated.
+
+## Installation/examples migration — #120
+
+English installation/dependency guides and examples index/rotation/CLI guides
+now have adjacent `.ru.md` companions with reciprocal links and reviewed source
+commit records. Quickstart explanatory docstrings/comments are English; executable
+AST, synthetic fixtures and expected outputs are unchanged. Other script fixtures
+and existing CLI messages can intentionally contain Russian. Baseline inventory
+rows above remain historical starting-state records.
