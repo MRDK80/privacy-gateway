@@ -58,6 +58,25 @@ Exact CI проверяет Python 3.11 и 3.12 на Ubuntu и Windows; уста
 NER/framework packages и provider SDK, а также вызова keyring backend.
 
 Эти проверки дополняют build gate `tools/verify_package_build.py`.
-Проверка wheel/sdist в чистых окружениях относится к #112. Полный граф всех
-возможных optional libraries и платформенная работоспособность keyring одной
-проверкой импорта не доказываются.
+Build gate устанавливает wheel и sdist в два отдельных чистых venv.
+Он проверяет наличие модулей, `py.typed`, лицензии и build metadata, а также
+отсутствие известных private/cache/env путей. Затем запускает установленный
+`pgw`, сверяет версии и выполняет синтетический API round trip вне checkout.
+В smoke запрещены сеть и выбор системного keyring; ключ создаётся только
+в памяти, а функции получения ключей заменены локальными test doubles.
+Проверка состава не является сканером произвольных секретов внутри файлов.
+
+Локальная команда из чистого Git checkout:
+
+```bash
+python tools/verify_package_build.py --temp-root /path/to/temporary-directory
+```
+
+Укажите реальный временный каталог вне checkout. Build и установка могут
+получать build/runtime зависимости из package index; сеть запрещена именно
+во время API smoke. Этот тест не заменяет установку в полностью offline-среде.
+В CI команда выполняется для Python 3.11/3.12 на Windows/Ubuntu. Результаты
+каждой ОС и каждого SHA подтверждаются отдельно первичными jobs.
+
+Полный граф всех возможных optional libraries и платформенная работоспособность
+keyring одной проверкой импорта не доказываются.
