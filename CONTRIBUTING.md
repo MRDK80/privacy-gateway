@@ -4,6 +4,11 @@
 
 ## Окружение
 
+### Состав зависимостей
+
+Карта runtime, build и development dependencies и граница optional extras
+зафиксированы в [контракте базовой установки](docs/DEPENDENCIES.md).
+
 ### Python policy
 
 Разделяются четыре разных понятия: совместимость установки, поддерживаемые minor-версии, exact CI matrix и фактическая версия локального gate.
