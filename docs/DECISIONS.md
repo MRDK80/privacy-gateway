@@ -1492,3 +1492,13 @@ typed registry: тесты доказывают включение в глоба
 Концептуальный design подтверждён владельцем 03 ноября 2026; delivery gates
 ещё не завершены. Документ не изменяет runtime/schema и не разрешает перенос кода,
 установку, activation, production pilot или main merge.
+
+
+## ADR-113: безопасная диагностика установки
+
+[Контракт doctor и bootstrap](ADR-113-safe-doctor.md). Утверждён 2026-11-19.
+
+## ADR-114. Trusted Publishing (#114)
+
+- [ADR-114-trusted-publishing.md](ADR-114-trusted-publishing.md) — ручной release workflow,
+  отдельная проверка источника/environment/artifacts и минимальный OIDC boundary.
