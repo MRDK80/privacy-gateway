@@ -383,11 +383,21 @@ INSTALLED_SMOKE = textwrap.dedent(
     assert module.with_name("py.typed").is_file()
     entry = [item for item in md.distribution("privacy-gateway").entry_points
              if item.group == "console_scripts" and item.name == "pgw"]
-    assert len(entry) == 1 and entry[0].value == "privacy_gateway.cli:main"
+    assert len(entry) == 1 and entry[0].value == "privacy_gateway.bootstrap:main"
 
     root = Path.cwd()
     config = root / "entities.yaml"
     config.write_text("enabled_regex_types: [EMAIL]\n", encoding="utf-8")
+    # Exercise the installed doctor with a synthetic capability, never host keyring.
+    import contextlib
+    import io
+    from privacy_gateway import doctor
+    report = io.StringIO()
+    with patch.object(doctor, "keyring_capability", return_value="OK"):
+        with contextlib.redirect_stdout(report):
+            assert doctor.main(["--entities-config", str(config)]) == 0
+    assert "CONFIG: OK\n" in report.getvalue()
+    assert "DEPENDENCIES: OK\n" in report.getvalue()
     workspace = root / "workspace"
     workspace.mkdir()
     gateway = PrivacyGateway(

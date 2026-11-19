@@ -241,6 +241,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    # --- doctor ---
+    from privacy_gateway.doctor import configure_parser
+
+    doctor_parser = sub.add_parser("doctor", help="Проверка базовой установки.")
+    configure_parser(doctor_parser)
+
     # --- detect ---
     detect_parser = sub.add_parser(
         "detect", help="Диагностика: найти сущности без шифрования."
@@ -802,6 +808,11 @@ class _CommandFacts:
 
 
 _COMMAND_FACTS: dict[str, _CommandFacts] = {
+    "doctor": _CommandFacts(
+        side_effects=("reads_config", "reads_keyring"),
+        exit_codes=(0, 1, 3),
+        machine_error_codes=(),
+    ),
     "detect": _CommandFacts(
         side_effects=("reads_config", "reads_input"),
         exit_codes=(0, 1, 3),
@@ -1161,6 +1172,10 @@ def _run_json_command(args: argparse.Namespace) -> int:
 def main() -> None:
     """Точка входа CLI с явным opt-in JSON-режимом."""
     argv = sys.argv[1:]
+    if argv and argv[0] == "doctor":
+        from privacy_gateway.doctor import main as doctor_main
+
+        sys.exit(doctor_main(argv[1:]))
     if argv and argv[0] == _DESCRIBE_FLAG:
         sys.exit(_run_describe(argv))
     parser = _build_parser()
