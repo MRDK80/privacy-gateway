@@ -141,3 +141,10 @@ commit records. Quickstart explanatory docstrings/comments are English; executab
 AST, synthetic fixtures and expected outputs are unchanged. Other script fixtures
 and existing CLI messages can intentionally contain Russian. Baseline inventory
 rows above remain historical starting-state records.
+
+## Public library migration — #123
+
+`docs/LIBRARY_API.md` and the top-level/facade/public-exception docstrings are
+English. The API reference is English-only per policy; Russian user scenarios
+remain in the paired examples guides. No internal-comment or historical-ADR
+translation is claimed, and runtime signatures/exception messages are unchanged.

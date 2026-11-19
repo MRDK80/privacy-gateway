@@ -1,27 +1,15 @@
-"""Библиотечный API Privacy Gateway — публичные модели контракта.
+"""Privacy Gateway library facade and stable public models.
 
-Модуль задаёт стабильные типы, которыми внешнее приложение обменивается
-с Privacy Gateway. Класс ``PrivacyGateway`` реализует жизненный цикл
-prepare → внешний обработчик → restore поверх существующего конвейера
-проекта. Реализованы ``prepare``, ``restore`` и освобождение ресурсов.
-
-Жизненный цикл контекста восстановления:
-
-- Контекст непрозрачен: публичных полей с данными у него нет.
-- Контекст сериализуем через ``to_token()`` / ``from_token()``. Токен
-  содержит только служебные ссылки и не содержит открытый текст, ключевой
-  материал, шифртекст и содержимое manifest.
-- Контекст переживает перезапуск процесса, пока сохранены защищённые
-  артефакты и ключ доступен в хранилище ключей.
-- Контекст пригоден для повторного использования: восстановление
-  идемпотентно и не изменяет артефакты.
-- За удаление отвечает приложение-потребитель: явным вызовом освобождения
-  ресурсов либо через контекстный менеджер. Автоматического удаления нет,
-  иначе сломается сценарий отложенного ответа внешнего обработчика.
-- Изоляция параллельных операций обеспечивается тем, что каждая подготовка
-  получает собственный рабочий подкаталог.
-
-Строки ``repr`` моделей не раскрывают текст, значения и содержимое контекста.
+PrivacyGateway provides prepare -> external processing -> restore, followed by
+explicit discard. Only protected text is intended for the external consumer.
+Context is opaque and serializable through to_token/from_token; it contains
+references, format version and authentication code, not plaintext, keys,
+ciphertext or manifest contents. It survives process restart while protected
+artifacts remain and the required key is available. Restore is repeatable and
+does not modify artifacts. The consumer releases resources explicitly with
+discard; delayed external responses preclude automatic deletion. There is no
+facade context-manager API. Each prepare gets an isolated workspace. Public
+model repr/str exclude text, values and protected context contents.
 """
 
 from __future__ import annotations
@@ -71,18 +59,14 @@ _SOURCE_REF = "library"
 
 @dataclass(frozen=True, slots=True)
 class GatewayConfig:
-    """Конфигурация библиотечного использования Privacy Gateway.
+    """Immutable library configuration.
 
-    routing_config_path:  Путь к YAML-конфигу маршрутизации; None — безопасные
-                          умолчания библиотеки.
-    entities_config_path: Путь к конфигу детектора; None — умолчание проекта.
-    workspace_dir:        Рабочий каталог для защищённых артефактов. None —
-                          библиотека создаёт временный каталог с правами
-                          только для владельца и владеет им сама.
-    strict:               Строгий режим восстановления (fail-closed).
-                          Отключение допускается только явным решением
-                          приложения-потребителя.
-    keep_artifacts:       Сохранять артефакты после освобождения контекста.
+    routing_config_path: Optional routing YAML; None uses safe library defaults.
+    entities_config_path: Optional detector configuration; None uses project defaults.
+    workspace_dir: Optional artifact base; None creates an owned temporary directory.
+    strict: Strict fail-closed restoration, disabled only by explicit consumer choice.
+    keep_artifacts: Preserve artifacts when releasing context; removal is the
+        consumer's responsibility.
     """
 
     routing_config_path: Path | None = None
@@ -94,15 +78,11 @@ class GatewayConfig:
 
 @dataclass(frozen=True, slots=True)
 class RestoreContext:
-    """Непрозрачный контекст восстановления.
+    """Opaque restoration context, passed back to restore without interpretation.
 
-    Приложение-потребитель передаёт объект обратно в ``restore`` без разбора
-    и без интерпретации его содержимого. Публичных полей с данными нет:
-    открытый текст, ключи, шифртекст, содержимое manifest и внутренние
-    структуры детектора и токенизатора здесь не хранятся.
-
-    Сериализованный контекст аутентифицирован (ADR-34): поля токена сами по
-    себе не дают права на удаление рабочего каталога.
+    No public data fields expose plaintext, keys, ciphertext, manifest contents or
+    internal detector/tokenizer structures. Serialized context is authenticated
+    (ADR-34); token fields alone never grant workspace-deletion authority.
     """
 
     _handle: str
@@ -114,11 +94,11 @@ class RestoreContext:
     _signature: str | None = None
 
     def __repr__(self) -> str:
-        """Вернуть представление без раскрытия содержимого контекста."""
+        """Return a representation without protected text or context contents."""
         return "RestoreContext(<opaque>)"
 
     def __str__(self) -> str:
-        """Вернуть представление без раскрытия содержимого контекста."""
+        """Return a representation without protected text or context contents."""
         return self.__repr__()
 
     def _payload(self) -> dict[str, object]:
@@ -134,11 +114,10 @@ class RestoreContext:
         }
 
     def to_token(self) -> str:
-        """Сериализовать контекст в строку для передачи между процессами.
+        """Serialize context for transfer between local processes.
 
-        Токен содержит только служебные ссылки, версию формата и код
-        аутентичности. Ключевой материал в токен не попадает. Токен следует
-        хранить с теми же ограничениями доступа, что и сами артефакты.
+        The token contains references, format version and an authentication code, not
+        key material. Protect access as carefully as access to the artifacts.
         """
         payload: dict[str, object] = dict(self._payload())
         payload["sig"] = self._signature
@@ -147,15 +126,15 @@ class RestoreContext:
 
     @classmethod
     def from_token(cls, token: str) -> RestoreContext:
-        """Восстановить контекст из токена ``to_token``.
+        """Parse a token produced by to_token.
 
-        Разбор структурный: код аутентичности переносится в объект и
-        проверяется непосредственно перед операцией, которая на него
-        опирается. Токены версии ``1`` не поддерживаются (ADR-34).
+        Structural parsing carries the authentication code into the object; it is
+        verified immediately before an operation relying on it. Version 1 tokens are
+        unsupported (ADR-34).
 
         Raises:
-            RestoreError: Токен повреждён, неполон, не содержит кода
-                аутентичности либо имеет неподдерживаемую версию формата.
+            RestoreError: Malformed/incomplete token, missing authentication code or
+                unsupported format version.
         """
         try:
             raw = base64.urlsafe_b64decode(token.encode("ascii"))
@@ -195,13 +174,13 @@ class RestoreContext:
 
 @dataclass(frozen=True, slots=True)
 class PreparedPayload:
-    """Результат подготовки текста для внешнего обработчика.
+    """Preparation result for external processing.
 
-    text:           Защищённый текст без исходных значений.
-    context:        Непрозрачный контекст восстановления.
-    correlation_id: Идентификатор операции, заданный потребителем.
-    token_count:    Количество подставленных токенов. Имена токенов наружу
-                    не передаются.
+    text: Protected text; detection limits still apply.
+    context: Opaque restoration context; keep local.
+    correlation_id: Consumer-supplied identifier; do not place sensitive data here.
+    token_count: Number of substituted tokens; names are not exposed by this model.
+    Send only the intended text, never the whole payload, to an external consumer.
     """
 
     text: str
@@ -210,7 +189,7 @@ class PreparedPayload:
     token_count: int = 0
 
     def __repr__(self) -> str:
-        """Вернуть представление без раскрытия текста."""
+        """Return a representation without protected text or context contents."""
         return (
             "PreparedPayload("
             f"text_length={len(self.text)}, "
@@ -220,20 +199,18 @@ class PreparedPayload:
         )
 
     def __str__(self) -> str:
-        """Вернуть представление без раскрытия текста."""
+        """Return a representation without protected text or context contents."""
         return self.__repr__()
 
 
 @dataclass(frozen=True, slots=True)
 class RestoredPayload:
-    """Результат восстановления текста после внешнего обработчика.
+    """Restoration result after external processing.
 
-    text:             Восстановленный текст. Содержит исходные значения и
-                      требует той же защиты, что и исходный документ.
-    correlation_id:   Идентификатор операции, заданный потребителем.
-    tokens_restored:  Количество восстановленных токенов.
-    tokens_missing:   Количество токенов, отсутствовавших в ответе внешнего
-                      обработчика. Само по себе не является ошибкой.
+    text: Restored plaintext with source values; protect it like the original.
+    correlation_id: Consumer-supplied operation identifier.
+    tokens_restored: Number of restored tokens.
+    tokens_missing: Tokens absent from the response, not an error by itself.
     """
 
     text: str
@@ -242,7 +219,7 @@ class RestoredPayload:
     tokens_missing: int = 0
 
     def __repr__(self) -> str:
-        """Вернуть представление без раскрытия восстановленного текста."""
+        """Return a representation without protected text or context contents."""
         return (
             "RestoredPayload("
             f"text_length={len(self.text)}, "
@@ -252,29 +229,26 @@ class RestoredPayload:
         )
 
     def __str__(self) -> str:
-        """Вернуть представление без раскрытия восстановленного текста."""
+        """Return a representation without protected text or context contents."""
         return self.__repr__()
 
 
 class PrivacyGateway:
-    """Публичный фасад Privacy Gateway для библиотечной интеграции.
+    """Public library facade for Privacy Gateway.
 
-    Экземпляр не хранит изменяемого состояния между вызовами: конфигурация
-    маршрутизации загружается на каждый вызов, ключ запрашивается на время
-    операции, а каждая подготовка получает собственный рабочий подкаталог.
-    Поэтому один экземпляр можно использовать из нескольких потоков.
-
-    Экземпляр не логирует текст, значения, ключевой материал и содержимое
-    защищённых артефактов.
+    No mutable operation state is retained across calls. Routing configuration is
+    loaded per call, keys are requested per operation, and each preparation gets
+    its own workspace. One instance may be used by multiple threads. It does not
+    log text, source values, keys or protected-artifact contents.
     """
 
     def __init__(self, config: GatewayConfig | None = None) -> None:
-        """Создать фасад с заданной конфигурацией."""
+        """Create the facade with the selected configuration."""
         self._config = config if config is not None else GatewayConfig()
 
     @property
     def config(self) -> GatewayConfig:
-        """Вернуть конфигурацию фасада."""
+        """Return the facade configuration."""
         return self._config
 
     def prepare(
@@ -283,23 +257,20 @@ class PrivacyGateway:
         *,
         correlation_id: str | None = None,
     ) -> PreparedPayload:
-        """Подготовить текст для передачи внешнему обработчику.
+        """Prepare text for external processing.
 
         Args:
-            text:           Исходный текст приложения-потребителя.
-            correlation_id: Необязательный идентификатор операции. Не следует
-                помещать в него чувствительные данные: он возвращается
-                вызывающей стороне вместе с результатом.
+            text: Consumer input text.
+            correlation_id: Optional non-sensitive identifier returned to the caller.
 
         Returns:
-            PreparedPayload с защищённым текстом и непрозрачным контекстом.
+            PreparedPayload with protected text and an opaque local context.
 
         Raises:
-            ConfigurationError: Некорректная конфигурация либо недоступный
-                рабочий каталог.
-            KeyStoreError:      Ключ недоступен в хранилище ключей.
-            DetectionError:     Подготовка остановлена по правилу fail-closed;
-                защищённый текст не сформирован, артефакты удалены.
+            ConfigurationError: Invalid configuration or unavailable workspace.
+            KeyStoreError: Key unavailable in the key store.
+            DetectionError: Fail-closed preparation; no protected payload is returned.
+                Failure cleanup follows the documented artifact-cleanup guarantees.
         """
         routing_cfg = self._load_routing()
         key = self._load_key()
@@ -394,29 +365,24 @@ class PrivacyGateway:
         context: RestoreContext,
         correlation_id: str | None = None,
     ) -> RestoredPayload:
-        """Восстановить исходные значения в ответе внешнего обработчика.
+        """Restore source values in an external response.
 
-        Проверка целостности защищённых артефактов выполняется до возврата
-        открытого текста. В строгом режиме недопустимые токены во внешнем
-        ответе приводят к отказу, и открытый текст не возвращается.
+        Artifact integrity is checked before plaintext is returned. In strict mode,
+        invalid response tokens cause rejection rather than returning plaintext.
 
         Args:
-            text:           Ответ внешнего обработчика.
-            context:        Непрозрачный контекст, полученный из ``prepare``.
-            correlation_id: Идентификатор операции. По умолчанию берётся из
-                контекста.
+            text: Untrusted external response.
+            context: Opaque context returned by prepare.
+            correlation_id: Optional identifier, defaulting to the context's value.
 
         Returns:
-            RestoredPayload с восстановленным текстом и счётчиками токенов.
+            RestoredPayload containing sensitive plaintext and token counts.
 
         Raises:
-            RestoreError:     Контекст недействителен либо восстановление
-                невозможно.
-            StrictTokenError: Строгий режим: внешний ответ содержит
-                неизвестные или искажённые токены.
-            IntegrityError:   Проверка целостности не пройдена; открытый текст
-                не возвращается.
-            KeyStoreError:    Ключ недоступен в хранилище ключей.
+            RestoreError: Invalid context or restoration cannot complete.
+            StrictTokenError: Unknown or malformed response token in strict mode.
+            IntegrityError: Artifact validation failed; no plaintext returned.
+            KeyStoreError: Key unavailable in the key store.
         """
         effective_id = (
             correlation_id
@@ -463,31 +429,20 @@ class PrivacyGateway:
         )
 
     def discard(self, context: RestoreContext) -> None:
-        """Удалить защищённые артефакты, связанные с контекстом.
+        """Release protected artifacts after verifying context ownership.
 
-        Удаление выполняется только для контекста, который доказал владение
-        рабочим каталогом: принадлежность доверенной базе этого фасада,
-        canonical containment, настоящий каталог без ссылок, маркер владения
-        с тем же handle и совпадение кода аутентичности (ADR-34). При любом
-        отказе проверки не удаляется ничего.
-
-        Проверка не обращается к хранилищу ключей: освобождение ресурсов
-        остаётся возможным после ротации и удаления ключа.
-
-        Удаление выполняется над проверенной сущностью файловой системы, а
-        не над заново разрешённым путём: каталог отцепляется от исходного
-        имени и удаляется только после сверки идентичности. Публичное
-        поведение одинаково на всех платформах, низкоуровневый механизм
-        различается — дополнение к ADR-34.
-
-        Вызов идемпотентен: если рабочий каталог уже удалён, вызов ничего не
-        делает и не поднимает ошибку. При ``keep_artifacts`` артефакты
-        сохраняются, и ответственность за их удаление остаётся на
-        приложении-потребителе.
+        Checks bind this facade's trusted base, containment, an actual directory without
+        links, ownership marker and authentication code to the pinned filesystem object
+        (ADR-34). Unverified context does not authorize recursive deletion. Removal uses
+        the verified entity, not a newly resolved path; platform mechanisms differ.
+        Failure to prove pinning fails closed and may leave a quarantine directory under
+        the documented threat model. No key-store access is needed after rotation or
+        key deletion. Already removed workspaces are idempotent, without an error.
+        With keep_artifacts enabled, the consumer remains responsible for removal.
 
         Raises:
-            RestoreError: Контекст не принадлежит этому фасаду, изменён либо
-                не подтверждён как владеющий рабочим каталогом.
+            RestoreError: Context foreign, modified or not verified to own
+                its workspace.
         """
         if not context._owned_workspace:
             raise RestoreError(
