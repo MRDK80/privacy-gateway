@@ -15,6 +15,10 @@ issues and pull requests; Russian questions/reports are welcome. Accepted techni
 decisions and new canonical documentation use English. Do not post sensitive data
 in either language. Existing issues/ADRs need not be translated retroactively.
 
+Run `python tools/check_doc_languages.py` for the delivered bilingual pairs.
+The local pre-commit hook also runs it; [scope and limitations](docs/DOC_LANGUAGE_CHECKS.md)
+explain why structural success does not replace translation/security review.
+
 ## Environment
 
 ### Dependency groups

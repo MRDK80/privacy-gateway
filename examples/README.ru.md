@@ -3,7 +3,7 @@
 [English](README.md) | [Русский](README.ru.md)
 
 Translation of: README.md  
-Reviewed against commit: 1e443c4605ee3011b303f5cdb44e6ea2c193bd46  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Раздел содержит воспроизводимые примеры публичного library API. Все
@@ -13,6 +13,7 @@ Translation status: current
 Исключение — `05_key_rotation.md` и `06_cli_round_trip.md`: управление
 ключом и сквозной сценарий CLI описаны командами, а не скриптом.
 
+<!-- pgw-section: provider-boundary -->
 ## Требования безопасности
 
 - Только публичный API `privacy_gateway`; внутренние модули не вызываются.
@@ -38,6 +39,7 @@ pgw key create
 Активный ключ хранится в системном keyring. Без него пример завершится
 ошибкой хранилища ключей: это ожидаемое fail-closed поведение.
 
+<!-- pgw-section: quickstart -->
 ## 01_quickstart.py
 
 Минимальный цикл `prepare` -> локальный детерминированный ответ ->
@@ -263,6 +265,7 @@ Exit/result contract:
 десяти сочетаниям варианта и режима, проверяет очистку после каждого
 варианта, детерминизм повторного запуска и отсутствие значений в выводе.
 
+<!-- pgw-section: rotation -->
 ## 05_key_rotation.md
 
 Ротация ключа и восстановление запроса, подготовленного предыдущим ключом.
@@ -317,6 +320,7 @@ failure не описываются как rollback. Подробности — 
 `[active, retired]` со ссылками на ADR-23 и ADR-46 и запрещают обещание
 отсутствующих команд управления ключом.
 
+<!-- pgw-section: cli-flow -->
 ## 06_cli_round_trip.md
 
 Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего

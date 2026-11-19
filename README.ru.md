@@ -3,7 +3,7 @@
 [English](README.md) | [Русский](README.ru.md)
 
 Translation of: README.md  
-Reviewed against commit: 2902e8ab958cc2717c6ddee1888f215e263e9476  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Локальный CLI-инструмент и библиотека для безопасной подготовки корпоративных
@@ -25,6 +25,7 @@ Translation status: current
 `Development Status :: 3 - Alpha`. История изменений — в
 [`CHANGELOG.md`](CHANGELOG.md).
 
+<!-- pgw-section: protection-boundary -->
 ## Границы защиты
 
 Инструмент выполняет псевдонимизацию, а не гарантированную анонимизацию.
@@ -71,6 +72,7 @@ Backend выбирается средствами библиотеки `keyring`
 системных backend до обращения к ключам. Переменная `PGW_KEYRING_BACKEND`
 в Privacy Gateway не поддерживается.
 
+<!-- pgw-section: installation -->
 ## Установка
 
 Для CLI используйте pipx с Python 3.11/3.12. До отдельно подтверждённой PyPI
@@ -152,6 +154,7 @@ pgw restore llm_reply.txt --route ./pgw_out/route.json --out restored.txt
 возврата, режимы восстановления и классификация токенов —
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+<!-- pgw-section: library -->
 ## Библиотечное использование
 
 Ниже схема для уже настроенного keyring с существующим ключом. `text` и
@@ -185,6 +188,7 @@ cleanup и остальные гарантии определены в библ�
 цикл с несколькими типами сущностей, блокировка секрета, недоверенный ответ
 модели, ротация ключа и сквозной сценарий CLI.
 
+<!-- pgw-section: limitations -->
 ## Известные ограничения
 
 - Глубина ротации ограничена одним retired-ключом (ADR-23): после второй

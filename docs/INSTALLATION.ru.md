@@ -3,7 +3,7 @@
 [English](INSTALLATION.md) | [Русский](INSTALLATION.ru.md)
 
 Translation of: INSTALLATION.md  
-Reviewed against commit: 1e443c4605ee3011b303f5cdb44e6ea2c193bd46  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Поддерживаются Python 3.11 и 3.12 на Linux и Windows. Проверьте версию
@@ -19,6 +19,7 @@ Git должен быть доступен установщику. Наличи�
 Установка требует чтения GitHub и package index; не отключайте TLS и не
 используйте sudo. Диагностика doctor не отправляет внешних сетевых запросов.
 
+<!-- pgw-section: cli-install -->
 ## CLI через pipx
 
 Bootstrap venv содержит только установщик pipx; приложение устанавливается в
@@ -79,6 +80,7 @@ if ($LASTEXITCODE -ne 0) { throw 'describe failed' }
 if ($LASTEXITCODE -ne 0) { throw 'doctor failed' }
 ```
 
+<!-- pgw-section: library-install -->
 ## Library API через venv и pip
 
 Откройте отдельную пустую папку для проекта. Версия печатается через
@@ -122,6 +124,7 @@ if ($LASTEXITCODE -ne 0) { throw 'describe failed' }
 if ($LASTEXITCODE -ne 0) { throw 'doctor failed' }
 ```
 
+<!-- pgw-section: maintenance -->
 ## Обновление и удаление
 
 Команды ниже используют переменные соответствующего installation-примера.
@@ -169,6 +172,7 @@ if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }
 if ($LASTEXITCODE -ne 0) { throw 'pip uninstall failed' }
 ```
 
+<!-- pgw-section: troubleshooting -->
 ## Проверка и troubleshooting
 
 - `pgw --describe` — актуальные команды/параметры; каталог здесь не копируется.
@@ -193,6 +197,7 @@ if ($LASTEXITCODE -ne 0) { throw 'pip uninstall failed' }
 Для полного примера checkout examples нужен отдельно: wheel не обещает
 установку repository examples. Ключи создаются только вашим явным действием.
 
+<!-- pgw-section: evidence -->
 ## Evidence
 
 Source SHA выше фиксирует принятую реализацию #113. Installation smoke извлекает
