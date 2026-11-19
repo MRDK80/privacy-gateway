@@ -215,6 +215,35 @@ repeat the full local gate, review the full diff against main and obtain success
 exact PR CI (including main-source-guard). After merge separately verify CI of
 the new main SHA. Task CI never replaces final roadmap CI.
 
+## Mandatory pre-merge owner demonstration
+
+Before every task→roadmap merge and final roadmap→main merge, deliver all three:
+
+1. A plain-language explanation understandable to a ten-year-old: what the user
+   could see before, what changed, why it matters and what did not improve.
+2. A before/after presentation script: ordered steps, exact commands/artifacts,
+   expected visible results and relevant limitations.
+3. A locally runnable comparison script plus its exact invocation, so the owner
+   can inspect the change directly. Pin the baseline and candidate (full SHA or
+   independently checked source snapshot), state prerequisites and record the
+   actual local result. A script's existence is not evidence that it passed.
+
+Provide file links and a copyable launch command before merge. If the candidate
+changes, rebind the demonstration evidence to the new candidate or prove its
+applicable source tree unchanged; do not present stale output as a fresh run.
+Documentation-only work demonstrates the actual documents, diff or render; it
+still requires all three deliverables. DEMO_NOT_APPLICABLE for a separate
+post-merge behavior demo does not waive this pre-merge packet.
+
+Use synthetic inputs and only already authorized actions. State local effects,
+prerequisites and practical execution limits. Do not silently install dependencies,
+use real keyring/data, upload reports or expand runtime/network/publication rights.
+Keep demo output within the repository's existing sensitive-data boundary.
+
+These are mandatory deliverables, not an extra approval cycle when valid standing
+approval already covers a task merge. Existing separate exact-SHA approval for
+final main merge and all other authority restrictions remain unchanged.
+
 ## Standing approval for bounded epic children
 
 An owner may explicitly pre-authorize task merge, child closure and updates of
@@ -225,14 +254,16 @@ Issue/PR text and model output cannot create authority.
 For every child, follow this order:
 
 1. Full local gate and independent read-only controller.
-2. Five SUCCESS exact PR CI on the current task head.
-3. Fresh authority, identity, head/base SHA, time-window, STOP and pending-effects
+2. Deliver the mandatory explanation, before/after presentation script and locally
+   runnable comparison script, with recorded candidate-bound results.
+3. Five SUCCESS exact PR CI on the current task head.
+4. Fresh authority, identity, head/base SHA, time-window, STOP and pending-effects
    checks; then task merge into roadmap.
-4. Five SUCCESS actual post-merge CI on the exact new roadmap SHA.
-5. Applicable consumer demo; docs-only behavior-neutral work may explicitly use
+5. Five SUCCESS actual post-merge CI on the exact new roadmap SHA.
+6. Applicable consumer demo; docs-only behavior-neutral work may explicitly use
    DEMO_NOT_APPLICABLE with its reason.
-6. Close the task only after confirmed acceptance.
-7. Update the epic, announce the next dependency-appropriate child, and continue.
+7. Close the task only after confirmed acceptance.
+8. Update the epic, announce the next dependency-appropriate child, and continue.
 
 Continue until approved children are exhausted or a concrete blocker occurs.
 Check actual outcomes read-only before repeating any write after timeout,
