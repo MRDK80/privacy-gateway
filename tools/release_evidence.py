@@ -466,6 +466,15 @@ def main() -> int:
                 f"sums_sha256={digest}\n"
                 f"publish_ready={str(context.mode == 'publish').lower()}\n"
             )
+        summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_path:
+            with Path(summary_path).open("a", encoding="utf-8") as summary:
+                summary.write(
+                    "## Verified release evidence\n\n"
+                    f"SHA256SUMS digest: `{digest}`\n\n"
+                    f"Source SHA: `{context.source_sha}`\n\n"
+                    f"Policy SHA: `{context.policy_sha}`\n"
+                )
     except Exception:
         print("Release verification failed; publication is blocked.", file=sys.stderr)
         return 1

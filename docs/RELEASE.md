@@ -85,3 +85,16 @@ manifest, SHA256SUMS, artifacts, run/job IDs и outcome локально: CI art
 произвольных данных и не обещает побитово воспроизводимую сборку всех зависимостей.
 Проверки установки используют synthetic inputs; для пользовательских ключей
 сохраняются [security boundary](SECURITY.md) и требования безопасного keyring.
+
+## Подготовка и исполнение разделены
+
+Owner disposition от 2026-11-19 принимает #114 как implementation delivery,
+а #116 — как подготовку checklist и post-publication tooling. Production readiness
+и публикация вынесены в отдельную release issue после ROADMAP DONE. Это не
+разрешение на настройки, version bump, tags/releases, dispatch, публикацию
+или main merge. Все условия publish остаются fail closed.
+
+[Post-publication процедура](POST_PUBLICATION.md) получает независимый digest
+из primary verify summary и устанавливает только совпавшие локальные артефакты.
+Normal artifact CI проверяет tooling с явно локальным fixture на Linux/Windows;
+`LOCAL_SIMULATION_PASS` не заменяет будущую проверку фактической версии на PyPI.

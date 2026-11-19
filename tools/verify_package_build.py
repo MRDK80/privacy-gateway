@@ -393,9 +393,19 @@ INSTALLED_SMOKE = textwrap.dedent(
     import io
     from privacy_gateway import doctor
     report = io.StringIO()
-    with patch.object(doctor, "keyring_capability", return_value="OK"):
-        with contextlib.redirect_stdout(report):
-            assert doctor.main(["--entities-config", str(config)]) == 0
+    saved_argv = sys.argv
+    sys.argv = ["pgw", "doctor", "--entities-config", str(config)]
+    try:
+        with patch.object(doctor, "keyring_capability", return_value="OK"):
+            with contextlib.redirect_stdout(report):
+                try:
+                    entry[0].load()()
+                except SystemExit as result:
+                    assert result.code == 0
+                else:
+                    raise AssertionError("installed console doctor did not exit")
+    finally:
+        sys.argv = saved_argv
     assert "CONFIG: OK\n" in report.getvalue()
     assert "DEPENDENCIES: OK\n" in report.getvalue()
     workspace = root / "workspace"
@@ -419,7 +429,8 @@ INSTALLED_SMOKE = textwrap.dedent(
     assert not any(workspace.iterdir())
     print(json.dumps({"version": pkg.__version__,
                       "metadata": md.version("privacy-gateway"),
-                      "module_file": str(module), "roundtrip": True}))
+                      "module_file": str(module), "roundtrip": True,
+                      "console_doctor": True}))
     """
 )
 
@@ -627,6 +638,14 @@ def main(argv: list[str] | None = None) -> int:
             sys.executable, str(source / "tools" / "verify_installation_docs.py"),
             "--document", str(source / "docs" / "INSTALLATION.md"),
             "--temp-root", str(temp_root / "documented-installations"),
+        ])
+
+        source_sha = run(["git", "rev-parse", "HEAD"], cwd=repo_root).strip()
+        run([
+            sys.executable, str(source / "tools" / "verify_published_package.py"),
+            "--fixture-source", str(source), "--fixture-dist", str(outdir),
+            "--source-sha", source_sha,
+            "--temp-root", str(temp_root / "post-publication-LOCAL-fixture"),
         ])
 
     ensure_unchanged(repo_root, before_state)
