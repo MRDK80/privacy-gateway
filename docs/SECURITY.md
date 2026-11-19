@@ -1,476 +1,272 @@
-# Модель угроз и политика безопасности
-
-Документ описывает модель угроз Privacy Gateway, что попадает на диск, как
-обращаться с ключом и как сообщать об уязвимостях.
-
-## От чего защищает
-
-Privacy Gateway снижает риск **случайной** передачи следующих категорий
-данных во внешнюю языковую модель:
-
-- ПДн: email-адреса, номера телефонов, IPv4 и IPv6, имена (через словарь)
-- Пути к файлам и ресурсам (UNC, Windows, POSIX)
-- Секреты по ключевым словам: `password=`, `api_key=`, `token=`, строки
-  подключения, PEM-заголовки
-- Высокоэнтропийные строки длиной ≥ 16 символов (порог Шеннона 3.0)
-- URL-эндпоинты, денежные суммы, даты в распространённых форматах
-
-Все исходные значения шифруются Fernet
-(AES-128-CBC + HMAC-SHA256) локально и хранятся в манифесте только в
-зашифрованном виде. Открытых данных нет в `manifest.json`, `route.json`
-и служебном отчёте восстановления.
-
-Команда `restore` намеренно возвращает исходные значения в восстановленном
-тексте. Этот результат является чувствительным plaintext и должен
-обрабатываться так же, как исходный документ.
-
-## От чего **не** защищает
-
-- **Многострочные секреты** — токены/ключи, разбитые по нескольким строкам
-- **Нестандартные форматы секретов** — пароли/ключи без keyword-паттернов
-- **Косвенную идентификацию** — комбинация «должность + город + дата
-  рождения» даже после токенизации может идентифицировать человека
-- **Семантические атаки** — передача обезличенного, но достаточно
-  контекстного текста провайдеру LLM
-- **Намеренные утечки** — внутренний злоумышленник с доступом к keyring
-- **Компрометацию восстановленного результата** — после `restore` исходные
-  значения снова находятся в открытом виде
-- **Целенаправленную согласованную подмену** — субъект с возможностью заменить
-  одновременно `route.json` и `manifest.json` может пересчитать SHA-256
-- **Атаки на инфраструктуру** — компрометация системы до или после обработки
-- **Юридическую защиту** — инструмент не является средством соответствия
-  требованиям GDPR, 152-ФЗ или иных нормативов
-
-## Границы доверия
-
-| Компонент или вход | Уровень доверия | Основной контроль |
-|--------------------|-----------------|-------------------|
-| Исходный текст | Недоверенный | Детектор и независимый валидатор |
-| YAML-конфиг | Недоверенный | `yaml.safe_load`, строгая схема, fail closed |
-| Ответ внешней LLM | Недоверенный | Классификация токенов, строгий режим |
-| `route.json` | Недоверенный | Проверка версии и обязательных полей |
-| `manifest.json` | Недоверенный до проверки | SHA-256 пары и Fernet-аутентификация записей |
-| Keyring backend | Недоверенный до проверки | Allowlist полного имени класса |
-| Восстановленный текст | Чувствительный plaintext | Контроль назначения и прав доступа |
-| Служебный отчёт и ошибки | Потенциально журналируемые данные | Запрет на восстановленные значения |
-
-## Что попадает на диск
-
-| Файл | Содержимое | Чувствительность |
-|------|-----------|------------------|
-| `prompt.txt` | Токенизированный текст без исходных значений | Низкая |
-| `route.json` | Метаданные запуска, путь и SHA-256 манифеста, счётчики | Низкая |
-| `manifest.json` | token, entity_type, fingerprint, encrypted_value (hex) | Средняя — требует защиты вместе с ключом |
-| Результат `restore`, если указан `--out` | Восстановленный текст с исходными значениями | Высокая |
-| Системный keyring | Fernet-ключ (latin-1) | Высокая — должен быть защищён ОС |
-
-**Что НЕ попадает в служебные артефакты:** исходные значения в открытом
-виде, ключ в файлах репозитория и расшифрованные значения в `route.json`
-или `manifest.json`.
-
-Исключение — явно запрошенный пользователем выходной файл `restore`.
-Он содержит восстановленный plaintext и не является безопасным для
-публикации, журналирования или добавления в репозиторий.
-
-`manifest.json` создаётся с правами `rw-------` (только владелец).
-На Windows `chmod` игнорируется — защита обеспечивается правами NTFS.
-
-## Безопасность YAML-конфига маршрутизации  [Э6]
-
-- Конфиг загружается **только** через `yaml.safe_load` (см. ADR-10).
-- Неизвестные ключи на верхнем уровне и в секции `rules` вызывают
-  немедленную `ConfigurationError`.
-- Конфиг **не может отключить** проверку секретов: пересечение `tokenize`
-  и `block_unconditionally` запрещено (см. ADR-11).
-- Отсутствие файла конфига означает безопасные умолчания, а не ошибку.
-
-## Что не содержит route.json  [Э6]
-
-`route.json` содержит только метаданные: `format_version`, `status`,
-`timestamp`, `source_ref`, путь к манифесту, `manifest_sha256` для версии
-`1.1` и счётчики токенов по типам.
-
-`route.json` не содержит исходных значений сущностей, Fernet-ключа, соли,
-расшифрованных фрагментов или полного содержимого входного файла.
-
-## Целостность пары артефактов
-
-`route.json` версии `1.1` содержит поле `manifest_sha256` — SHA-256 всех
-байтов финального `manifest.json`. Проверка этого значения обнаруживает
-рассинхронизацию пары артефактов и повреждение файла манифеста.
-
-Контрольная сумма вычисляется только после завершения атомарной записи
-`manifest.json` на его финальный путь. Затем `route.json`, содержащий
-полученную сумму, также записывается атомарно.
-
-`manifest_sha256` не является защитой от целенаправленной подмены и не
-обеспечивает аутентичность файлов. Субъект, способный заменить одновременно
-`route.json` и `manifest.json`, может пересчитать SHA-256.
-
-Для криптографической аутентификации отдельных зашифрованных записей
-используется Fernet. Поле `manifest_sha256` связывает пару файлов целиком,
-но не заменяет Fernet и не является MAC или цифровой подписью.
-
-Версия `route.json` `"1.0"` поддерживается для обратной совместимости без
-проверки суммы. Версия `"1.1"` требует корректного `manifest_sha256`.
-Неизвестные версии, отсутствующий манифест и несовпадение суммы отклоняются
-с явной ошибкой без раскрытия содержимого манифеста.
-
-## Порядок проверок restore  [Э7]
-
-Проверки выполняются в фиксированном порядке:
-
-1. Прочитать и разобрать `route.json`, проверить поддерживаемую версию.
-2. Выбрать фактический путь к `manifest.json`.
-3. Вызвать `verify_manifest_integrity` для выбранного пути.
-4. Только после успешной проверки обратиться к keyring.
-5. Загрузить и расшифровать манифест.
-6. Классифицировать токены в ответе LLM.
-7. Подставить известные значения и сформировать отчёт.
-8. Только после успешного завершения записать результат.
-
-`verify_manifest_integrity` должен выполняться до `get_key`,
-`load_manifest`, расшифровки и любой обработки содержимого манифеста.
-Это сокращает поверхность атаки и не позволяет недостоверной паре
-артефактов дойти до операций с ключом.
-
-`ConfigurationError` при нарушении целостности приводит к коду возврата 3.
-Ошибка keyring или отсутствие ключа приводит к коду 4.
-
-## Разрешение manifest_path  [Э7]
-
-Если передан явный флаг `--manifest`, он переопределяет путь из
-`route.json`. Проверка целостности выполняется для фактически выбранного
-манифеста.
-
-Абсолютный путь из `route.json` используется как есть. Относительный путь
-разрешается относительно каталога самого `route.json`, а не текущего
-рабочего каталога процесса.
-
-Такой порядок позволяет запускать `restore` из произвольного каталога,
-не ослабляя связывание `route.json` с выбранным манифестом.
-
-## Ответ LLM как недоверенный вход  [Э7]
-
-Внешняя LLM может случайно или намеренно изменить структуру токенов:
-исказить токен, поменять регистр, удалить его, продублировать либо создать
-новый токен. Ответ модели нельзя считать корректным только потому, что он
-содержит строки, похожие на `[TYPE_N]`.
-
-Команда `restore` классифицирует кандидатов следующим образом:
-
-| Категория | Политика |
-|-----------|----------|
-| Известный токен | Значение подставляется |
-| Неизвестный токен | Строгий отказ; в `--lenient` остаётся без изменений |
-| Искажённый кандидат | Строгий отказ; в `--lenient` остаётся без изменений |
-| Пропавший токен | Не ошибка сам по себе, но обязательно включается в отчёт |
-| Дублированный известный токен | Значение подставляется во все вхождения; аномалия включается в отчёт |
-
-Токены регистрозависимы. `[EMAIL_1]` и `[email_1]` не эквивалентны.
-Автоматическая нормализация регистра запрещена, поскольку она скрывала бы
-изменение ответа LLM.
-
-Пропавший токен не подставляется в произвольное место: модель может законно
-исключить исходный фрагмент при суммаризации или переформулировке.
-
-## Строгий режим restore  [Э7]
-
-Строгий режим включён по умолчанию. Неизвестный или искажённый токен
-вызывает отказ с выделенным кодом 5 (ADR-21, ADR-47). При таком отказе
-результирующий файл не создаётся.
-
-Мягкий режим включается только явным флагом `--lenient`. Неизвестные и
-искажённые кандидаты остаются в тексте без изменений и обязательно
-отражаются в предупреждениях.
-
-`--lenient` не означает, что ответ LLM становится доверенным. Это явное
-решение оператора принять частично восстановленный результат с
-предупреждениями.
-
-## Безопасность отчёта restore  [Э7]
-
-Служебный отчёт может содержать:
-
-- счётчики ожидаемых и найденных токенов;
-- имена токенов;
-- списки пропавших, неизвестных, искажённых и дублированных кандидатов;
-- признак строгого или мягкого режима;
-- предупреждения.
-
-Служебный отчёт не должен содержать:
-
-- исходные или восстановленные значения;
-- Fernet-ключ;
-- расшифрованное содержимое манифеста;
-- полный восстановленный текст;
-- чувствительные значения в сообщениях об ошибках.
-
-Восстановленный текст выводится отдельно — в stdout либо в файл,
-указанный через `--out`. Его нельзя смешивать со служебным отчётом,
-который направляется в stderr.
-
-## Атомарность restore  [Э7]
-
-Результат сначала полностью формируется и проверяется в памяти. Запись
-в файл начинается только после успешного восстановления.
-
-Файл записывается через временный файл в каталоге назначения с последующим
-`os.replace`. Если конечный файл уже существует и не указан `--overwrite`,
-команда завершается с отказом.
-
-При ошибке входа, целостности, keyring, расшифровки или строгом отказе по
-токенам результирующий файл не создаётся, а временный файл удаляется
-best-effort на всех путях отказа (write, flush, close, `fdopen`, `os.replace`).
-Если ОС отклоняет саму операцию `unlink`, временный файл с plaintext может
-остаться: документированный residual risk (#44, уточнение #71).
-Ошибка cleanup не подменяет первичную ошибку, а существующий файл назначения
-не изменяется.
-
-Атомарная запись предотвращает появление частично записанного plaintext,
-но не заменяет права доступа к каталогу и конечному файлу.
-
-## Обращение с ключом
-
-- Ключ хранится в системном keyring: SecretService (Linux), macOS Keychain,
-  Windows Credential Vault
-- Ключ **никогда** не логируется, не помещается в `repr`/`str` и не
-  записывается в файлы репозитория
-- При компрометации ключа выполните `pgw key rotate`, затем перешифруйте
-  либо уничтожьте манифесты, созданные скомпрометированным ключом
-- Доступ к keyring определяется правами учётной записи ОС; Privacy Gateway
-  не управляет этими правами
-
-## Ротация ключа
-
-Ротация выполняется командой `pgw key rotate`: создаётся новый активный
-ключ, предыдущий сохраняется как retired (ADR-22, ADR-23).
-
-- `restore` перебирает доступные ключи и читает манифесты, созданные до
-  ротации, без ручного перешифрования.
-- Поддерживается **один** retired-ключ. Цепочки из трёх и более ключей не
-  гарантируются: после второй ротации манифесты, зашифрованные самым старым
-  ключом, становятся нечитаемыми (`DecryptionError`).
-- Ротация не является транзакцией keyring: `pgw key rotate` выполняет
-  несколько упорядоченных операций — carry предыдущего активного ключа в
-  retired history, запись нового активного ключа, verification чтением
-  фактического active и prune retired history до предыдущего активного
-  (ADR-46, уточнение #66). Общей atomic transaction guarantee backend не
-  предоставляет.
-- Сбой carry или записи нового активного ключа оставляет активный ключ и
-  текущее поколение манифестов без изменений (ADR-46). Verification failure
-  наступает уже после записи нового active: результат вызова не подтверждён,
-  но фактическим состоянием backend может быть новый active и два физических
-  retired-ключа — rollback не выполняется. Prune failure наступает после
-  подтверждённой смены active и оставляет дополнительный physical key
-  material. Оба состояния сообщают `KeystoreError` (код 4), а не silent
-  success; повторная успешная ротация приводит физическое состояние к
-  bounded layout (#66).
-- Штатный API (`keystore.get_all_keys()`) ограничен `[active, retired]`
-  независимо от физической глубины retired history: API retention и physical
-  retention — разные гарантии (см. «Хранение retired-ключей»).
-- Блокировок и транзакций keyring нет, поэтому одновременная ротация из двух
-  процессов может привести к last-writer-wins (см. Concurrency в том же
-  разделе).
-- CLI-команды удаления ключа нет: поддерживаются `create`, `status` и
-  `rotate` (ADR-47, #47). Библиотечная функция `keystore.delete_key()`
-  удаляет активный и retired ключи необратимо, но не является командой CLI
-  и не требует `--yes`.
-
-Чтобы полностью отвязаться от прежнего ключа, манифесты нужно перешифровать:
-
-1. Загрузить манифест с прежним ключом.
-2. Расшифровать записи в доверенной локальной среде.
-3. Повторно зашифровать значения новым ключом.
-4. Атомарно сохранить обновлённый манифест.
-5. Пересчитать `manifest_sha256` и обновить связанную пару артефактов.
-
-## Почему fail closed
-
-Privacy Gateway использует принцип fail closed во всех точках
-неоднозначности:
-
-- Небезопасный keyring backend → `KeystoreError`
-- Повреждённый шифртекст → `DecryptionError`
-- Остаточные PII в тексте → `BLOCKED`
-- Неизвестный тип токена на этапе подготовки → `PENDING`
-- Неизвестный ключ в YAML-конфиге → `ConfigurationError`
-- YAML с тегами выполнения кода → отклонение через `safe_load`
-- Нарушение целостности пары артефактов → `ConfigurationError`
-- Неизвестный токен в строгом `restore` → отказ
-- Искажённый токен в строгом `restore` → отказ
-
-Цена ложной тревоги и ручной проверки значительно ниже цены ложного OK,
-который может привести к утечке ПДн или ошибочной детокенизации.
-
-## Репозиторий
-
-**Не добавляйте в репозиторий реальные данные.** В тестах и примерах
-используйте только синтетику:
-
-- Email: `user@example.com`
-- IPv4: `192.0.2.10`
-- IPv6: `2001:db8::1`
-- Телефон: `+7 900 000-00-00`
-
-Синтетические значения, распознаваемые `detect-secrets`, закрываются
-inline-комментарием:
-
-```text
-  # pragma: allowlist secret
-```
-
-Файл `.secrets.baseline` для добавления тестовых примеров не изменяется.
-Восстановленные файлы, реальные манифесты и временные ключи запрещено
-добавлять в репозиторий.
-
-## Библиотечное использование  [#14]
-
-Публичный API не меняет модель угроз конвейера, но добавляет три поверхности.
-
-**Рабочий каталог.** Каждая подготовка создаёт отдельный подкаталог: временный
-с правами только для владельца либо подкаталог внутри `workspace_dir`. В нём
-лежат те же артефакты, что и при работе через CLI, с той же чувствительностью.
-
-**Токен контекста.** `RestoreContext.to_token()` содержит только служебные
-ссылки, версию формата и код аутентичности — без открытого текста, ключей,
-шифртекста и содержимого manifest. При этом токен указывает на защищённые
-артефакты, и хранить его следует с теми же ограничениями доступа.
-
-Токен аутентифицирован HMAC-SHA256 на секрете владения, который живёт внутри
-самого рабочего каталога (`.pgw-owner`, права только для владельца) и
-исчезает вместе с ним. Токен считается недоверенным входом: его поля сами по
-себе не дают права на удаление. Формат версии `1`, выданный `0.4.0`, больше
-не принимается (ADR-34).
-
-**Результат восстановления.** `RestoredPayload.text` содержит исходные
-значения. Это чувствительный plaintext: он не пишется на диск библиотекой и
-передаётся вызывающему коду, который отвечает за его защиту.
-
-**Очистка.** Артефакты удаляются явным `gateway.discard(context)`.
-Автоматического удаления нет: ответ внешнего обработчика может прийти
-отложенно. При `keep_artifacts=True` удаление полностью на стороне
-приложения-потребителя.
-
-Наблюдаемый контракт `discard` ограничен принятой моделью угроз. Поддельный
-или изменённый токен сам по себе не даёт права на рекурсивное удаление, а
-неподтверждённое непустое дерево не передаётся в рекурсивный обход. Корневой
-workspace закрепляется descriptor на Linux или handle на Windows; обход
-начинается от закреплённого объекта, а имена детей разрешаются относительно
-закреплённого родителя. Если закрепление нельзя доказать, операция завершается
-fail closed с `RestoreError`; возможен безопасный остаточный каталог
-`.pgw-quarantine-*`.
-
-В модели угроз атакующий контролирует сериализованный `RestoreContext`, может
-изменять поля токена, пути, флаг владения и correlation metadata, а также
-подменять namespace entries в родительском каталоге workspace в пределах прав
-ОС. При этом он не может читать или изменять содержимое owned workspace с
-режимом `0700`, память процесса и owner secret.
-
-Вне модели угроз находится процесс с той же OS identity и прямым доступом к
-содержимому workspace или `.pgw-owner`, субъект, уже способный удалить либо
-переписать целевой объект средствами ОС, а также компрометация памяти процесса
-или owner secret. Child-entry mutation субъектом с прямым write-доступом
-внутрь workspace также вне принятой модели. Защита от такого субъекта требует
-отдельной OS identity, sandbox или другой системной границы. Остаточные
-platform-specific риски и уровень доказательности описаны в дополнениях
-ADR-34 по issues #52 и #54.
-Проверка не обращается к хранилищу ключей, поэтому ротация и удаление ключа
-не мешают освобождению ресурсов. Остаточный риск: рабочая база, доступная на
-запись недоверенным процессам, — используйте выделенный `workspace_dir`.
-
-**Отчётность.** Публичные модели и сообщения об ошибках содержат только
-счётчики токенов; имена токенов, содержимое manifest, ключи и открытый текст
-наружу не передаются.
-
-## Хранение retired-ключей (ADR-46, #46)
-
-Начиная с исправления #46 действует bounded retention: в keyring доступны ровно
-активный ключ и один retired — непосредственно предыдущий активный.
-`keystore.get_all_keys()` возвращает `[active, retired]` без дублей и не более
-двух ключей; `pgw key rotate` после успешной смены активного ключа удаляет
-историю глубже одного поколения.
-
-Security trade-off:
-
-- штатный API раскрывает максимум два ключа вместо всей истории;
-- физический keyring сокращается до двух ключей только после успешной явной ротации с завершённым prune: до этого legacy- или partial-failure история остаётся в backend и доступна субъекту с прямым доступом;
-- манифесты старше одного retired поколения перестают расшифровываться штатным
-  API — `pgw restore` завершается существующим контрактом ошибки без раскрытия
-  ключей;
-- ротация является destructive operation для глубокой истории; backup или
-  export key material не предусмотрены, rollback без сохранённого ключа
-  невозможен;
-- чтение, `pgw key status`, restore и импорт модуля никогда не удаляют key
-  material: сокращение истории выполняется только внутри явной `pgw key rotate`.
-
-Partial failure: если запись нового активного ключа не подтверждена чтением или
-не удалось удалить старую историю, операция сообщает `KeystoreError` (код 4) без
-key material в сообщении. Активный ключ при этом не теряется, текущее поколение
-манифестов остаётся читаемым, а повторный `pgw key rotate` приводит keyring к
-bounded-состоянию.
-
-Удаление формулируется как удаление credential entry через backend API и
-недоступность ключа через штатный API. Гарантия физического стирания носителя не
-заявляется.
-
-Concurrency: `keyring` не предоставляет транзакций и блокировок, поэтому
-одновременный `pgw key rotate` из двух процессов может привести к
-last-writer-wins. Это документированный остаточный риск, вне scope #46.
-
-<!-- issue-66: api-vs-physical-retention -->
-
-#### API retention и physical retention (уточнение #66, 2026-08-24)
-
-Штатный API немедленно ограничен active + один retired: `get_all_keys()`
-возвращает не более двух ключей, поэтому `pgw restore` и другие штатные
-потребители не получают более глубокую историю.
-
-Физический blast radius keyring сокращается до двух ключей только после
-успешной явной ротации с завершённым prune. До этого момента:
-
-- legacy-установка, ни разу не ротировавшая ключ, физически хранит в
-  `fernet_key_retired` всю накопленную историю;
-- после prune failure физический retired-entry временно глубже одного
-  поколения, а операция сообщает `KeystoreError` (CLI code 4);
-- verification failure наступает после записи нового active, поэтому
-  фактическим состоянием является новый active и два физических
-  retired-ключа, а не rollback;
-- субъект с прямым доступом к raw keyring backend может прочитать весь
-  физически сохранённый retired-entry, то есть его возможности шире
-  штатного API access.
-
-Повторная успешная ротация (`pgw key rotate`) сокращает физический entry
-до одного retired-ключа. Forensic erasure не обещается: read-time
-truncation штатного API не удаляет credential material из backend.
-
-## Сообщить об уязвимости
-
-Об уязвимостях сообщайте **приватно** через GitHub Security Advisories:
-
-<https://github.com/MRDK80/privacy-gateway/security/advisories/new>
-
-Не создавайте публичные issue для уязвимостей, связанных с безопасностью.
-
-### Публикация manifest.json  [#45, ADR-45]
-
-Публикация `manifest.json` защищена от наблюдения частичного состояния:
-временный файл в каталоге назначения и атомарная публикация: `os.replace` при
-`overwrite=True`, `os.link` (POSIX) или `os.rename` (Windows) при
-`overwrite=False` без fallback (#64, ADR-64). При
-любом отказе до успешной замены ранее существовавший манифест сохраняется
-побайтово, а зашифрованные данные не оказываются в файле под именем
-`manifest.json` в незавершённом виде. Временный файл создаётся с правами
-только для владельца и удаляется best-effort.
-
-Формулировки «crash durable» и «набор артефактов публикуется транзакционно» к
-текущей реализации не применимы: `fsync` файла и каталога не выполняется,
-staging-каталог и rename всего набора не реализованы.
-
-При `overwrite=False` существующий `manifest.json` больше не заменяется молча:
-запуск останавливается до первой записи вместе с `prompt.txt` и `route.json`
-(#48, ADR-48). Формулировка «защита от одновременной записи конкурентным
-процессом» к этой проверке не применима — preflight best-effort.
+# Threat model and technical security policy
+
+[English](SECURITY.md) | [Русский](SECURITY.ru.md)
+
+This document describes Privacy Gateway's threat model, disk artifacts, key
+handling and vulnerability reporting. It reduces accidental disclosure risk;
+pseudonymization is reversible and is not guaranteed anonymization.
+
+<!-- pgw-section: security-boundary -->
+## Risk reduction
+
+Implemented regex/dictionary detection and independent validation address supported
+email/telephone/address/name patterns, file/resource paths, keyword-pattern
+secrets, connection strings, PEM headers, URL endpoints, amounts and dates.
+The independent validator also checks IPv6 and high-entropy strings (minimum 16
+characters, Shannon threshold 3.0); this does not mean the diagnostic detector
+has a general IPv6 or entropy entity type. See [detection limitations](detection.md).
+False negatives remain possible; no complete detection guarantee is made.
+
+Detected values selected for tokenization are encrypted locally with Fernet
+(AES-128-CBC + HMAC-SHA256) and stored encrypted in the manifest. Operational
+manifest/route/report fields do not contain the source values in plaintext.
+`restore` deliberately returns original values: its result is sensitive plaintext.
+
+## Non-guarantees
+
+The system does not prevent multiline/unsupported secrets, passwords outside
+keyword patterns, indirect identification from combinations of fields, semantic
+inference from context, malicious disclosure by a keyring user, compromise of
+restored plaintext, coordinated replacement of route and manifest, or compromised
+infrastructure/account/process. It is not a legal compliance mechanism for GDPR,
+152-FZ or another law. Ordinary OS-account access and raw backend compromise are
+outside the baseline trust assumptions, not mitigated by reversible tokens.
+
+## Trust boundaries
+
+| Component/input | Trust level | Control |
+| --- | --- | --- |
+| Source text | Untrusted | Detector and independent validator |
+| YAML | Untrusted | safe loading and routing-schema validation, fail closed |
+| External response | Untrusted | Token classification and strict mode |
+| Route | Untrusted | Version/required-field checks |
+| Manifest | Untrusted until checked | Pair checksum and authenticated Fernet records |
+| Keyring backend | Untrusted until checked | Full-class-name allowlist |
+| Restored text | Sensitive plaintext | Consumer controls destination/access |
+| Reports/errors | Potentially logged | No original/restored values |
+
+Only the intended protected text may cross the external provider boundary. Never
+export an entire PreparedPayload, restoration context, routes, manifests, key
+material or restored output. Protected text can still carry unsupported or
+contextually identifying data; inspect the documented limitations.
+
+## Data on disk
+
+| Artifact | Content | Handling |
+| --- | --- | --- |
+| `prompt.txt` | Tokenized text, with supported selected values replaced | Residual undetected/context data may remain |
+| `route.json` | Run metadata, manifest path/checksum and counts | Keep local; metadata is not a provider payload |
+| `manifest.json` | token/type/fingerprint/encrypted-value records | Keep local and protect together with access to keys |
+| Restore `--out` file | Restored source values | Sensitive plaintext |
+| System keyring | Fernet key encoded through latin-1 | OS-protected access required |
+
+Source values, decrypted records and keys do not belong in route/manifest reports
+or repository files. A requested restore-output file is the deliberate plaintext
+exception and is not safe to publish, log or commit. Manifest creation requests
+owner-only permissions (`rw-------`); on Windows rely on appropriate NTFS access
+controls rather than a POSIX chmod guarantee.
+
+## Routing configuration
+
+Routing YAML uses only `yaml.safe_load` (ADR-10). Unknown top-level/rules keys
+raise `ConfigurationError`. Configuration cannot disable secret checking:
+`tokenize` and `block_unconditionally` may not intersect (ADR-11). An absent
+routing config uses safe defaults, not an error. This is not a blanket statement
+that every configuration loader has the routing schema.
+
+## Artifact-pair integrity
+
+Route metadata contains `format_version`, `status`, `timestamp`, `source_ref`,
+manifest path, `manifest_sha256` for 1.1 and counts, not source values, Fernet keys,
+salts, decrypted fragments or the entire input. Version 1.1 hashes all bytes of the
+final manifest after its atomic publication, then publishes the route atomically.
+The checksum detects mismatches/corruption. It is not authentication, a MAC or a
+signature: someone replacing both files can recompute it. Fernet authenticates
+encrypted records separately. Legacy route 1.0 remains readable without this
+checksum; 1.1 requires it. Unknown versions, missing manifest and mismatches fail
+without disclosing manifest contents.
+
+## Restore validation order
+
+1. Read/parse route and check version.
+2. Select the actual manifest path.
+3. Run `verify_manifest_integrity` on that path.
+4. Only after success, access keyring.
+5. Load/decrypt manifest.
+6. Classify response tokens.
+7. Substitute known values and build the report.
+8. Publish output only after successful completion.
+
+Integrity verification precedes `get_key`, manifest loading/decryption and record
+processing. Integrity `ConfigurationError` gives exit 3; unavailable/missing key
+gives exit 4. Explicit `--manifest` overrides the route path, and checks apply to
+that actual selection. Absolute route paths are used as-is; relative paths resolve
+against the route's directory, not cwd.
+
+## Untrusted responses
+
+A model may alter case/syntax, remove, duplicate or invent tokens. Token-looking
+text is not proof of validity. Classification is case-sensitive: `[EMAIL_1]` and
+`[email_1]` differ; do not normalize away an alteration.
+
+| Candidate | Policy |
+| --- | --- |
+| Known | Substitute the value |
+| Unknown | Strict rejection; unchanged in lenient mode |
+| Malformed | Strict rejection; unchanged in lenient mode |
+| Missing | Report missing; not an error by itself |
+| Known duplicate | Substitute each occurrence; record the anomaly in the internal/CLI report |
+
+A missing value is not inserted elsewhere: legitimate summarization may omit it.
+Strict mode is default and unknown/malformed tokens cause exit 5 with no result
+file (ADR-21, ADR-47). `--lenient` explicitly accepts partial restoration with
+warnings; it never makes a response trusted. Public RestoredPayload exposes counts,
+not all internal candidate/anomaly lists; see the [library contract](LIBRARY_API.md).
+
+## Restore reporting
+
+Operational reports can contain expected/found counts, token names, missing/
+unknown/malformed/duplicate candidates, mode and warnings. They must not contain
+source/restored values, keys, decrypted manifest contents, complete plaintext or
+sensitive exception values. Restored text is separate (stdout or `--out`), while
+the CLI human report goes to stderr. JSON mode follows ADR-150 and requires an
+output file rather than putting sensitive restored text in an envelope.
+
+## Restore output publication
+
+Restoration and validation complete in memory before file output begins. A temp
+file in the destination directory is followed by `os.replace`. An existing target
+without `--overwrite` causes refusal. Input/integrity/keyring/decryption/strict-token
+failure does not create a result. Temporary plaintext cleanup is best effort on
+write/flush/close/fdopen/replace failures. If unlink itself fails, plaintext may
+remain (#44/#71); cleanup failure does not hide the original error or change an
+existing destination. Atomic visibility avoids partially published plaintext,
+not access-control obligations or crash-durability guarantees.
+
+## Key handling and rotation
+
+Keys reside in SecretService (Linux), macOS Keychain or Windows Credential Vault;
+backend selection is checked against the allowlist. Never log keys or put them in
+repr/str or repository files. OS-account permissions govern keyring access;
+Privacy Gateway does not configure them. After compromise, rotate and re-encrypt
+or destroy affected manifests; rotation alone does not erase old ciphertext.
+
+`pgw key rotate` creates a new active key and carries the previous key as retired
+(ADR-22/ADR-23). Restore can read the previous generation without manual
+re-encryption. Only one retired key is supported. After two rotations, the oldest
+manifests cannot be read through the normal API (`DecryptionError`).
+
+Rotation is not a keyring transaction (ADR-46/#66). Ordered operations are carry
+old active to history, write new active, read-back verification, prune history to
+one previous key. Carry/active-write failure leaves the active generation unchanged
+under the documented backend semantics. Verification happens after the new write:
+a failure can leave a new active and two physical retired keys, without rollback.
+Prune failure follows confirmed active change and leaves extra physical material.
+Both failures report `KeystoreError`/exit 4, not silent success. A later explicit
+successful rotation restores the bounded layout. There is no cross-process lock;
+concurrent rotation can be last-writer-wins.
+
+Only create/status/rotate exist in CLI (ADR-47); there is no CLI deletion command.
+Internal `keystore.delete_key()` irreversibly removes active/retired keys; it is
+not a public library API or CLI command and has no `--yes` requirement.
+
+For full independence from an old key: load the old manifest, decrypt in a trusted
+local environment, encrypt with the new key, atomically save the new manifest and
+recompute the linked route's `manifest_sha256`.
+
+## Retired-key retention
+
+API retention and physical retention differ (ADR-46/#66). `get_all_keys()` returns
+at most two distinct keys `[active, retired]` immediately, regardless of stored
+history. Old manifests beyond that window become unreadable through the normal
+API. Physical history shrinks to two keys only after an explicit successful
+rotation with completed prune. Before that, legacy `fernet_key_retired` or a
+partial failure may retain more material accessible to a raw-backend reader.
+Verification failure can leave new active plus two physical retired keys; this
+is not rollback. Prune failure reports code 4 and can leave deeper history.
+The active key/current generation is retained under the documented failure model;
+incomplete calls must be investigated using actual backend state.
+
+Reads, key status, restore and imports do not delete key material. Truncating the
+API result is not deletion from storage. Backend credential-entry deletion is
+not forensic media erasure; no backup/export or deep-history rollback is promised.
+
+## Fail-closed decisions
+
+Disallowed backend gives `KeystoreError`; corrupt ciphertext gives
+`DecryptionError`; residual detected PII gives `BLOCKED`; an unknown preparation
+token type gives `PENDING`; unknown routing keys/unsafe YAML/integrity failure
+are rejected; strict unknown/malformed restoration tokens are rejected. A false
+alarm/manual check is preferable to a false OK causing disclosure or incorrect
+restoration. `PENDING` is not permissive approval.
+
+## Library integration
+
+The public API preserves the pipeline threat model with additional surfaces:
+
+**Workspace.** Each preparation has its own owner-only temporary subdirectory or
+subdirectory of configured `workspace_dir`, holding the same sensitive artifacts.
+
+**Context token.** `RestoreContext.to_token()` contains references, format version
+and an authentication code, not plaintext/keys/ciphertext/manifest contents. It
+points to protected artifacts and needs appropriate access control. HMAC-SHA256
+uses an ownership secret in owner-only workspace `.pgw-owner`, removed with it.
+The token is untrusted input: its fields do not themselves grant deletion rights.
+Version 1 tokens from 0.4.0 are no longer accepted (ADR-34).
+
+**Restored result.** `RestoredPayload.text` contains source values. The library
+returns it without writing it to disk; the caller protects this sensitive plaintext.
+
+**Cleanup.** Call `gateway.discard(context)` explicitly. There is no automatic
+deletion because the external response may be delayed. `keep_artifacts=True`
+leaves removal entirely to the consumer. A forged/modified token alone cannot
+authorize recursive deletion; an unverified nonempty tree is not traversed.
+A Linux descriptor or Windows handle pins the root; traversal starts from that
+object and child names resolve relative to pinned parents. If pinning cannot be
+proved, fail closed with `RestoreError`; a safe `.pgw-quarantine-*` residual may
+remain. Cleanup does not access keyring, so rotation/deletion of keys does not
+prevent resource release.
+
+The attacker may control serialized context fields/paths/ownership flag/correlation
+metadata and replace parent-directory namespace entries within OS permissions,
+but may not read/modify owned 0700 workspace contents, process memory or owner
+secret. A same-identity process with direct workspace/.pgw-owner access, an actor
+already able to rewrite/delete targets through OS rights, compromised memory or
+owner secret, and child mutation by a direct workspace writer are outside this
+model. Separate OS identity/sandbox/system boundary is needed against those
+actors. ADR-34 amendments #52/#54 describe platform residuals and proof limits.
+An untrusted-writable workspace base remains a risk; use a dedicated workspace.
+
+**Reporting.** Public models/errors expose counts, not token names, manifest
+contents, keys or plaintext to the external consumer. The application must still
+not export its prepared payload/context or restored text.
+
+## Repository and synthetic fixtures
+
+Never commit real data, restored files, real manifests or temporary keys. Use
+synthetic values such as `user@example.com`, `192.0.2.10`, `2001:db8::1`,
+`+7 900 000-00-00`. Findings for approved synthetic examples use an inline
+`# pragma: allowlist secret`; do not change `.secrets.baseline` to add fixtures.
+
+## Reporting vulnerabilities
+
+Report vulnerabilities privately through [GitHub private vulnerability reporting](https://github.com/MRDK80/privacy-gateway/security/advisories/new). Do not include sensitive details in public issues.
+
+## Manifest publication
+
+Manifest publication provides atomic visibility (#45/ADR-45). A temp file in the
+destination directory is published with `os.replace` when overwriting, or POSIX
+`os.link` / Windows `os.rename` without fallback when not overwriting (#64/ADR-64).
+Failure before successful publication preserves an existing manifest byte-for-byte
+and does not expose partial ciphertext under its final name. Temp files request
+owner-only permissions and are removed best effort.
+
+This is not crash durability: file/directory fsync is not performed. There is no
+staging-directory rename or transaction over the entire artifact set. Without
+overwrite, collision preflight across prompt/route/manifest stops before the first
+write (#48/ADR-48); this best-effort preflight is not a guarantee against concurrent
+writers. The individual manifest publication path supplies its own no-clobber
+semantics; do not infer an atomic multi-file transaction.
 
 <!-- Internal documentation-contract fixture; prose remains subject to review. -->
 ```pgw-doc-facts

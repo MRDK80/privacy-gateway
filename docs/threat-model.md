@@ -1,28 +1,28 @@
-# Модель угроз
+# Threat model
 
-Актуальная модель угроз и политика безопасности поддерживаются в одном
-документе — [`SECURITY.md`](SECURITY.md).
+[English](threat-model.md) | [Русский](threat-model.ru.md)
 
-Прежняя таблица статусов уровня Э1 удалена: она описывала как
-запланированные контрмеры, которые реализованы в Э2, Э4, Э7 и Э8, и
-расходилась с `SECURITY.md` как второй источник правды.
+The current threat model and security policy have one technical source:
+[SECURITY.md](SECURITY.md). The former stage-one status table was removed because
+it described implemented controls as planned and diverged from that source.
 
-## Куда смотреть
+<!-- pgw-section: security-boundary -->
+## Navigation
 
-| Вопрос | Раздел `SECURITY.md` |
-|--------|----------------------|
-| Границы защиты | «От чего защищает», «От чего не защищает» |
-| Границы доверия и артефакты на диске | «Границы доверия», «Что попадает на диск» |
-| Целостность пары артефактов и `manifest_sha256` | «Целостность пары артефактов» |
-| Порядок проверок и строгий режим `restore` | «Порядок проверок restore», «Строгий режим restore» |
-| Ответ внешнего обработчика как недоверенный вход | «Ответ LLM как недоверенный вход» |
-| Безопасность отчёта и атомарность записи | «Безопасность отчёта restore», «Атомарность restore» |
-| Хранение и ротация ключа | «Обращение с ключом», «Ротация ключа» |
-| Безопасность YAML-конфига | «Безопасность YAML-конфига маршрутизации» |
-| Принцип fail closed | «Почему fail closed» |
-| Библиотечная интеграция | «Библиотечное использование» |
-| Сообщить об уязвимости | «Сообщить об уязвимости» |
+| Question | Section in the security model |
+| --- | --- |
+| Protection and exclusions | Risk reduction; Non-guarantees |
+| Trust boundaries and artifacts on disk | Trust boundaries; Data on disk |
+| Pair integrity and `manifest_sha256` | Artifact-pair integrity |
+| Validation order and strict restore | Restore validation order; Untrusted responses |
+| External response as untrusted input | Untrusted responses |
+| Safe reporting and atomic writes | Restore reporting; Restore output publication |
+| Key storage and rotation | Key handling and rotation; Retired-key retention |
+| YAML configuration | Routing configuration |
+| Fail closed | Fail-closed decisions |
+| Library integration | Library integration |
+| Vulnerability reporting | Reporting vulnerabilities |
 
-Формат токенов и классификация искажённых токенов описаны в
-[`token-format.md`](token-format.md), архитектура конвейеров — в
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+See [token syntax/classification](token-format.md) and the
+[pipeline architecture](ARCHITECTURE.md). The English and Russian guides preserve
+the same limits; a translation does not add security guarantees.

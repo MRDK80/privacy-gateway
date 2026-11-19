@@ -11,6 +11,10 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 REQUIRED_PAIRS: dict[str, tuple[str, ...]] = {
+    "SECURITY.md": ("security-boundary",),
+    "docs/SECURITY.md": ("security-boundary",),
+    "docs/threat-model.md": ("security-boundary",),
+    "docs/detection.md": ("security-boundary",),
     "README.md": ("protection-boundary", "installation", "library", "limitations"),
     "docs/INSTALLATION.md": (
         "cli-install",
