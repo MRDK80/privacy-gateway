@@ -17,7 +17,7 @@ The [policy](LANGUAGE_POLICY.md) defines canonical precedence and migration rule
 | `CHANGELOG.md` | Release consumers | Russian + English identifiers/prose | New English entries; preserve history | Future release work |
 | `CONTRIBUTING.md` | Contributors / agents | Russian + English identifiers/prose | English target; binding Russian until scoped review | Technical translation separately scoped |
 | `README.md` | Users | Russian + English identifiers/prose | English + Russian companion | #119 |
-| `SECURITY.md` | Users / security | Russian + English identifiers/prose | English + Russian companion | #121 |
+| `SECURITY.md` | Users / security | English canonical + Russian companion | Delivered English/Russian | #121 |
 | `docs/392-extraction-demo-plan.md` | Engineering / decisions | Russian + English identifiers/prose | Keep legacy; new decisions English | Historical, no bulk translation |
 | `docs/392-extraction-issue-allocation.md` | Engineering / decisions | Russian + English identifiers/prose | Keep legacy; new decisions English | Historical, no bulk translation |
 | `docs/392-extraction-resource-routes.md` | Engineering / decisions | Russian + English identifiers/prose | Keep legacy; new decisions English | Historical, no bulk translation |
@@ -85,10 +85,10 @@ The [policy](LANGUAGE_POLICY.md) defines canonical precedence and migration rule
 | `docs/LIBRARY_API.md` | Library / implementation | Russian + English identifiers/prose | English public docstrings; internal comments no bulk rewrite | #123 (public surface only) |
 | `docs/POST_PUBLICATION.md` | Engineering / release | Russian + English identifiers/prose | English new prose; existing Russian not yet translated | No bulk rewrite; release page #126 |
 | `docs/RELEASE.md` | Engineering / release | Russian + English identifiers/prose | English new prose; existing Russian not yet translated | No bulk rewrite; release page #126 |
-| `docs/SECURITY.md` | Users / security | Russian + English identifiers/prose | English + Russian companion | #121 |
+| `docs/SECURITY.md` | Users / security | English canonical + Russian companion | Delivered English/Russian | #121 |
 | `docs/article-sync-31.md` | Russian article | Russian + English identifiers/prose | Russian | No translation |
-| `docs/detection.md` | Users / security | Russian + English identifiers/prose | English + Russian companion | #121 |
-| `docs/threat-model.md` | Users / security | Russian + English identifiers/prose | English + Russian companion | #121 |
+| `docs/detection.md` | Users / security | English canonical + Russian companion | Delivered English/Russian | #121 |
+| `docs/threat-model.md` | Users / security | English canonical + Russian companion | Delivered English/Russian | #121 |
 | `docs/token-format.md` | Engineering / release | Russian + English identifiers/prose | English new prose; existing Russian not yet translated | No bulk rewrite; release page #126 |
 | `examples/01_quickstart.py` | Users / installation | Russian + English identifiers/prose | English + Russian guidance; one executable | #120 |
 | `examples/02_full_round_trip.py` | Users / installation | Russian + English identifiers/prose | English + Russian guidance; one executable | #120 |
@@ -164,3 +164,10 @@ reviewed against canonical marker commit `9f0f1a93203940b84c5aa48a442506011a243d
 The offline checker/pre-commit hook covers these pairs; pending #121 security
 migration must register its pairs before claiming completion. Structural checks
 do not certify translated meaning or the authenticity of a review record.
+
+## Security migration — #121
+
+Four English security guides retain Russian companions, reporting links and
+structural source records. Private vulnerability reporting was explicitly
+approved and verified enabled before documenting its intake. Detection remains
+human-output only; no runtime behavior or security guarantee is expanded.

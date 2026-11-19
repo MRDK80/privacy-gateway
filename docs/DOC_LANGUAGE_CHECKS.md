@@ -13,7 +13,7 @@ the exact CI set remains four OS/Python cells plus pre-commit.
 
 ## Delivered-pair registry
 
-`tools/check_doc_languages.py:REQUIRED_PAIRS` declares the six delivered pairs:
+`tools/check_doc_languages.py:REQUIRED_PAIRS` declares the ten delivered pairs:
 root README, installation/dependencies, and examples index/rotation/CLI guides.
 Missing either file fails, as do unregistered `.ru.md` companions in the supported
 root/docs/examples directories. Deleting a companion cannot downgrade an existing
@@ -71,3 +71,6 @@ it, or that later prose changes are equivalent. Technical/security translation
 review and the applicable exact CI/delivery gates remain mandatory. This is a
 static-checkout developer tool, not an OS sandbox or product runtime contract.
 Positive/mutation tests live in `tests/test_doc_language_checker.py`.
+
+The #121 security migration also registers `SECURITY.md`, `docs/SECURITY.md`,
+`docs/threat-model.md` and `docs/detection.md` with preserved Russian companions.

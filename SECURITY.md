@@ -1,31 +1,40 @@
-# Политика безопасности
+# Security policy
 
-## Работа с чувствительными данными
+[English](SECURITY.md) | [Русский](SECURITY.ru.md)
 
-- **Не публикуйте** реальные входные тексты, карты кейсов, ключи шифрования или зашифрованные манифесты в этом репозитории.
-- **Не вносите** реальные персональные данные, названия организаций, имена серверов, IP-адреса, финансовые показатели и любые корпоративные идентификаторы в issues, pull request'ы, сообщения коммитов или логи CI.
-- **Не коммитьте** файлы `.env` и любые файлы, содержащие учётные данные, токены или секреты.
-- Windows Credential Manager и `keyring` используются исключительно для локального хранения ключей — они никогда не должны служить источником данных для Git.
+<!-- pgw-section: security-boundary -->
+## Sensitive data
 
-## Перед каждым push
+- Do not publish real input text, case maps, encryption keys or encrypted manifests
+  in this repository.
+- Do not put real personal data, organization names, server names, IP addresses,
+  financial figures or corporate identifiers into issues, pull requests, commit
+  messages or CI logs.
+- Do not commit `.env` files, credentials, tokens or secrets.
+- Windows Credential Manager and `keyring` are only local key stores, never Git
+  data sources.
 
-Запустите сканирование секретов, чтобы убедиться в отсутствии случайных утечек:
+## Before pushing
+
+Run secret scanning and resolve findings before pushing:
 
 ```bash
 detect-secrets scan --all-files \
   --exclude-files '(\.git/.*|\.venv/.*|\.mypy_cache/.*|\.pytest_cache/.*|\.ruff_cache/.*|.*\.egg-info/.*)'
 ```
 
-Если обнаружена хотя бы одна находка — устраните её до выполнения push.
+## CI logs
 
-## Логи CI
+CI uses synthetic data only. Real data must not enter logs, artifacts or reports.
 
-Pipeline CI работает только на синтетических данных. Реальные данные не должны появляться в логах CI, артефактах или тестовых отчётах.
+## Vulnerability reporting
 
-## Сообщение об уязвимостях
+Report vulnerabilities privately through [GitHub private vulnerability reporting](https://github.com/MRDK80/privacy-gateway/security/advisories/new). Do not include sensitive details in public issues.
 
-Сообщайте об уязвимостях **приватно** владельцу репозитория. Не открывайте публичный issue для сведений о проблемах безопасности.
+Never open a public issue containing sensitive vulnerability details. See the
+[technical security model](docs/SECURITY.md) for supported guarantees and limits.
 
-## Удаление локального тестового кейса
+## Local test-case cleanup
 
-Инструкции по безопасному удалению локального тестового кейса (карта кейса, зашифрованный манифест и рабочие файлы) будут добавлены в следующем этапе.
+Further operational guidance for removing a local case map, encrypted manifest
+and work files remains future work. This is not a secure-erasure guarantee.
