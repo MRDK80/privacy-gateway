@@ -3,7 +3,7 @@
 [English](INSTALLATION.md) | [Русский](INSTALLATION.ru.md)
 
 Translation of: INSTALLATION.md  
-Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
+Reviewed against commit: 1b7ae9c5b4ebf29fc591b92a10a001bf41562f65
 Translation status: current
 
 Поддерживаются Python 3.11 и 3.12 на Linux и Windows. Проверьте версию

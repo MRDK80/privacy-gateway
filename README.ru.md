@@ -3,7 +3,7 @@
 [English](https://github.com/MRDK80/privacy-gateway/blob/main/README.md) | [Русский](https://github.com/MRDK80/privacy-gateway/blob/main/README.ru.md)
 
 Translation of: README.md  
-Reviewed against commit: 2c85e3f2938df0528313b215f2c03fad4db2ef0b
+Reviewed against commit: 1b7ae9c5b4ebf29fc591b92a10a001bf41562f65
 Translation status: current
 
 Локальный CLI-инструмент и библиотека для безопасной подготовки корпоративных
