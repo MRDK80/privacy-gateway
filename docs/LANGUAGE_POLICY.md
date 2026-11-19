@@ -135,3 +135,10 @@ keep existing anchors or supply valid replacement links, and run the complete
 local gate plus exact task and post-merge CI for every task, including docs-only.
 No version bump, tag, release, PyPI publication or new localization dependency is
 part of this policy.
+
+## Contribution language — #124
+
+English is preferred for issues and PR descriptions; Russian questions and
+reports are welcome. New accepted technical decisions and canonical documentation
+use English. This does not require retroactive translation of discussions or
+permit sensitive data in either language.

@@ -148,3 +148,11 @@ rows above remain historical starting-state records.
 English. The API reference is English-only per policy; Russian user scenarios
 remain in the paired examples guides. No internal-comment or historical-ADR
 translation is claimed, and runtime signatures/exception messages are unchanged.
+
+## Metadata/contribution migration — #124
+
+Package description/keywords, CONTRIBUTING and the PR template are English.
+Two English issue templates accept Russian reports/questions and require
+synthetic data/private vulnerability handling. Existing AGENTS authority and
+all gate/owner-approval requirements remain binding. Metadata identity, version,
+license, Python support and dependency requirements are unchanged.

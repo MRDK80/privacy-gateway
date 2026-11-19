@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "privacy-gateway"
 dynamic = ["version"]
-description = "Локальный инструмент для безопасной подготовки корпоративных текстов перед ручной передачей во внешнюю языковую модель."
+description = "Local pseudonymization of text before external language-model processing."
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -13,7 +13,7 @@ authors = [
   {name = "Mikhail Iofik"}
 ]
 readme = "README.md"
-keywords = ["privacy", "llm", "pii", "anonymization", "tokenization"]
+keywords = ["privacy", "llm", "pii", "pseudonymization", "tokenization"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -44,6 +44,9 @@ dev = [
 
 [project.urls]
 Repository = "https://github.com/MRDK80/privacy-gateway"
+Documentation = "https://github.com/MRDK80/privacy-gateway/blob/main/README.md"
+Issues = "https://github.com/MRDK80/privacy-gateway/issues"
+Changelog = "https://github.com/MRDK80/privacy-gateway/blob/main/CHANGELOG.md"
 
 [project.scripts]
 pgw = "privacy_gateway.bootstrap:main"
