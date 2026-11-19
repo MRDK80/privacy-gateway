@@ -3,7 +3,7 @@
 [English](detection.md) | [Русский](detection.ru.md)
 
 Translation of: detection.md  
-Reviewed against commit: 0000000000000000000000000000000000000000  
+Reviewed against commit: eb0a14a5d7ea788552e26b5b7e9a1f4f49c34075  
 Translation status: current
 
 <!-- pgw-section: security-boundary -->

@@ -3,7 +3,7 @@
 [English](threat-model.md) | [Русский](threat-model.ru.md)
 
 Translation of: threat-model.md  
-Reviewed against commit: 0000000000000000000000000000000000000000  
+Reviewed against commit: eb0a14a5d7ea788552e26b5b7e9a1f4f49c34075  
 Translation status: current
 
 Актуальная модель угроз и политика безопасности поддерживаются в одном
