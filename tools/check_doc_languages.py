@@ -34,6 +34,9 @@ REQUIRED_PAIRS: dict[str, tuple[str, ...]] = {
         "catalog",
     ),
 }
+OFFICIAL_MAIN = "https://github.com/MRDK80/privacy-gateway/blob/main/"
+OFFICIAL_MAIN_PATH = "/MRDK80/privacy-gateway/blob/main/"
+
 PRIVATE_PARTS = {
     ".git",
     ".agent-private",
@@ -169,11 +172,23 @@ def check_links(root: Path, document: Path, text: str) -> None:
         if any(c.isspace() for c in link) or "\x00" in unquote(link):
             raise DocLanguageError("whitespace or NUL in Markdown target")
         parsed = urlsplit(link)
-        if parsed.scheme or parsed.netloc:
-            if parsed.scheme not in ("", "http", "https", "mailto"):
-                raise DocLanguageError("unsupported link scheme")
-            continue
-        target = safe_target(root, document, parsed.path or document.name)
+        official = (
+            parsed.scheme == "https"
+            and parsed.netloc == "github.com"
+            and parsed.path.startswith(OFFICIAL_MAIN_PATH)
+        )
+        if official:
+            if parsed.query:
+                raise DocLanguageError("repository link has an unsupported query")
+            target = safe_target(
+                root, root / "README.md", parsed.path[len(OFFICIAL_MAIN_PATH) :]
+            )
+        else:
+            if parsed.scheme or parsed.netloc:
+                if parsed.scheme not in ("", "http", "https", "mailto"):
+                    raise DocLanguageError("unsupported link scheme")
+                continue
+            target = safe_target(root, document, parsed.path or document.name)
         if parsed.fragment:
             if target.suffix.lower() != ".md":
                 raise DocLanguageError("anchors supported only for Markdown")
@@ -211,7 +226,13 @@ def check_repository(
                 text = read_document(path)
                 prose = without_comments(without_fences(text))
                 switch = f"[English]({canonical.name}) | [Русский]({companion.name})"
-                if switch not in prose.splitlines()[:5]:
+                switches = {switch}
+                if canonical.as_posix() == "README.md":
+                    switches.add(
+                        f"[English]({OFFICIAL_MAIN}README.md) | "
+                        f"[Русский]({OFFICIAL_MAIN}README.ru.md)"
+                    )
+                if not switches.intersection(prose.splitlines()[:5]):
                     raise DocLanguageError("missing reciprocal top language links")
                 section_ids(text, sections)
                 check_links(root, path, text)

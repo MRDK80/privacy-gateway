@@ -178,3 +178,10 @@ The owner-approved English CLI contract covers help, usage metavars, observable
 messages and catalog/JSON message prose. Machine structure and exit codes remain
 unchanged. Russian user guides quote the actual English CLI output. Synthetic
 fixtures and internal/library errors outside the approved scope remain unchanged.
+
+## Package-page preparation — #126
+
+Canonical README remains the package long-description source, with synchronized
+Russian overview and source-install pins in both INSTALLATION guides. Root links
+use the official absolute main base for index context; local guard/anchor tests
+and actual wheel/sdist/HTML evidence are required. No publication is performed.

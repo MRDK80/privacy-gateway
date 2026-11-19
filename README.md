@@ -1,22 +1,26 @@
 # Privacy Gateway
 
-[English](README.md) | [Русский](README.ru.md)
+[English](https://github.com/MRDK80/privacy-gateway/blob/main/README.md) | [Русский](https://github.com/MRDK80/privacy-gateway/blob/main/README.ru.md)
 
 A local CLI and Python library for preparing corporate text before manually
 sending it to an external language model. It detects supported PII and secrets,
 replaces values with tokens such as `[TYPE_N]`, encrypts the mapping, validates
 the protected text, and restores original values in the model's response locally.
 
+For individual users and small teams working locally before a manual LLM
+handoff. The operator reviews the protected text and keeps restoration material
+on the local system.
+
 ## Status
 
 The local detection, pseudonymization, artifact preparation, independent
 validation, strict response restoration and key-management stages are implemented,
 along with a stable library API. Package metadata declares
-`Development Status :: 3 - Alpha`. See the [changelog](CHANGELOG.md).
+`Development Status :: 3 - Alpha`. See the [changelog](https://github.com/MRDK80/privacy-gateway/blob/main/CHANGELOG.md).
 
 This English entry point is part of an ongoing documentation migration. Linked
 guides may still be in Russian. CLI text follows the approved English default;
-the [language policy](docs/LANGUAGE_POLICY.md)
+the [language policy](https://github.com/MRDK80/privacy-gateway/blob/main/docs/LANGUAGE_POLICY.md)
 explains the migration scope. A link does not imply that its target is translated.
 
 <!-- pgw-section: protection-boundary -->
@@ -37,16 +41,20 @@ What it provides:
 
 What it does not provide:
 
-- Detection is limited to implemented regular expressions and dictionaries;
+- False negatives remain possible. Detection is limited to implemented regular expressions and dictionaries;
   unknown data classes may remain undetected.
 - Multiline secrets and passwords outside keyword patterns are not recognized.
 - Indirect identification from combinations of pseudonymized fields is not prevented.
 - Unsigned SHA-256 does not protect against coordinated replacement of both artifacts.
 - The result of `restore` is plaintext and needs the same protection as the source.
 
-See the [security model](docs/SECURITY.md),
-[threat-model overview](docs/threat-model.md), and
-[supported entities and detection limits](docs/detection.md).
+See the [security model](https://github.com/MRDK80/privacy-gateway/blob/main/docs/SECURITY.md),
+[threat-model overview](https://github.com/MRDK80/privacy-gateway/blob/main/docs/threat-model.md), and
+[supported entities and detection limits](https://github.com/MRDK80/privacy-gateway/blob/main/docs/detection.md).
+
+The only declared optional extra is `dev`, containing development and quality
+tools. The base installation provides both CLI and Library API; no additional
+product extras are declared.
 
 ## Requirements
 
@@ -58,7 +66,7 @@ See the [security model](docs/SECURITY.md),
 
 The encryption key is stored in the system keyring. Headless environments need
 an active keyring session (`dbus-run-session` and `gnome-keyring-daemon`);
-see the [security guide](docs/SECURITY.md).
+see the [security guide](https://github.com/MRDK80/privacy-gateway/blob/main/docs/SECURITY.md).
 
 The `keyring` library selects the backend. Privacy Gateway calls
 `keyring.get_keyring()` and checks the selected class against an allowlist of
@@ -73,25 +81,25 @@ publication, install the verified source commit rather than a same-named package
 from an index. If pipx is already installed, on Linux with `python3.12` available:
 
 ```bash
-pipx install --python python3.12 "git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843"
+pipx install --python python3.12 "git+https://github.com/MRDK80/privacy-gateway.git@21509e10055c36931fd51d71cbaeafdd3e73570a"
 pgw --help
 pgw doctor
 ```
 
 If `pgw` is not on PATH, use the executable path shown by pipx. The
-[installation guide](docs/INSTALLATION.md) provides separate Linux and Windows
+[installation guide](https://github.com/MRDK80/privacy-gateway/blob/main/docs/INSTALLATION.md) provides separate Linux and Windows
 PowerShell commands without shell-profile changes, pipx bootstrap, library
 installation through venv/pip, updates, uninstalling and safe diagnostics.
 
-For development and quality gates, see [CONTRIBUTING.md](CONTRIBUTING.md).
-The [dependency contract](docs/DEPENDENCIES.md) describes the sole `dev` extra.
+For development and quality gates, see [CONTRIBUTING.md](https://github.com/MRDK80/privacy-gateway/blob/main/CONTRIBUTING.md).
+The [dependency contract](https://github.com/MRDK80/privacy-gateway/blob/main/docs/DEPENDENCIES.md) describes the sole `dev` extra.
 There are no product NER, proxy or provider extras.
 
 ## First run
 
 The example below needs a separate repository checkout containing `examples`;
 pipx and wheel installations do not install repository examples. Use the
-[installation guide](docs/INSTALLATION.md) to choose CLI and library environments.
+[installation guide](https://github.com/MRDK80/privacy-gateway/blob/main/docs/INSTALLATION.md) to choose CLI and library environments.
 Run the key command with the installed `pgw`, and the Python example with the
 interpreter of a venv containing the library.
 
@@ -135,10 +143,10 @@ Strict mode is the default: an unknown or malformed token causes exit code 5,
 and no result file is created. Lenient mode requires explicit `--lenient`;
 it does not make the model's response trustworthy.
 
-See the [CLI round-trip example](examples/06_cli_round_trip.md) for verified
+See the [CLI round-trip example](https://github.com/MRDK80/privacy-gateway/blob/main/examples/06_cli_round_trip.md) for verified
 flags, exit codes and Bash/PowerShell differences, the
-[key-rotation example](examples/05_key_rotation.md), and the
-[architecture guide](docs/ARCHITECTURE.md) for exit codes, restoration modes
+[key-rotation example](https://github.com/MRDK80/privacy-gateway/blob/main/examples/05_key_rotation.md), and the
+[architecture guide](https://github.com/MRDK80/privacy-gateway/blob/main/docs/ARCHITECTURE.md) for exit codes, restoration modes
 and token classification. `pgw detect` reports detection metadata without
 original values; it is not permission to send source text.
 
@@ -162,14 +170,14 @@ gateway.discard(prepared.context)
 
 `prepare` returns protected text and an opaque restoration context. `restore`
 checks protected-artifact integrity before returning plaintext. The consumer
-calls `discard` to remove artifacts. The [library contract](docs/LIBRARY_API.md)
-defines the lifecycle and exceptions; the [token-format guide](docs/token-format.md)
+calls `discard` to remove artifacts. The [library contract](https://github.com/MRDK80/privacy-gateway/blob/main/docs/LIBRARY_API.md)
+defines the lifecycle and exceptions; the [token-format guide](https://github.com/MRDK80/privacy-gateway/blob/main/docs/token-format.md)
 defines token syntax. The sketch is not a guarantee that cleanup succeeds after
 an application failure; cleanup and other limits are documented in the contract.
 
 ## Examples
 
-The [examples index](examples/README.md) contains reproducible scenarios and
+The [examples index](https://github.com/MRDK80/privacy-gateway/blob/main/examples/README.md) contains reproducible scenarios and
 prerequisites: a minimal round trip, a full flow with several entity types,
 secret blocking, an untrusted model response, key rotation and a CLI round trip.
 
@@ -187,28 +195,28 @@ secret blocking, an untrusted model response, key rotation and a CLI round trip.
 
 ## Development
 
-[CONTRIBUTING.md](CONTRIBUTING.md) defines the mandatory local quality gate,
+[CONTRIBUTING.md](https://github.com/MRDK80/privacy-gateway/blob/main/CONTRIBUTING.md) defines the mandatory local quality gate,
 branching model, Python-version policy and reporting requirements.
 
 Do not add real corporate data to the repository. Examples use synthetic values
 such as `user@example.com`, `192.0.2.10`, `2001:db8::1` and `+7 900 000-00-00`.
-See the [repository security policy](SECURITY.md) for vulnerability reporting
-and the [technical security model](docs/SECURITY.md).
+See the [repository security policy](https://github.com/MRDK80/privacy-gateway/blob/main/SECURITY.md) for vulnerability reporting
+and the [technical security model](https://github.com/MRDK80/privacy-gateway/blob/main/docs/SECURITY.md).
 
 ## Documentation
 
 | Document | Contents |
 | --- | --- |
-| [Architecture](docs/ARCHITECTURE.md) | Pipeline, data model, artifact formats and exit codes |
-| [Library API](docs/LIBRARY_API.md) | Public API, context lifecycle and exceptions |
-| [Security](docs/SECURITY.md) | Threat model, trust boundaries and key handling |
-| [Detection](docs/detection.md) | Supported entities and detector limitations |
-| [Token format](docs/token-format.md) | Syntax, numbering and restoration behavior |
-| [Decisions](docs/DECISIONS.md) | Architectural decision record |
-| [Examples](examples/README.md) | Reproducible examples index |
-| [Contributing](CONTRIBUTING.md) | Definition of Done, quality gate and branching model |
-| [Language policy](docs/LANGUAGE_POLICY.md) | Canonical languages and migration/synchronization rules |
+| [Architecture](https://github.com/MRDK80/privacy-gateway/blob/main/docs/ARCHITECTURE.md) | Pipeline, data model, artifact formats and exit codes |
+| [Library API](https://github.com/MRDK80/privacy-gateway/blob/main/docs/LIBRARY_API.md) | Public API, context lifecycle and exceptions |
+| [Security](https://github.com/MRDK80/privacy-gateway/blob/main/docs/SECURITY.md) | Threat model, trust boundaries and key handling |
+| [Detection](https://github.com/MRDK80/privacy-gateway/blob/main/docs/detection.md) | Supported entities and detector limitations |
+| [Token format](https://github.com/MRDK80/privacy-gateway/blob/main/docs/token-format.md) | Syntax, numbering and restoration behavior |
+| [Decisions](https://github.com/MRDK80/privacy-gateway/blob/main/docs/DECISIONS.md) | Architectural decision record |
+| [Examples](https://github.com/MRDK80/privacy-gateway/blob/main/examples/README.md) | Reproducible examples index |
+| [Contributing](https://github.com/MRDK80/privacy-gateway/blob/main/CONTRIBUTING.md) | Definition of Done, quality gate and branching model |
+| [Language policy](https://github.com/MRDK80/privacy-gateway/blob/main/docs/LANGUAGE_POLICY.md) | Canonical languages and migration/synchronization rules |
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/MRDK80/privacy-gateway/blob/main/LICENSE).

@@ -156,3 +156,12 @@ review approval or authentication of a source commit.
 [ADR-122](ADR-122-english-cli.md) records the separately owner-approved English
 default for CLI text. This fulfills the contract-decision prerequisite above;
 it does not translate detector data, caller values or out-of-scope Library errors.
+
+## Package-index root README exception — #126
+
+The root README pair uses absolute links under the exact official
+`https://github.com/MRDK80/privacy-gateway/blob/main/` base for package-index
+rendering. This narrow exception replaces directory-relative links only for the
+root package page; other guides keep relative language switches. Offline checks
+validate the official target against local files/anchors, not remote main
+availability. The final roadmap merge must separately establish release readiness.
