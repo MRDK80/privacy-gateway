@@ -51,6 +51,8 @@ def test_public_import_and_help_do_not_load_optional_tools(tmp_path: Path) -> No
         import importlib.abc
         import sys
 
+        assert sys.flags.utf8_mode == 1
+
         forbidden = {
             "pytest", "pytest_cov", "ruff", "mypy", "pre_commit", "detect_secrets",
             "spacy", "transformers", "torch", "fastapi", "uvicorn",
@@ -95,10 +97,11 @@ def test_public_import_and_help_do_not_load_optional_tools(tmp_path: Path) -> No
     env = dict(os.environ)
     env.update(HOME=str(tmp_path), USERPROFILE=str(tmp_path), PYTHONUTF8="1")
     completed = subprocess.run(
-        [sys.executable, "-I", "-B", "-c", source, str(ROOT / "src")],
+        [sys.executable, "-I", "-B", "-X", "utf8", "-c", source, str(ROOT / "src")],
         cwd=tmp_path,
         env=env,
         text=True,
+        encoding="utf-8",
         capture_output=True,
         timeout=30,
         check=False,
