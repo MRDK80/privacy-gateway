@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import io
+import json
+import subprocess
+import sys
 import tarfile
 import zipfile
 from pathlib import Path
 
 import pytest
+from tools import verify_package_build as build_gate
 from tools.verify_package_build import (
     INSTALLED_SMOKE,
     BuildGateError,
@@ -129,3 +133,44 @@ def test_clean_environment_drops_python_import_overrides(
     assert env["PYTHONNOUSERSITE"] == "1"
     assert env["PYTHONUTF8"] == "1"
     assert env["PGW_SYNTHETIC"] == "preserved"
+
+
+def test_install_probe_uses_supported_console_controls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    venv = tmp_path / "clean"
+    python = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    python.parent.mkdir(parents=True)
+    python.touch()
+    observed = {
+        "version": "0.5.0", "metadata": "0.5.0", "roundtrip": True,
+        "module_file": str(venv / "site-packages/privacy_gateway/__init__.py"),
+    }
+    calls: list[str] = []
+
+    def fake_run(*args: object, **kwargs: object) -> str:
+        return ""
+
+    def fake_subprocess(
+        argv: list[str], **kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if "-c" in argv:
+            output = json.dumps(observed)
+        else:
+            option = argv[-1]
+            assert option in {"--help", "--describe"}
+            calls.append(option)
+            output = (
+                "usage: pgw"
+                if option == "--help"
+                else json.dumps({"kind": "cli_catalog", "program": "pgw"})
+            )
+        return subprocess.CompletedProcess(argv, 0, stdout=output, stderr="")
+
+    monkeypatch.setattr(build_gate, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_subprocess)
+    result = build_gate.probe_clean_venv(
+        tmp_path / "artifact.whl", venv, tmp_path / "checkout",
+    )
+    assert result["version"] == "0.5.0"
+    assert calls == ["--help", "--describe"]

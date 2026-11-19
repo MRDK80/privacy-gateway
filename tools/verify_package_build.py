@@ -446,15 +446,17 @@ def probe_clean_venv(
     ):
         raise BuildGateError("module imported outside the clean environment")
     script = python.parent / ("pgw.exe" if sys.platform == "win32" else "pgw")
-    for argument in ("--help", "--version"):
+    for argument in ("--help", "--describe"):
         result = subprocess.run(
             [str(script), argument], cwd=smoke, env=env,
             text=True, encoding="utf-8", capture_output=True, timeout=30, check=False,
         )
         if result.returncode != 0 or not result.stdout.strip():
             raise BuildGateError("installed console entry failed: " + argument)
-        if argument == "--version" and observed["version"] not in result.stdout:
-            raise BuildGateError("installed CLI version mismatch")
+        if argument == "--describe":
+            catalog = json.loads(result.stdout)
+            if catalog.get("kind") != "cli_catalog" or catalog.get("program") != "pgw":
+                raise BuildGateError("installed CLI catalog mismatch")
     return observed
 
 
