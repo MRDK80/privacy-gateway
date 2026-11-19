@@ -1,154 +1,126 @@
-# 05_key_rotation — ротация ключа и отложенное восстановление
+# 05_key_rotation — rotation and delayed restoration
 
-Единственный пример раздела без исполняемого скрипта. Ротация изменяет
-системный keyring пользователя необратимо, поэтому сценарий описан как
-последовательность реальных команд, а не как файл `.py`, который можно
-запустить без последствий.
+[English](05_key_rotation.md) | [Русский](05_key_rotation.ru.md)
 
-## Почему здесь нет скрипта
+This is a command guide, not a script safe to run without consequences. Rotation
+irreversibly changes the current user's system keyring.
 
-- Управление ключами доступно только через CLI: `pgw key create`,
-  `pgw key status`, `pgw key rotate`. Модуль `privacy_gateway.keystore`
-  в `__all__` пакета не входит и публичным library API не является
-  (`docs/LIBRARY_API.md`).
-- Команды удаления ключа в CLI нет: поддерживаются только `create`,
-  `status` и `rotate` (ADR-47, #47). Отменить ротацию средствами CLI
-  невозможно.
-- Ротация — destructive operation для глубокой истории; backup и export
-  ключевого материала не реализованы, rollback без сохранённого ключа
-  невозможен (ADR-46).
-- Примеры 01–04 требуют активный ключ, но не изменяют его. Сценарий этого
-  раздела меняет активный ключ, поэтому запускать его на рабочем keyring
-  без осознанного решения нельзя.
+## Why there is no executable script
 
-Автоматическая проверка поведения выполняется на изолированном fake
-backend в `tests/test_key_rotation.py` и `tests/test_key_retention_policy.py`;
-реальный системный keyring в тестах не задействуется.
+- Key management is CLI-only: `pgw key create`, `pgw key status`, `pgw key rotate`.
+  `privacy_gateway.keystore` is internal, not exported in `__all__`; see
+  [Library API](../docs/LIBRARY_API.md).
+- Only create/status/rotate exist (ADR-47/#47); no CLI key-deletion or undo exists.
+- Rotation is destructive for deep history. Key backup/export is not implemented;
+  rollback without the old key is impossible (ADR-46).
+- Examples 01–04 require but do not change an active key. Do not run this scenario
+  against a working keyring without a deliberate decision.
 
-## Предупреждение перед выполнением
+`tests/test_key_rotation.py` and `tests/test_key_retention_policy.py` test behavior
+against an isolated fake backend, never the real system keyring.
 
-Команды ниже изменяют ключ в системном keyring текущей учётной записи.
-После второй ротации манифесты, зашифрованные самым старым ключом,
-становятся нечитаемыми штатным API. Если у вас есть незавершённые
-подготовленные запросы, восстановите их до ротации.
+## Before running
 
-## Предусловия
+Restore unfinished prepared requests before rotation. After two rotations,
+manifests encrypted by the oldest key are unreadable through the normal API.
+
+## Prerequisites
 
 ```bash
 pip install -e ".[dev]"
 pgw key status
 ```
 
-`pgw key status` завершается кодом `0`, если активный ключ есть, и кодом
-`3`, если ключа нет. При отсутствии ключа создайте его:
+Status returns 0 if an active key exists,3 if absent. Create one if needed:
 
 ```bash
 pgw key create
 ```
 
-Повторный `pgw key create` при существующем ключе завершается кодом `3` и
-не перезаписывает ключ. Флаг `--force` перезаписывает активный ключ и
-удаляет retired-ключ — это не ротация, а сброс: манифесты предыдущих
-поколений становятся нечитаемыми.
+Repeated create returns 3 without overwriting. `--force` replaces active and removes
+retired: it is a reset, not rotation; earlier generations become unreadable.
 
-## Сценарий
+## Scenario
 
-Подготовка запроса при ключе K0:
+Prepare under K0:
 
 ```bash
 pgw prepare request.txt --out ./work
 ```
 
-Ротация до K1:
+Rotate to K1:
 
 ```bash
 pgw key rotate
 ```
 
-Восстановление запроса, подготовленного при K0:
+Restore the request prepared under K0:
 
 ```bash
 pgw restore reply.txt --route ./work/route.json
 ```
 
-Восстановление проходит без ручного перешифрования: `restore` перебирает
-доступные ключи в порядке `[active, retired]` и читает манифест
-предыдущего поколения (ADR-23).
-
-Вторая ротация до K2:
+No manual re-encryption is required. Restore tries `[active, retired]` and reads
+the previous generation (ADR-23). Rotate to K2:
 
 ```bash
 pgw key rotate
 ```
 
-Повторный `pgw restore` для того же `route.json` теперь завершается
-кодом `3`: ни один доступный ключ не подходит для манифеста поколения K0.
-Ключевой материал в сообщении не раскрывается.
+Restoring the same route now returns 3: neither available key decrypts K0.
+Error messages do not disclose key material.
 
-## Контракт поколений
+## Generations
 
-| Состояние | Active | Retired | Читаемые поколения |
-|---|---|---|---|
-| после `key create` | K0 | — | K0 |
-| после первой `key rotate` | K1 | K0 | K1, K0 |
-| после второй `key rotate` | K2 | K1 | K2, K1 |
-| после третьей `key rotate` | K3 | K2 | K3, K2 |
+| State | Active | Retired | Readable generations |
+| --- | --- | --- | --- |
+| After key create | K0 | — | K0 |
+| After first key rotate | K1 | K0 | K1, K0 |
+| After second key rotate | K2 | K1 | K2, K1 |
+| After third key rotate | K3 | K2 | K3, K2 |
 
-Поддерживается один уровень ротации. Цепочки из трёх и более ключей не
-гарантируются (ADR-23, ADR-46).
+One retired key is supported, not a chain of three or more (ADR-23, ADR-46).
 
-## Коды завершения
+## Exit codes
 
-| Команда и условие | Код |
-|---|---|
-| `key create`, `key status`, `key rotate` — успех | 0 |
-| `key status` без активного ключа | 3 |
-| повторный `key create` без `--force` | 3 |
-| `restore` манифеста старше окна retention | 3 |
-| `key rotate` без активного ключа | 4 |
-| сбой carry, записи active, verification или prune | 4 |
+| Operation/condition | Code |
+| --- | --- |
+| Successful create/status/rotate |0 |
+| Status without an active key |3 |
+| Repeated create without force |3 |
+| Restore beyond retention |3 |
+| Rotate without active key |4 |
+| Carry/active-write/verification/prune failure |4 |
 
-Код `4` соответствует ошибке хранилища ключей. Он не означает успешную
-частичную ротацию: незавершённая ротация всегда сообщается ошибкой, а не
-silent success (ADR-46, уточнение #66).
+Code 4 is a key-store failure, not successful partial rotation. An incomplete
+rotation reports an error, never silent success (ADR-46, clarification #66).
 
-## API retention и physical retention
+## API retention and physical retention
 
-Это две разные гарантии, и пример их не смешивает.
+API retention is immediate: restore and normal consumers receive at most
+`[active, retired]`. Physical retention changes only through explicit operations.
+Before a first successful rotation, legacy storage may retain the accumulated
+history; a prune failure may temporarily leave several keys in the retired entry.
+The physical blast radius becomes two keys only after explicit successful rotation
+with completed prune. A subsequent successful rotation restores the bounded layout.
 
-- **API retention** действует немедленно: `restore` и остальные штатные
-  потребители получают не более двух ключей `[active, retired]`.
-- **Physical retention** меняется только явными операциями. До первой
-  успешной ротации legacy-установка физически хранит всю накопленную
-  историю; при сбое prune физический retired-entry временно содержит
-  больше одного ключа.
+Rotation is not a keyring transaction. Verification/prune failure is not rollback;
+actual backend state determines the result. See the rotation section of the
+[security guide](../docs/SECURITY.md).
 
-Отсюда следует формулировка границы: штатный API немедленно ограничен
-active и одним retired, а физический blast radius keyring сокращается до
-двух ключей после успешной явной ротации с завершённым prune. Повторная
-успешная ротация приводит физическое состояние к bounded layout.
+## Non-guarantees
 
-Ротация не является транзакцией keyring, и verification либо prune
-failure не следует называть rollback: состояние определяется фактическим
-backend. Подробности — [security policy](../docs/SECURITY.md),
-раздел «Ротация ключа».
+- No transactional atomicity or cross-process rotation lock: last-writer-wins
+  is possible (ADR-46).
+- No reads beyond `[active, retired]`, forensic key erasure, configurable retention
+  depth or prune command.
 
-## Что пример не обещает
+## Fully separating from an earlier key
 
-- Транзакционную атомарность ротации и блокировки при параллельном
-  запуске из двух процессов: возможен last-writer-wins (ADR-46).
-- Чтение манифестов глубже окна `[active, retired]`.
-- Forensic-стирание удалённого ключевого материала.
-- Настраиваемую глубину retention и команду prune.
-
-## Полное отвязывание от прежнего ключа
-
-Ротация сохраняет читаемость одного предыдущего поколения. Чтобы
-полностью отвязаться от прежнего ключа, манифесты нужно перешифровать по
-процедуре из `docs/SECURITY.md`: загрузить манифест прежним ключом,
-расшифровать записи в доверенной локальной среде, повторно зашифровать
-новым ключом, атомарно сохранить манифест и пересчитать `manifest_sha256`
-для связанной пары артефактов.
+Rotation retains one previous generation. To remove dependence on it, follow the
+security guide's re-encryption procedure: load the old manifest, decrypt in a
+trusted local environment, re-encrypt with the new key, atomically save the
+manifest and recompute `manifest_sha256` for the linked artifact pair.
 
 <!-- Internal documentation-contract fixture; prose remains subject to review. -->
 ```pgw-doc-facts
