@@ -1,69 +1,73 @@
 # Privacy Gateway
 
-Локальный CLI-инструмент и библиотека для безопасной подготовки корпоративных
-текстов перед ручной передачей во внешнюю языковую модель. Работает полностью
-локально: обнаруживает ПДн и секреты, заменяет их токенами вида `[TYPE_N]`,
-шифрует карту соответствий, проверяет подготовленный текст и восстанавливает
-исходные значения после получения ответа LLM.
+[English](README.md) | [Русский](README.ru.md)
 
-## Статус
+A local CLI and Python library for preparing corporate text before manually
+sending it to an external language model. It detects supported PII and secrets,
+replaces values with tokens such as `[TYPE_N]`, encrypts the mapping, validates
+the protected text, and restores original values in the model's response locally.
 
-Реализованы этапы Э1–Э8 и стабильный библиотечный API: локальная детекция,
-псевдонимизация, подготовка артефактов, независимая валидация, строгое
-восстановление ответа и управление ключом. Пакет объявлен как
-`Development Status :: 3 - Alpha`. История изменений — в
-[`CHANGELOG.md`](CHANGELOG.md).
+## Status
 
-## Границы защиты
+The local detection, pseudonymization, artifact preparation, independent
+validation, strict response restoration and key-management stages are implemented,
+along with a stable library API. Package metadata declares
+`Development Status :: 3 - Alpha`. See the [changelog](CHANGELOG.md).
 
-Инструмент выполняет псевдонимизацию, а не гарантированную анонимизацию.
+This English entry point is part of an ongoing documentation migration. Linked
+guides and CLI messages may still be in Russian; the [language policy](docs/LANGUAGE_POLICY.md)
+explains the migration scope. A link does not imply that its target is translated.
 
-Что он даёт:
+## Protection boundary
 
-- исходные значения шифруются локально; открытых значений нет в
-  `manifest.json`, `route.json` и служебном отчёте;
-- ответ внешней модели считается недоверенным входом: `restore` классифицирует
-  токены и по умолчанию работает в строгом режиме;
-- контекст восстановления, манифест и ключевой материал не передаются
-  внешнему обработчику;
-- `manifest_sha256` в `route.json` связывает пару артефактов и обнаруживает их
-  рассинхронизацию.
+Privacy Gateway performs pseudonymization, not guaranteed anonymization.
 
-Чего он не даёт:
+What it provides:
 
-- детекция ограничена реализованными regex и словарями, поэтому неизвестные
-  классы данных могут остаться необнаруженными;
-- многострочные секреты и пароли вне keyword-паттернов не распознаются;
-- косвенная идентификация по комбинации обезличенных полей не предотвращается;
-- SHA-256 без подписи не защищает от согласованной подмены обоих артефактов;
-- результат `restore` содержит открытый текст и требует той же защиты, что и
-  исходный документ.
+- Original values are encrypted locally; `manifest.json`, `route.json` and
+  operational reports do not contain those values in plaintext.
+- The external model's response is untrusted input: `restore` classifies tokens
+  and uses strict mode by default.
+- The restoration context, manifest and key material stay local. Send only the
+  protected text intended for the external consumer, never the entire prepared
+  payload.
+- `manifest_sha256` in `route.json` binds the artifact pair and detects mismatches.
 
-Полная модель угроз — [`docs/SECURITY.md`](docs/SECURITY.md), краткая
-навигация — [`docs/threat-model.md`](docs/threat-model.md). Поддерживаемые
-сущности и ограничения детектора — [`docs/detection.md`](docs/detection.md).
+What it does not provide:
 
-## Требования
+- Detection is limited to implemented regular expressions and dictionaries;
+  unknown data classes may remain undetected.
+- Multiline secrets and passwords outside keyword patterns are not recognized.
+- Indirect identification from combinations of pseudonymized fields is not prevented.
+- Unsigned SHA-256 does not protect against coordinated replacement of both artifacts.
+- The result of `restore` is plaintext and needs the same protection as the source.
 
-- Python 3.11 или новее; в CI поддерживаются и проверяются 3.11 и 3.12
-- Linux: `gnome-keyring` или другой SecretService-совместимый демон
-- macOS: Keychain
-- Windows: Windows Credential Vault
+See the [security model](docs/SECURITY.md),
+[threat-model overview](docs/threat-model.md), and
+[supported entities and detection limits](docs/detection.md).
 
-Ключ шифрования хранится только в системном keyring. В headless-среде нужна
-активная сессия keyring (`dbus-run-session` и `gnome-keyring-daemon`);
-подробности — в [`docs/SECURITY.md`](docs/SECURITY.md).
+## Requirements
 
-Backend выбирается средствами библиотеки `keyring`: Privacy Gateway использует
-`keyring.get_keyring()` и проверяет выбранный класс по allowlist безопасных
-системных backend до обращения к ключам. Переменная `PGW_KEYRING_BACKEND`
-в Privacy Gateway не поддерживается.
+- Python 3.11 or newer for installation; supported and tested minor versions
+  are 3.11 and 3.12 on Linux and Windows.
+- Linux: `gnome-keyring` or another SecretService-compatible daemon.
+- macOS: Keychain (the backend is supported; macOS is not part of the CI matrix).
+- Windows: Windows Credential Vault.
 
-## Установка
+The encryption key is stored in the system keyring. Headless environments need
+an active keyring session (`dbus-run-session` and `gnome-keyring-daemon`);
+see the [security guide](docs/SECURITY.md).
 
-Для CLI используйте pipx с Python 3.11/3.12. До отдельно подтверждённой PyPI
-публикации устанавливайте проверенный исходный commit, а не одноимённый пакет
-из index. Если pipx уже установлен:
+The `keyring` library selects the backend. Privacy Gateway calls
+`keyring.get_keyring()` and checks the selected class against an allowlist of
+system backends before accessing keys. Privacy Gateway does not support a
+`PGW_KEYRING_BACKEND` override.
+
+## Installation
+
+For the CLI, use pipx with Python 3.11 or 3.12. Until a separately approved PyPI
+publication, install the verified source commit rather than a same-named package
+from an index. If pipx is already installed, on Linux with `python3.12` available:
 
 ```bash
 pipx install --python python3.12 "git+https://github.com/MRDK80/privacy-gateway.git@dd0f28ffb37a95f20e92f73df44047527e333843"
@@ -71,34 +75,34 @@ pgw --help
 pgw doctor
 ```
 
-Если `pgw` ещё не доступен в PATH, используйте путь, показанный pipx.
-[Полная инструкция](docs/INSTALLATION.md) содержит отдельные Linux/Windows
-PowerShell команды без изменения shell profile, bootstrap pipx, Library API
-через venv/pip, обновление, удаление и безопасную диагностику.
+If `pgw` is not on PATH, use the executable path shown by pipx. The
+[installation guide](docs/INSTALLATION.md) provides separate Linux and Windows
+PowerShell commands without shell-profile changes, pipx bootstrap, library
+installation through venv/pip, updates, uninstalling and safe diagnostics.
 
-Для разработки и quality gate используйте [CONTRIBUTING.md](CONTRIBUTING.md).
-Карта зависимостей и единственный extra `dev` — в
-[DEPENDENCIES.md](docs/DEPENDENCIES.md). Продуктовых NER/proxy/provider extras нет.
+For development and quality gates, see [CONTRIBUTING.md](CONTRIBUTING.md).
+The [dependency contract](docs/DEPENDENCIES.md) describes the sole `dev` extra.
+There are no product NER, proxy or provider extras.
 
-## Первый запуск
+## First run
 
-Пример ниже запускается из отдельного checkout репозитория с каталогом
-`examples`; pipx и wheel не устанавливают repository examples. См.
-[инструкцию установки](docs/INSTALLATION.md) для выбора CLI и Library API
-окружения. Для CLI key-команды используйте установленный `pgw`, а Python-пример
-выполняйте интерпретатором venv с установленным Library API.
+The example below needs a separate repository checkout containing `examples`;
+pipx and wheel installations do not install repository examples. Use the
+[installation guide](docs/INSTALLATION.md) to choose CLI and library environments.
+Run the key command with the installed `pgw`, and the Python example with the
+interpreter of a venv containing the library.
 
 ```bash
 pgw key create
 python examples/01_quickstart.py
 ```
 
-`pgw key create` создаёт активный ключ в системном keyring. Без ключа пример
-завершится ошибкой хранилища — это ожидаемое fail-closed поведение. Пример
-выполняет цикл `prepare` -> локальный детерминированный ответ -> `restore` ->
-`discard`, не обращается к сети и использует только синтетические данные.
+`pgw key create` creates the active key in the system keyring. Without a key,
+the example fails with a key-store error: this is expected fail-closed behavior.
+The example runs `prepare` → a local deterministic response → `restore` →
+`discard`, uses only synthetic data and makes no network requests.
 
-Ожидаемый вывод:
+Expected output:
 
 ```text
 tokens_prepared=<N>
@@ -111,35 +115,34 @@ workspace_clean=True
 
 ## CLI
 
-| Команда | Назначение |
-|---------|------------|
-| `pgw detect` | Диагностика: метаданные найденных сущностей без исходных значений |
-| `pgw prepare` | Подготовка `prompt.txt`, `manifest.json` и `route.json` |
-| `pgw restore` | Восстановление исходных значений из ответа LLM |
-| `pgw key` | Управление ключом: `create`, `status`, `rotate` |
+Use `pgw --describe` as the source of current command and parameter syntax;
+`pgw --help` and individual command help provide interactive guidance.
+The key-management operations are `create`, `status` and `rotate` under `pgw key`.
 
-Минимальный сквозной цикл:
+A minimal end-to-end flow:
 
 ```bash
 pgw prepare input.txt --out ./pgw_out
-# передать содержимое ./pgw_out/prompt.txt во внешнюю модель,
-# ответ сохранить в llm_reply.txt
+# Send only ./pgw_out/prompt.txt to the external model.
+# Save the response as llm_reply.txt.
 pgw restore llm_reply.txt --route ./pgw_out/route.json --out restored.txt
 ```
 
-Строгий режим включён по умолчанию: неизвестный или искажённый токен вызывает
-отказ с кодом 5, и файл результата не создаётся. Мягкий режим включается
-только явным `--lenient` и не делает ответ модели доверенным.
+Strict mode is the default: an unknown or malformed token causes exit code 5,
+and no result file is created. Lenient mode requires explicit `--lenient`;
+it does not make the model's response trustworthy.
 
-Актуальный синтаксис и полный перечень параметров дают `pgw --help` и
-`pgw <команда> --help`. Проверяемый сквозной сценарий с флагами, кодами
-завершения и различиями Bash и PowerShell —
-[`examples/06_cli_round_trip.md`](examples/06_cli_round_trip.md). Ротация
-ключа — [`examples/05_key_rotation.md`](examples/05_key_rotation.md). Коды
-возврата, режимы восстановления и классификация токенов —
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+See the [CLI round-trip example](examples/06_cli_round_trip.md) for verified
+flags, exit codes and Bash/PowerShell differences, the
+[key-rotation example](examples/05_key_rotation.md), and the
+[architecture guide](docs/ARCHITECTURE.md) for exit codes, restoration modes
+and token classification. `pgw detect` reports detection metadata without
+original values; it is not permission to send source text.
 
-## Библиотечное использование
+## Library usage
+
+The following sketch assumes a configured keyring and an existing key. `text`
+and `external_processor` are supplied by the application:
 
 ```python
 from privacy_gateway import GatewayConfig, PrivacyGateway
@@ -153,55 +156,54 @@ restored = gateway.restore(response_text, context=prepared.context)
 gateway.discard(prepared.context)
 ```
 
-`prepare` возвращает защищённый текст и непрозрачный контекст восстановления.
-`restore` проверяет целостность защищённых артефактов до возврата открытого
-текста. Артефакты удаляет потребитель вызовом `discard`. Полный контракт —
-[`docs/LIBRARY_API.md`](docs/LIBRARY_API.md), формат токенов —
-[`docs/token-format.md`](docs/token-format.md).
+`prepare` returns protected text and an opaque restoration context. `restore`
+checks protected-artifact integrity before returning plaintext. The consumer
+calls `discard` to remove artifacts. The [library contract](docs/LIBRARY_API.md)
+defines the lifecycle and exceptions; the [token-format guide](docs/token-format.md)
+defines token syntax. The sketch is not a guarantee that cleanup succeeds after
+an application failure; cleanup and other limits are documented in the contract.
 
-## Примеры
+## Examples
 
-Воспроизводимые сценарии и требования к их запуску собраны в
-[`examples/README.md`](examples/README.md): минимальный round-trip, полный
-цикл с несколькими типами сущностей, блокировка секрета, недоверенный ответ
-модели, ротация ключа и сквозной сценарий CLI.
+The [examples index](examples/README.md) contains reproducible scenarios and
+prerequisites: a minimal round trip, a full flow with several entity types,
+secret blocking, an untrusted model response, key rotation and a CLI round trip.
 
-## Известные ограничения
+## Known limitations
 
-- Глубина ротации ограничена одним retired-ключом (ADR-23): после второй
-  ротации манифесты самого старого поколения не читаются.
-- Токены не стабильны между запусками: нумерация ведётся внутри одного
-  документа, поэтому `[EMAIL_1]` в разных запусках может означать разные
-  значения.
-- `pgw detect` — диагностика, а не разрешение на отправку исходного текста.
-- Статус `PENDING` не является мягким `OK` и требует ручного одобрения.
-- Защита от TOCTOU при перезаписи требует отдельного подтверждения тестами и
-  аудитом реализации.
+- Rotation retains one retired key (ADR-23). After a second rotation, manifests
+  from the oldest generation can no longer be read.
+- Tokens are not stable across runs: numbering is per document, so `[EMAIL_1]`
+  can refer to different values in different runs.
+- Detection diagnostics do not authorize source-text disclosure.
+- `PENDING` is not a permissive `OK`; it requires manual approval.
+- TOCTOU protection during overwrite needs separate test and implementation-audit
+  evidence; this README makes no blanket guarantee.
 
-## Разработка
+## Development
 
-Обязательный локальный quality gate, модель ветвления, политика версий Python
-и требования к отчётности — в [`CONTRIBUTING.md`](CONTRIBUTING.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) defines the mandatory local quality gate,
+branching model, Python-version policy and reporting requirements.
 
-Не добавляйте в репозиторий реальные корпоративные данные. В примерах
-используйте только синтетические значения: `user@example.com`, `192.0.2.10`,
-`2001:db8::1`, `+7 900 000-00-00`. Политика репозитория и порядок сообщения об
-уязвимостях — [`SECURITY.md`](SECURITY.md); техническая модель угроз —
-[`docs/SECURITY.md`](docs/SECURITY.md).
+Do not add real corporate data to the repository. Examples use synthetic values
+such as `user@example.com`, `192.0.2.10`, `2001:db8::1` and `+7 900 000-00-00`.
+See the [repository security policy](SECURITY.md) for vulnerability reporting
+and the [technical security model](docs/SECURITY.md).
 
-## Документация
+## Documentation
 
-| Документ | Содержание |
-|----------|------------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Конвейер, модель данных, форматы артефактов, коды возврата |
-| [`docs/LIBRARY_API.md`](docs/LIBRARY_API.md) | Публичный API, жизненный цикл контекста, исключения |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Модель угроз, границы доверия, обращение с ключом |
-| [`docs/detection.md`](docs/detection.md) | Поддерживаемые сущности и ограничения детектора |
-| [`docs/token-format.md`](docs/token-format.md) | Синтаксис токенов, нумерация, поведение при восстановлении |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | Журнал архитектурных решений (ADR) |
-| [`examples/README.md`](examples/README.md) | Индекс воспроизводимых примеров |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Definition of Done, quality gate, модель ветвления |
+| Document | Contents |
+| --- | --- |
+| [Architecture](docs/ARCHITECTURE.md) | Pipeline, data model, artifact formats and exit codes |
+| [Library API](docs/LIBRARY_API.md) | Public API, context lifecycle and exceptions |
+| [Security](docs/SECURITY.md) | Threat model, trust boundaries and key handling |
+| [Detection](docs/detection.md) | Supported entities and detector limitations |
+| [Token format](docs/token-format.md) | Syntax, numbering and restoration behavior |
+| [Decisions](docs/DECISIONS.md) | Architectural decision record |
+| [Examples](examples/README.md) | Reproducible examples index |
+| [Contributing](CONTRIBUTING.md) | Definition of Done, quality gate and branching model |
+| [Language policy](docs/LANGUAGE_POLICY.md) | Canonical languages and migration/synchronization rules |
 
-## Лицензия
+## License
 
-MIT — см. [`LICENSE`](LICENSE).
+MIT — see [LICENSE](LICENSE).
