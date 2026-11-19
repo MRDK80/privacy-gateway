@@ -393,3 +393,73 @@ def test_interrupted_probe_reaps_child(monkeypatch: pytest.MonkeyPatch) -> None:
         doctor.keyring_capability()
     assert calls == ["killed", "reaped"]
     assert stream.closed
+
+
+@pytest.mark.parametrize("mode", ["module", "console", "json"])
+@pytest.mark.parametrize("disable_bytecode", [False, True])
+def test_cold_doctor_bootstrap_file_boundary(
+    mode: str,
+    disable_bytecode: bool,
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    copied = tmp_path / "source"
+    shutil.copytree(
+        ROOT / "src" / "privacy_gateway",
+        copied / "privacy_gateway",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    before = {
+        p.relative_to(copied): p.read_bytes() for p in copied.rglob("*") if p.is_file()
+    }
+    script = r"""
+import importlib.abc
+import runpy
+import sys
+sys.path.insert(0, sys.argv[1])
+mode = sys.argv[2]
+class Missing(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname.partition('.')[0] in {'cryptography', 'keyring', 'yaml'}:
+            raise ImportError('synthetic unavailable dependency')
+sys.meta_path.insert(0, Missing())
+sys.argv = ['pgw'] + (['--json', 'doctor'] if mode == 'json' else ['doctor'])
+if mode == 'module':
+    runpy.run_module('privacy_gateway', run_name='__main__')
+else:
+    from privacy_gateway.bootstrap import main
+    main()
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            *(["-B"] if disable_bytecode else []),
+            "-X",
+            "utf8",
+            "-c",
+            script,
+            str(copied),
+            mode,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 3
+    assert result.stderr == b""
+    after = {
+        p.relative_to(copied): p.read_bytes() for p in copied.rglob("*") if p.is_file()
+    }
+    assert {path: data for path, data in after.items() if path in before} == before
+    added = set(after) - set(before)
+    if disable_bytecode:
+        assert not added
+    else:
+        # The approved exception is only interpreter import-cache files.
+        assert all(
+            path.parent.name == "__pycache__" and path.suffix == ".pyc"
+            for path in added
+        )
