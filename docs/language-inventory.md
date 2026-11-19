@@ -125,3 +125,10 @@ they are engineering artifacts, not a second public API. No mass comment or
 fixture translation is required. LICENSE stays the original English legal text;
 configuration JSON/YAML, workflow expressions and schemas retain machine keys.
 New policy/inventory files in #118 are English engineering documentation.
+
+## README migration — #119
+
+`README.md` is now English and `README.ru.md` preserves the Russian user guide.
+Both have reciprocal language links. The Russian companion records the committed
+English source reviewed for synchronization. Other baseline rows remain a record
+of the starting state, not a claim that those documents are translated.
