@@ -200,7 +200,7 @@ def test_round_trip_restores_original_values(workspace: Workspace) -> None:
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == f"OK: {restored}\n"
-    assert "Восстановлено: " in result.stderr
+    assert 'Restored: ' in result.stderr
 
     text = restored.read_text(encoding="utf-8")
     for value in SYNTH_VALUES:

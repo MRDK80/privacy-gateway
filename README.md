@@ -15,7 +15,8 @@ along with a stable library API. Package metadata declares
 `Development Status :: 3 - Alpha`. See the [changelog](CHANGELOG.md).
 
 This English entry point is part of an ongoing documentation migration. Linked
-guides and CLI messages may still be in Russian; the [language policy](docs/LANGUAGE_POLICY.md)
+guides may still be in Russian. CLI text follows the approved English default;
+the [language policy](docs/LANGUAGE_POLICY.md)
 explains the migration scope. A link does not imply that its target is translated.
 
 <!-- pgw-section: protection-boundary -->

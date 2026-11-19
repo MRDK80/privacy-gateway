@@ -21,14 +21,14 @@ pip install -e ".[dev]"
 pgw key status
 ```
 
-Missing-key status returns 3 and stderr `Ключ не найден. Запустите 'pgw key create'.`.
-These quoted CLI messages remain Russian until the separate #122 contract change.
+Missing-key status returns 3 and stderr `Key not found. Run 'pgw key create'.`.
+CLI messages use the approved English-by-default contract (ADR-122).
 
 ```bash
 pgw key create
 ```
 
-Success returns 0 and stdout `Ключ успешно создан.`. Repeated create without
+Success returns 0 and stdout `Key created successfully.`. Repeated create without
 `--force` returns 3 without silently overwriting the key.
 
 ## Step 1: synthetic request
@@ -100,7 +100,7 @@ pgw restore ./pgw_demo/reply.txt \
 ```
 
 Exit 0; stdout is `OK: <path to restored.txt>`. Stderr reports token names/counts,
-starting with `Восстановлено: N/N токенов`, without source values. The output file
+starting with `Restored: N/N tokens`, without source values. The output file
 contains the original values and added status line, so it is sensitive. Without
 `--out`, plaintext goes to stdout with no added newline. Relative manifest paths
 resolve against the route directory; `--manifest` explicitly overrides the path.

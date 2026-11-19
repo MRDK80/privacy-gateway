@@ -59,7 +59,7 @@ def test_prepare_without_args_returns_nonzero() -> None:
     result = _run("prepare")
     assert result.returncode != 0
     # Э6: argparse требует ФАЙЛ — ошибка в stderr
-    assert "ФАЙЛ" in result.stderr or "required" in result.stderr
+    assert 'FILE' in result.stderr or "required" in result.stderr
 
 
 def test_restore_returns_nonzero() -> None:

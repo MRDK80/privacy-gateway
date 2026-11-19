@@ -110,7 +110,7 @@ def test_replace_failure_removes_plaintext_temp(
         write_restored(PLAINTEXT, out_path, overwrite=True)
 
     assert str(excinfo.value) == (
-        f"Не удалось записать результат в {out_path}: replace denied"
+        f'Could not write the result to {out_path}: replace denied'
     )
     assert isinstance(excinfo.value.__cause__, OSError)
     assert PLAINTEXT not in str(excinfo.value)

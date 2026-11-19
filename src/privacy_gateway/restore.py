@@ -182,9 +182,12 @@ def _load_manifest_multi_key(
             last_exc = exc
             continue
     raise ConfigurationError(
-        f"Не удалось загрузить манифест {manifest_path}: "
-        f"ни один из {len(keys)} ключей не подошёл. "
-        f"Детали: {last_exc}"
+        "Could not load manifest "
+        f"{manifest_path}"
+        ": none of the "
+        f"{len(keys)}"
+        " keys matched. Details: "
+        f"{last_exc}"
     ) from last_exc
 
 
@@ -230,9 +233,9 @@ def restore_text(
         keys = get_all_keys()
     except KeyNotFoundError as exc:
         raise KeystoreError(
-            f"Ключ Fernet не найден в keyring. "
-            f"Запустите 'pgw key create' для создания ключа. "
-            f"Детали: {exc}"
+            "Fernet key not found in the system keyring. "
+            "Run 'pgw key create' to create one. Details: "
+            f"{exc}"
         ) from exc
 
     # Перебираем все ключи до первого успешного (ADR-23).
@@ -248,8 +251,10 @@ def restore_text(
             value_map[token_key] = decrypt_multi(entry.encrypted_value, keys)
         except DecryptionError as exc:
             raise ConfigurationError(
-                f"Не удалось расшифровать запись манифеста "
-                f"для токена {entry.token!r}. Детали: {exc}"
+                "Could not decrypt the manifest record for token "
+                f"{entry.token!r}"
+                ". Details: "
+                f"{exc}"
             ) from exc
 
     manifest_tokens = set(value_map.keys())
@@ -268,27 +273,25 @@ def restore_text(
     result.tokens_malformed = malformed
 
     for token in sorted(result.tokens_missing):
-        result.warnings.append(f"Токен отсутствует в ответе LLM: {token}")
+        result.warnings.append(f"Token missing from LLM response: {token}")
 
     if strict and (unknown or malformed):
         issues: list[str] = []
         if unknown:
-            issues.append(f"Неизвестные токены: {sorted(unknown)}")
+            issues.append(f"Unknown tokens: {sorted(unknown)}")
         if malformed:
-            issues.append(f"Искажённые кандидаты на токены: {malformed}")
+            issues.append(f"Malformed token candidates: {malformed}")
         raise RestoreStrictError(
-            "Строгий режим: в ответе LLM обнаружены недопустимые токены. "
+            "Strict mode: the LLM response contains unacceptable tokens. "
             + "; ".join(issues)
         )
 
     if not strict:
         for token in sorted(unknown):
-            result.warnings.append(
-                f"Неизвестный токен (оставлен как есть): [{token}]"
-            )
+            result.warnings.append(f"Unknown token (left unchanged): [{token}]")
         for candidate in malformed:
             result.warnings.append(
-                f"Искажённый кандидат (оставлен как есть): [{candidate}]"
+                f"Malformed candidate (left unchanged): [{candidate}]"
             )
 
     restored = _substitute(llm_response, known, value_map)
@@ -304,8 +307,7 @@ def write_restored(
     """Атомарно записать восстановленный текст в файл (ADR-12)."""
     if out_path.exists() and not overwrite:
         raise FileExistsError(
-            f"Файл уже существует: {out_path}. "
-            f"Используйте флаг --overwrite для перезаписи."
+            f"File already exists: {out_path}. Use --overwrite to replace it."
         )
 
     # Подготовка каталога входит в ту же границу OSError, что и атомарная
@@ -337,7 +339,7 @@ def write_restored(
         published = True
     except OSError as exc:
         raise ConfigurationError(
-            f"Не удалось записать результат в {out_path}: {exc}"
+            f"Could not write the result to {out_path}: {exc}"
         ) from exc
     finally:
         if tmp_name is not None and not published:

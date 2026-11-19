@@ -38,7 +38,7 @@ def test_key_create_success(
 
     assert code == 0
     out = capsys.readouterr().out
-    assert "создан" in out.lower() or "ключ" in out.lower()
+    assert out == "Key created successfully.\n"
     mock_create.assert_called_once_with(force=False)
 
 

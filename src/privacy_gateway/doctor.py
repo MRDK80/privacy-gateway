@@ -195,7 +195,7 @@ def configure_parser(parser: argparse.ArgumentParser) -> None:
         metavar="ENTITIES_CONFIG",
         type=Path,
         default=None,
-        help="Проверить выбранную конфигурацию детектора.",
+        help="Check the selected detector configuration.",
     )
 
 

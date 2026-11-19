@@ -12,7 +12,8 @@ a localization framework or translating detection data.
 
 Use English for parser descriptions, help/usage display metavars, command catalog
 summaries, success/error text, restoration warnings and JSON `error.message`.
-The approved old/new table is implemented with characterization tests. No locale
+The [approved old/new table](CLI_ENGLISH_MESSAGES.md) is implemented with
+characterization tests. No locale
 detection, gettext, language flag or runtime language choice is introduced.
 
 Commands, options, argument names/types, token grammar, interpolated caller data,
