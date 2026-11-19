@@ -48,7 +48,9 @@ newline. SHA256SUMS покрывает manifest и два точных distribut
 его digest передаётся отдельным output trusted verify job. Нет самоссылки хеша. Wheel RECORD проверяется как строгий CSV:
 ровно одна строка на каждый member, безопасные уникальные пути, sha256/size
 соответствуют байтам; только собственная строка RECORD имеет пустые hash/size.
-Immutable artifact IDs и run/attempt не берутся из manifest входного build.
+Перед каждым download проверяется один положительный числовой artifact ID:
+пустой ID не может включить default download-all. Immutable artifact IDs и
+run/attempt не берутся из manifest входного build.
 Actual publish outcome фиксируется первичным job/action result; manifest до
 публикации сам по себе не утверждает upload success.
 

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,7 +90,11 @@ def test_verifier_uses_fresh_exact_policy_and_immutable_run_artifacts() -> None:
         assert len(download) == 1
         assert download[0]["with"]["artifact-ids"] == needed
         assert not {"run-id", "github-token", "repository"} & set(download[0]["with"])
-    digest = jobs["publish"]["steps"][1]
+    digest = next(
+        step
+        for step in jobs["publish"]["steps"]
+        if step.get("name") == "Verify trusted digest and exact transferred file set"
+    )
     assert digest["env"]["EXPECTED_SUMS"] == "${{ needs.verify.outputs.sums_sha256 }}"
     assert "sha256sum --check --strict" in digest["run"]
 
@@ -99,3 +107,57 @@ def test_external_actions_are_pinned_and_inputs_are_not_shell_code() -> None:
                     r"(?:actions|pypa)/[a-z-]+@[0-9a-f]{40}", step["uses"]
                 )
             assert "${{ inputs." not in step.get("run", "")
+
+
+def test_artifact_id_is_required_before_every_download() -> None:
+    for name in ("verify", "publish"):
+        steps = workflow()["jobs"][name]["steps"]
+        guard = [
+            i
+            for i, step in enumerate(steps)
+            if step.get("name") == "Require immutable artifact ID"
+        ]
+        download = next(
+            i
+            for i, step in enumerate(steps)
+            if step.get("uses", "").startswith("actions/download-artifact@")
+        )
+        assert len(guard) == 1 and guard[0] < download
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="release hash/ID job uses Ubuntu bash"
+)
+@pytest.mark.parametrize("job", ["verify", "publish"])
+@pytest.mark.parametrize(
+    "value,success",
+    [
+        ("", False),
+        ("0", False),
+        ("-1", False),
+        ("1,2", False),
+        ("1; echo unsafe", False),
+        ("42", True),
+    ],
+)
+def test_invalid_artifact_ids_cannot_fall_back_to_all_artifacts(
+    job: str,
+    value: str,
+    success: bool,
+) -> None:
+    guard = next(
+        step
+        for step in workflow()["jobs"][job]["steps"]
+        if step.get("name") == "Require immutable artifact ID"
+    )
+    bash = shutil.which("bash")
+    assert bash is not None
+    result = subprocess.run(
+        [bash, "-e", "-c", guard["run"]],
+        env={"ARTIFACT_ID": value},
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert (result.returncode == 0) == success
+    assert result.stdout == b"" and result.stderr == b""
