@@ -118,7 +118,7 @@ pgw restore ./pgw_demo/bad_reply.txt \
   --out ./pgw_demo/bad_restored.txt
 ```
 
-Exit 5; stderr begins `Строгий отказ по токенам:` without original values.
+Exit 5; stderr begins `Strict token rejection:` without original values.
 No bad-restored output file is created: no partial result is published.
 `--lenient` instead warns and returns 0 for unknown/malformed tokens. Use it only
 consciously for investigation; strict mode rejects instead of partially restoring

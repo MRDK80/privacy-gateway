@@ -17,6 +17,15 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "tests/fixtures/cli_english"
 
 
+@pytest.mark.parametrize(
+    "guide", ["06_cli_round_trip.md", "06_cli_round_trip.ru.md"]
+)
+def test_round_trip_guides_quote_approved_strict_rejection_prefix(guide: str) -> None:
+    text = (ROOT / "examples" / guide).read_text(encoding="utf-8")
+    assert "`Strict token rejection:`" in text
+    assert "Строгий отказ по токенам:" not in text
+
+
 def _machine_only(value: Any) -> Any:
     if isinstance(value, dict):
         return {

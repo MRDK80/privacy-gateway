@@ -3,7 +3,7 @@
 [English](06_cli_round_trip.md) | [Русский](06_cli_round_trip.ru.md)
 
 Translation of: 06_cli_round_trip.md  
-Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
+Reviewed against commit: 8b578b2ca7a6ec70c0d311c54a2e0e1c432f419c  
 Translation status: current
 
 Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего
@@ -148,7 +148,7 @@ pgw restore ./pgw_demo/bad_reply.txt \
 ```
 
 Код `5`. В stderr печатается сообщение с префиксом
-`Строгий отказ по токенам:`. Файл `./pgw_demo/bad_restored.txt` не
+`Strict token rejection:`. Файл `./pgw_demo/bad_restored.txt` не
 создаётся: частичный результат не публикуется. Исходные значения в stderr
 не раскрываются.
 
