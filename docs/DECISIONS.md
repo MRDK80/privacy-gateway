@@ -1497,3 +1497,8 @@ typed registry: тесты доказывают включение в глоба
 ## ADR-113: безопасная диагностика установки
 
 [Контракт doctor и bootstrap](ADR-113-safe-doctor.md). Утверждён 2026-11-19.
+
+## ADR-114. Trusted Publishing (#114)
+
+- [ADR-114-trusted-publishing.md](ADR-114-trusted-publishing.md) — ручной release workflow,
+  отдельная проверка источника/environment/artifacts и минимальный OIDC boundary.
