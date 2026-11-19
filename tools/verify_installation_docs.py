@@ -111,8 +111,12 @@ def stop_tree(process: subprocess.Popen[str], windows: bool) -> str:
                 pass
     else:
         # A descendant may retain the pipe after the session leader exited.
+        kill_group = getattr(os, "killpg", None)
+        kill_signal = getattr(signal, "SIGKILL", None)
+        if not callable(kill_group) or not isinstance(kill_signal, int):
+            raise InstallationDocsError("native process-group cleanup unavailable")
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            kill_group(process.pid, kill_signal)
         except ProcessLookupError:
             outcome = "POSIX_GROUP_NOT_FOUND"
     if process.poll() is None:
