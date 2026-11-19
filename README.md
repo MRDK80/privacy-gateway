@@ -18,6 +18,7 @@ This English entry point is part of an ongoing documentation migration. Linked
 guides and CLI messages may still be in Russian; the [language policy](docs/LANGUAGE_POLICY.md)
 explains the migration scope. A link does not imply that its target is translated.
 
+<!-- pgw-section: protection-boundary -->
 ## Protection boundary
 
 Privacy Gateway performs pseudonymization, not guaranteed anonymization.
@@ -63,6 +64,7 @@ The `keyring` library selects the backend. Privacy Gateway calls
 system backends before accessing keys. Privacy Gateway does not support a
 `PGW_KEYRING_BACKEND` override.
 
+<!-- pgw-section: installation -->
 ## Installation
 
 For the CLI, use pipx with Python 3.11 or 3.12. Until a separately approved PyPI
@@ -139,6 +141,7 @@ flags, exit codes and Bash/PowerShell differences, the
 and token classification. `pgw detect` reports detection metadata without
 original values; it is not permission to send source text.
 
+<!-- pgw-section: library -->
 ## Library usage
 
 The following sketch assumes a configured keyring and an existing key. `text`
@@ -169,6 +172,7 @@ The [examples index](examples/README.md) contains reproducible scenarios and
 prerequisites: a minimal round trip, a full flow with several entity types,
 secret blocking, an untrusted model response, key rotation and a CLI round trip.
 
+<!-- pgw-section: limitations -->
 ## Known limitations
 
 - Rotation retains one retired key (ADR-23). After a second rotation, manifests

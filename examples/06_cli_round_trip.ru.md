@@ -3,7 +3,7 @@
 [English](06_cli_round_trip.md) | [Русский](06_cli_round_trip.ru.md)
 
 Translation of: 06_cli_round_trip.md  
-Reviewed against commit: 1e443c4605ee3011b303f5cdb44e6ea2c193bd46  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Сквозной сценарий CLI: подготовка запроса, локальная имитация внешнего
@@ -15,6 +15,7 @@ Translation status: current
 Автоматическая проверка сценария выполняется в
 `tests/test_examples_cli_round_trip.py` на изолированном keystore.
 
+<!-- pgw-section: provider-boundary -->
 ## Требования безопасности
 
 - Внешний провайдер в примере не вызывается: ответ имитируется локальным
@@ -130,6 +131,7 @@ pgw restore ./pgw_demo/reply.txt \
 Путь к `manifest.json` по умолчанию разрешается относительно каталога
 `route.json`. Явный путь задаётся флагом `--manifest`.
 
+<!-- pgw-section: strict-mode -->
 ## Шаг 5. Fail-closed сценарий
 
 Строгий режим включён по умолчанию. Ответ с токеном, которого нет в
@@ -155,6 +157,7 @@ pgw restore ./pgw_demo/bad_reply.txt \
 строгий режим — единственный, который гарантирует отказ вместо
 частичного восстановления.
 
+<!-- pgw-section: cleanup -->
 ## Шаг 6. Очистка
 
 Bash:
@@ -213,6 +216,7 @@ Remove-Item -Recurse -Force .\pgw_demo
 `pgw_demo` либо заново создайте этот каталог; сам `pgw --describe` файлов
 не создаёт, файл создаёт shell redirect.
 
+<!-- pgw-section: json-mode -->
 ## Автоматизация через JSON
 
 ```bash
@@ -228,6 +232,7 @@ pgw --json restore ./pgw_demo/response.txt \
 `route.json`, `manifest.json` или восстановленный файл провайдеру нельзя.
 Контракт описан в
 [`docs/ADR-150-cli-json-contract.md`](../docs/ADR-150-cli-json-contract.md).
+<!-- pgw-section: catalog -->
 ## Машиночитаемый каталог для агента
 
 До первого операционного вызова агент может получить фактический CLI-контракт

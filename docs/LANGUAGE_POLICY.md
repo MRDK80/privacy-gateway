@@ -142,3 +142,11 @@ English is preferred for issues and PR descriptions; Russian questions and
 reports are welcome. New accepted technical decisions and canonical documentation
 use English. This does not require retroactive translation of discussions or
 permit sensitive data in either language.
+
+## Structural checks — #125
+
+The offline [language checker](DOC_LANGUAGE_CHECKS.md) enforces the explicit
+registry of delivered pairs, reciprocal links, source-record format and ordered
+critical section identifiers. Register new mandatory pairs when their migration
+is actually delivered. Static structural success is not semantic equivalence,
+review approval or authentication of a source commit.

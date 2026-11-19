@@ -156,3 +156,11 @@ Two English issue templates accept Russian reports/questions and require
 synthetic data/private vulnerability handling. Existing AGENTS authority and
 all gate/owner-approval requirements remain binding. Metadata identity, version,
 license, Python support and dependency requirements are unchanged.
+
+## Structural validation — #125
+
+The six delivered pairs have matching stable section markers and source records
+reviewed against canonical marker commit `9f0f1a93203940b84c5aa48a442506011a243d30`.
+The offline checker/pre-commit hook covers these pairs; pending #121 security
+migration must register its pairs before claiming completion. Structural checks
+do not certify translated meaning or the authenticity of a review record.

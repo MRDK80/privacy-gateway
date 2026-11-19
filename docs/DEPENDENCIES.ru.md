@@ -3,7 +3,7 @@
 [English](DEPENDENCIES.md) | [Русский](DEPENDENCIES.ru.md)
 
 Translation of: DEPENDENCIES.md  
-Reviewed against commit: 1e443c4605ee3011b303f5cdb44e6ea2c193bd46  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Текущий состав установки закреплён в [pyproject.toml](../pyproject.toml).
@@ -11,6 +11,7 @@ Translation status: current
 с ключами дополнительно нужен доступный безопасный системный keyring backend.
 Установка Python-пакета сама по себе не настраивает системное хранилище ключей.
 
+<!-- pgw-section: base-dependencies -->
 ## Карта прямых зависимостей
 
 | Группа | Объявление | Назначение |
@@ -34,6 +35,7 @@ Translation status: current
 Exact CI проверяет Python 3.11 и 3.12 на Ubuntu и Windows; установочная нижняя
 граница `requires-python >=3.11` сама по себе не расширяет этот список.
 
+<!-- pgw-section: optional-boundary -->
 ## База и расширения
 
 Базовые imports и `pgw --help` используют runtime-зависимости, объявленные
@@ -87,6 +89,7 @@ python tools/verify_package_build.py --temp-root /path/to/temporary-directory
 Полный граф всех возможных optional libraries и платформенная работоспособность
 keyring одной проверкой импорта не доказываются.
 
+<!-- pgw-section: diagnostics -->
 ## Безопасная первичная диагностика
 
 Диагностика doctor описана в [ADR-113](ADR-113-safe-doctor.md), а актуальный

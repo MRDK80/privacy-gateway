@@ -7,6 +7,7 @@ package provides the `pgw` CLI and public library API. Key operations additional
 need an available allowed system keyring backend; installing the Python package
 does not configure that system service.
 
+<!-- pgw-section: base-dependencies -->
 ## Direct dependencies
 
 | Group | Requirement | Purpose |
@@ -27,6 +28,7 @@ do not promise identical resolved versions; record actual versions for a specifi
 environment. Exact CI covers Python 3.11/3.12 on Ubuntu/Windows. Installation
 compatibility `requires-python >=3.11` does not expand that support list.
 
+<!-- pgw-section: optional-boundary -->
 ## Base and extras
 
 Base imports and `pgw --help` use the runtime requirements above without selecting
@@ -73,6 +75,7 @@ smoke, not to a claim of fully offline installation. CI runs this on Python
 An import check alone cannot prove all optional-library graphs or platform
 keyring operation.
 
+<!-- pgw-section: diagnostics -->
 ## Safe initial diagnostics
 
 [ADR-113](ADR-113-safe-doctor.md) defines doctor; `pgw --describe` gives current

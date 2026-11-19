@@ -1,9 +1,10 @@
+<!-- pgw-section: side-effects -->
 # 05_key_rotation — ротация ключа и отложенное восстановление
 
 [English](05_key_rotation.md) | [Русский](05_key_rotation.ru.md)
 
 Translation of: 05_key_rotation.md  
-Reviewed against commit: 1e443c4605ee3011b303f5cdb44e6ea2c193bd46  
+Reviewed against commit: 9f0f1a93203940b84c5aa48a442506011a243d30  
 Translation status: current
 
 Пример без исполняемого скрипта. Ротация изменяет
@@ -91,6 +92,7 @@ pgw key rotate
 кодом `3`: ни один доступный ключ не подходит для манифеста поколения K0.
 Ключевой материал в сообщении не раскрывается.
 
+<!-- pgw-section: retention -->
 ## Контракт поколений
 
 | Состояние | Active | Retired | Читаемые поколения |
@@ -118,6 +120,7 @@ pgw key rotate
 частичную ротацию: незавершённая ротация всегда сообщается ошибкой, а не
 silent success (ADR-46, уточнение #66).
 
+<!-- pgw-section: failure-boundary -->
 ## API retention и physical retention
 
 Это две разные гарантии, и пример их не смешивает.

@@ -16,3 +16,12 @@ repos:
         exclude: '(^\.secrets\.baseline$|^tests/fixtures/)'
       - id: check-yaml
       - id: check-toml
+
+  - repo: local
+    hooks:
+      - id: doc-language-checks
+        name: Check bilingual documentation structure
+        entry: python tools/check_doc_languages.py
+        language: system
+        pass_filenames: false
+        always_run: true

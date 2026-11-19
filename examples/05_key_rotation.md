@@ -1,3 +1,4 @@
+<!-- pgw-section: side-effects -->
 # 05_key_rotation — rotation and delayed restoration
 
 [English](05_key_rotation.md) | [Русский](05_key_rotation.ru.md)
@@ -70,6 +71,7 @@ pgw key rotate
 Restoring the same route now returns 3: neither available key decrypts K0.
 Error messages do not disclose key material.
 
+<!-- pgw-section: retention -->
 ## Generations
 
 | State | Active | Retired | Readable generations |
@@ -95,6 +97,7 @@ One retired key is supported, not a chain of three or more (ADR-23, ADR-46).
 Code 4 is a key-store failure, not successful partial rotation. An incomplete
 rotation reports an error, never silent success (ADR-46, clarification #66).
 
+<!-- pgw-section: failure-boundary -->
 ## API retention and physical retention
 
 API retention is immediate: restore and normal consumers receive at most
