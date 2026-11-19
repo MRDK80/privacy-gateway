@@ -7,6 +7,7 @@ clean artifacts. Only implemented commands/flags are used. This is not a script:
 `pgw key create` changes the current account's system keyring. Automated tests in
 `tests/test_examples_cli_round_trip.py` use an isolated keystore instead.
 
+<!-- pgw-section: provider-boundary -->
 ## Safety requirements
 
 No external provider is called. A deterministic local transformation receives
@@ -104,6 +105,7 @@ contains the original values and added status line, so it is sensitive. Without
 `--out`, plaintext goes to stdout with no added newline. Relative manifest paths
 resolve against the route directory; `--manifest` explicitly overrides the path.
 
+<!-- pgw-section: strict-mode -->
 ## Step 5: fail closed
 
 Strict mode is the default. A token absent from the manifest rejects the response:
@@ -122,6 +124,7 @@ No bad-restored output file is created: no partial result is published.
 consciously for investigation; strict mode rejects instead of partially restoring
 such a response.
 
+<!-- pgw-section: cleanup -->
 ## Step 6: cleanup
 
 Bash:
@@ -159,6 +162,7 @@ them. Strict refusal creates no result. Cleanup removes the workspace. No networ
 is used. The subprocess tests run the same flow on Linux/Windows, substituting
 keystore through isolated `PYTHONPATH` without real keyring or the user's home.
 
+<!-- pgw-section: json-mode -->
 ## JSON automation
 
 ```bash
@@ -175,6 +179,7 @@ plaintext is written only to that file, stdout is one operational JSON object.
 Do not export route, manifest or restored output. See
 [ADR-150](../docs/ADR-150-cli-json-contract.md).
 
+<!-- pgw-section: catalog -->
 ## Machine-readable command catalog
 
 Before any operational call, obtain the actual contract without help parsing:

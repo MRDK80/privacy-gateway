@@ -6,6 +6,7 @@ Reproducible public-library examples run locally on synthetic data without
 network calls. `05_key_rotation.md` and `06_cli_round_trip.md` are command guides,
 not executable scripts; key management/rotation affects the current system keyring.
 
+<!-- pgw-section: provider-boundary -->
 ## Safety requirements
 
 - Use only public `privacy_gateway` APIs, not internal modules.
@@ -34,6 +35,7 @@ An active system key is required for manual runs; absence produces a key-store
 failure (fail closed). Automated tests substitute an in-memory key and disable
 network/real keyring access; they do not establish real-vault readiness.
 
+<!-- pgw-section: quickstart -->
 ## 01_quickstart.py
 
 Minimal `prepare` → local deterministic response → `restore` → `discard`.
@@ -175,6 +177,7 @@ it is for human investigation, not a safe automatic pipeline.
 `tests/test_examples_untrusted_response.py` checks all ten cases, cleanup,
 determinism and absence of source values in output.
 
+<!-- pgw-section: rotation -->
 ## 05_key_rotation.md
 
 See the [rotation guide](05_key_rotation.md) for restoring a request from the
@@ -206,6 +209,7 @@ and the [security guide](../docs/SECURITY.md) define this boundary.
 `tests/test_documentation_contracts.py` verifies real subcommands, the generation
 table and bounded retention references; key tests use a fake backend.
 
+<!-- pgw-section: cli-flow -->
 ## 06_cli_round_trip.md
 
 See the [CLI guide](06_cli_round_trip.md) for request preparation, a local simulated

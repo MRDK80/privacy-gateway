@@ -15,6 +15,7 @@ Python project. For the library, use a separate venv and pip. Installation needs
 GitHub/package-index reads; do not disable TLS or use sudo. Doctor makes no
 external network requests.
 
+<!-- pgw-section: cli-install -->
 ## CLI with pipx
 
 The bootstrap venv holds pipx only; the application gets its own pipx environment.
@@ -74,6 +75,7 @@ if ($LASTEXITCODE -ne 0) { throw 'describe failed' }
 if ($LASTEXITCODE -ne 0) { throw 'doctor failed' }
 ```
 
+<!-- pgw-section: library-install -->
 ## Library with venv and pip
 
 Start in a separate empty project directory. Read the version from distribution
@@ -117,6 +119,7 @@ if ($LASTEXITCODE -ne 0) { throw 'describe failed' }
 if ($LASTEXITCODE -ne 0) { throw 'doctor failed' }
 ```
 
+<!-- pgw-section: maintenance -->
 ## Updating and uninstalling
 
 Use variables from the corresponding installation example. Before updating, set
@@ -163,6 +166,7 @@ if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }
 if ($LASTEXITCODE -ne 0) { throw 'pip uninstall failed' }
 ```
 
+<!-- pgw-section: troubleshooting -->
 ## Verification and troubleshooting
 
 - `pgw --describe` is the current command/parameter source; this guide does not
@@ -189,6 +193,7 @@ Next: the [synthetic quickstart](../examples/01_quickstart.py) and
 Repository examples need a separate checkout; wheel installation does not promise
 to install them. Keys are created only by your explicit action.
 
+<!-- pgw-section: evidence -->
 ## Evidence and offline smoke boundary
 
 The pinned SHA contains the accepted #113 implementation. Installation smoke
