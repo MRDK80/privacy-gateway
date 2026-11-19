@@ -24,7 +24,7 @@ def test_base_dependencies_and_extras_match_installation_contract() -> None:
     ]
     assert set(project["optional-dependencies"]) == {"dev"}
     assert config["build-system"]["requires"] == ["setuptools>=77.0.3", "wheel"]
-    assert project["scripts"] == {"pgw": "privacy_gateway.cli:main"}
+    assert project["scripts"] == {"pgw": "privacy_gateway.bootstrap:main"}
 
 
 def test_supported_python_versions_match_ci_matrix() -> None:

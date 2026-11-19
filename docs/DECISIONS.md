@@ -1492,3 +1492,8 @@ typed registry: тесты доказывают включение в глоба
 Концептуальный design подтверждён владельцем 03 ноября 2026; delivery gates
 ещё не завершены. Документ не изменяет runtime/schema и не разрешает перенос кода,
 установку, activation, production pilot или main merge.
+
+
+## ADR-113: безопасная диагностика установки
+
+[Контракт doctor и bootstrap](ADR-113-safe-doctor.md). Утверждён 2026-11-19.

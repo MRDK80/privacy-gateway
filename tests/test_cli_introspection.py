@@ -90,6 +90,7 @@ def test_catalog_commands_match_parser(
     assert set(catalog_ids) == set(_walk_parser())
     assert set(catalog_ids) == {
         "detect",
+        "doctor",
         "key create",
         "key rotate",
         "key status",
@@ -402,6 +403,7 @@ def test_agent_example_documents_safe_introspection() -> None:
 
 _LEAF_COMMAND_ARGV: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("detect", ("detect", "--unexpected")),
+    ("doctor", ("doctor", "--unexpected")),
     ("prepare", ("prepare", "--unexpected")),
     ("restore", ("restore", "--unexpected")),
     ("key create", ("key", "create", "--unexpected")),

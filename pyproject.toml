@@ -46,7 +46,7 @@ dev = [
 Repository = "https://github.com/MRDK80/privacy-gateway"
 
 [project.scripts]
-pgw = "privacy_gateway.cli:main"
+pgw = "privacy_gateway.bootstrap:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "privacy_gateway.__version__"}
