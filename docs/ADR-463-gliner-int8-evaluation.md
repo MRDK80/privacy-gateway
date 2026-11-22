@@ -67,9 +67,9 @@ tokenization, inference, baseline detection and merge.
 | 2 | 1,800 | 36.526 | 44.801 | 1,037,388 |
 | 3 | 1,800 | 36.522 | 44.834 | 1,037,480 |
 
-## Proposed outcome
+## Initial ONNX result
 
-End evaluation of this pinned INT8 configuration at the resource gate.
+The initial evaluation stopped at the resource gate.
 All three runs exceeded the mean CPU and peak RSS limits. Warm p95 met the
 limit in each run. The peak process footprint was approximately 1,013 MiB.
 The four-example smoke run established that the graph returned finite span
@@ -90,3 +90,79 @@ these SHA-256 values:
 | `benchmark.py` | `dec80baa0c9dbd6d6bae146535b678833557a5c789576747e74ee254f4c59dea` |
 | `quantize.py` | `41c8032c38ddae2d4c0778c41d2fb7942f293fe565c733f11e0a60acece5bf88` |
 | `sort_graph.py` | `dd7ce2800e2241df60815bd3783cb3f85205cf3ba7b11a2c2e044295d7ff68bf` |
+
+## ORT loading and CPU follow-up
+
+The follow-up used the same INT8 graph, tokenization, labels, threshold,
+windows, baseline detector and merge. ONNX Runtime 1.23.2 serialized the
+optimized graph into a fixed ORT artifact on the target CPU with
+`ORT_ENABLE_ALL`. The artifact is 333,668,056 bytes. Its SHA-256 is
+`ac473b84cb251bafbc126b0526d6bde6ba4cfa9bcce57ad32b844233f1564b60`.
+ORT sessions loaded the artifact by path with further graph optimization
+disabled. The diagnostic varied CPU allocation, prepacking and the options
+for direct use of ORT bytes and initializers. This build did not expose the
+file-backed ORT mapping option. The direct-option rows record the observed
+effect of the settings when loading by path.
+
+Each diagnostic row used a fresh process with one warm-up pass and four
+timed passes over the same 18-document fixture. Peak RSS at load and current
+RSS after warm-up are distinct measurements. These 72-call samples served
+to select a configuration for the full protocol.
+
+| Configuration | Peak RSS at load (KiB) | RSS after warm-up (KiB) | Mean CPU (ms/doc) | Warm p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| onnx | 1038292 | 853284 | 36.69 | 44.972 |
+| ort | 1185316 | 748752 | 37.906 | 45.285 |
+| ort-direct | 1157572 | 757064 | 36.952 | 45.207 |
+| ort-no-pack | 1194792 | 739888 | 44.304 | 53.989 |
+| ort-direct-no-pack | 1202576 | 739792 | 44.145 | 52.209 |
+| ort-no-arena | 1135952 | 639576 | 36.667 | 44.837 |
+
+In the 72-call ORT sample with the CPU arena disabled, the model call
+accounted for 36.336 of 36.667 ms/doc, or about 99% of process CPU time.
+Input preparation took 0.145 ms/doc, baseline detection 0.092 ms/doc,
+decoding 0.064 ms/doc and merging 0.006 ms/doc. A separate instrumented
+ORT trace attributed 50.2% of recorded node-event duration to
+DynamicQuantizeMatMul, 14.5% to MatMulIntegerToFloat and 13.7% to
+FusedMatMul. Trace timings are diagnostic and excluded from the full runs.
+
+The ORT configuration with the CPU arena disabled had the lowest
+post-warm-up RSS in the short ORT measurements. It retained prepacking.
+Proposal sets and merged outputs matched the initial ONNX configuration
+on 20 separate synthetic inputs, including mixed-language and long text
+and an empty input. The comparison contained one model proposal in total.
+The matching output digest was
+`d9a401c26916f7acecf71df150a90f3ffcda95d4b3565c992531b9f4cbe5c481`.
+This was a conversion parity check with limited positive coverage.
+
+### Full resource runs
+
+The selected ORT configuration used the same CPU, synthetic fixture,
+warm-up and 100 timed passes as the initial protocol. Profiling was off
+during the full runs.
+
+| Trial | Timed calls | Mean CPU (ms/doc), max 30 | Warm p95 (ms), max 50 | Peak RSS (KiB), max 524,288 | RSS after warm-up (KiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1,800 | 36.758 | 44.884 | 1,130,692 | 641,064 |
+| 2 | 1,800 | 36.562 | 44.720 | 1,131,276 | 644,160 |
+| 3 | 1,800 | 36.909 | 45.103 | 1,130,032 | 639,916 |
+
+Both the CPU and peak RSS limits failed in all three runs. Warm p95 met
+the limit. ORT reduced steady memory in the short comparison from about
+833 MiB to 625 MiB, while its peak exceeded the original ONNX peak.
+The resource gate stopped the follow-up. The v2/v3 comparison and the
+blind evaluation remain unrun.
+
+For scale, all six recorded ONNX and ORT runs would fit an illustrative
+budget of 40 ms mean CPU, 1.25 GiB peak RSS and the existing 50 ms warm
+p95. That would raise the CPU allowance by one third and peak memory by
+2.5 times. The example describes this fixture on the reference CPU.
+The alternative budget and the decision about this candidate remain open
+for separate consideration. The existing #429 thresholds still apply.
+
+With the original experiment artifacts and environment, run
+`bash reproduce.sh` from the ORT follow-up directory to regenerate the
+ORT model, profile and run the benchmark. Run `bash compare.sh` to
+inspect the saved ONNX and ORT trials against both sets of numbers.
+The measured harness `measure.py` has SHA-256
+`9fbfdda20d382ef623eed3bbfc9e341850eb03039374ef04b9903f2f3e3c1247`.
