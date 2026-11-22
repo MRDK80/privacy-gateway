@@ -1507,3 +1507,9 @@ typed registry: тесты доказывают включение в глоба
 
 [ADR-122](ADR-122-english-cli.md) records the owner-approved human-text
 compatibility change, unchanged machine/privacy contracts and required tests.
+
+## ADR-430: Local NER evaluation for Russian and English
+
+[ADR-430](ADR-430-local-ner.md) records the proposed contract and recommends
+declining the evaluated spaCy model because the held-out PERSON and ORG results
+miss the required quality thresholds. Owner decision is pending.
