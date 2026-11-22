@@ -1,0 +1,13 @@
+# Frozen synthetic dictionary for the comparison in issue #429.
+# An absent regex list enables all current regex detectors.
+dictionary:
+  PERSON:
+    - Синтовый Мирн
+    - Выметный Тарн
+    - Milo Wexfern
+    - Elowen Duskfern
+  ORG:
+    - артель Лунный Винт
+    - коллегию Янтарный Шов
+    - Copperkite Guild
+    - Violetspoke Workshop
