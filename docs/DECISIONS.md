@@ -1514,3 +1514,8 @@ compatibility change, unchanged machine/privacy contracts and required tests.
 `xx_ent_wiki_sm` 3.8.0 because the held-out PERSON and ORG results missed the
 required quality thresholds. The [next experiment](ner-next-experiment.md) is
 preregistered. The production contract remains unapproved.
+
+## ADR-446: Fine-tuned bilingual NER candidate
+
+[ADR-446](ADR-446-ner-finetune-decision.md) records the independent evaluation
+and the owner's decision to decline the fine-tuned candidate for #428.

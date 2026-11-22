@@ -6,7 +6,7 @@ import argparse
 import json
 import re
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from math import ceil
 from pathlib import Path
 from time import perf_counter_ns, process_time_ns
@@ -17,6 +17,7 @@ from tools.ner_baseline import FIXTURES, TYPES, Document, Span, read_corpus, sco
 from tools.ner_bilingual_candidate import (
     MODEL_VERSION,
     MODELS,
+    Model,
     Proposal,
     load_models,
     model_proposals,
@@ -101,10 +102,17 @@ def merge_losses(
     return losses
 
 
-def run(corpus: Sequence[Document], variant: str, timing: bool) -> dict[str, object]:
+def run(
+    corpus: Sequence[Document],
+    variant: str,
+    timing: bool,
+    *,
+    models_loader: Callable[[], list[tuple[Model, dict[str, str]]]] | None = None,
+    include_model_only: bool = False,
+) -> dict[str, object]:
     config = load_config(FIXTURES / "dictionary.yaml")
     start = perf_counter_ns()
-    models = load_models()
+    models = (models_loader or load_models)()
     model_load_ms = (perf_counter_ns() - start) / 1_000_000
 
     def detect(
@@ -129,6 +137,7 @@ def run(corpus: Sequence[Document], variant: str, timing: bool) -> dict[str, obj
 
     # One complete untimed pass, with quality diagnostics kept out of the timed loop.
     examples: list[tuple[Document, list[Span]]] = []
+    model_examples: list[tuple[Document, list[Span]]] = []
     routes: Counter[str] = Counter(
         dict.fromkeys(
             ("ru", "en", "short", "undetermined", "mixed_ru", "mixed_en", "mixed_both"),
@@ -152,6 +161,8 @@ def run(corpus: Sequence[Document], variant: str, timing: bool) -> dict[str, obj
     for document in corpus:
         baseline, proposed, combined, choices = detect(document.text)
         examples.append((document, combined))
+        if include_model_only:
+            model_examples.append((document, resolve(proposed)))
         scored = {span for span in combined if span[2] in TYPES}
         diagnostics.update(errors(document.spans, scored))
         diagnostics.update(
@@ -176,6 +187,16 @@ def run(corpus: Sequence[Document], variant: str, timing: bool) -> dict[str, obj
         "mixed_metrics": score(example for example in examples if example[0].mixed),
         "diagnostics": diagnostics,
     }
+    if include_model_only:
+        report["model_only"] = {
+            "metrics": score(model_examples),
+            "monolingual_metrics": score(
+                example for example in model_examples if not example[0].mixed
+            ),
+            "mixed_metrics": score(
+                example for example in model_examples if example[0].mixed
+            ),
+        }
     if variant == "routed":
         report["routing"] = {
             "sentences": routes.total(),
