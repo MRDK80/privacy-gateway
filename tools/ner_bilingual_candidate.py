@@ -60,6 +60,25 @@ def load_models() -> list[tuple[Model, dict[str, str]]]:
     return models
 
 
+def model_proposals(
+    text: str,
+    models: Sequence[tuple[Model, dict[str, str]]],
+    sources: Iterable[int],
+    offset: int = 0,
+) -> list[Proposal]:
+    proposals = []
+    for source in sources:
+        model, labels = models[source]
+        for entity in model(text).ents:
+            start, end = entity.start_char, entity.end_char
+            if not 0 <= start < end <= len(text):
+                raise ValueError("Model returned invalid character offsets.")
+            label = labels.get(entity.label_)
+            if label is not None:
+                proposals.append((source, (offset + start, offset + end, label)))
+    return proposals
+
+
 def overlaps(span: Span, others: Iterable[Span]) -> bool:
     start, end, _ = span
     return any(start < right and left < end for left, right, _ in others)
@@ -122,16 +141,7 @@ def run(corpus: Sequence[Document], timing: bool) -> dict[str, object]:
             (item.start, item.end, item.entity_type.value)
             for item in detect_entities(text, config)
         ]
-        proposals = []
-        for source, (model, labels) in enumerate(models):
-            for entity in model(text).ents:
-                start, end = entity.start_char, entity.end_char
-                if not 0 <= start < end <= len(text):
-                    raise ValueError("Model returned invalid character offsets.")
-                label = labels.get(entity.label_)
-                if label is not None:
-                    proposals.append((source, (start, end, label)))
-        return baseline, proposals
+        return baseline, model_proposals(text, models, range(len(models)))
 
     start = perf_counter_ns()
     first_baseline, first_proposals = detect(corpus[0].text)
