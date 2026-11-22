@@ -6,6 +6,7 @@ import argparse
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 from math import ceil
 from pathlib import Path
 from time import perf_counter_ns, process_time_ns
@@ -26,6 +27,7 @@ class Document:
     language: str
     text: str
     spans: frozenset[Span]
+    mixed: bool = False
 
 
 @dataclass
@@ -50,10 +52,17 @@ class Counts:
 
 
 def load_corpus(split: str) -> list[Document]:
+    return read_corpus(FIXTURES / f"{split}.jsonl")
+
+
+def read_corpus(path: Path, expected_sha256: str | None = None) -> list[Document]:
+    data = path.read_bytes()
+    if expected_sha256 is not None and sha256(data).hexdigest() != expected_sha256:
+        raise ValueError("Corpus SHA-256 differs from the expected digest.")
+    split = path.stem
     documents = []
     seen_ids = set()
-    path = FIXTURES / f"{split}.jsonl"
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in data.decode("utf-8").splitlines():
         row = json.loads(line)
         spans: set[Span] = set()
         for start, end, label in row["spans"]:
@@ -65,8 +74,11 @@ def load_corpus(split: str) -> list[Document]:
         if row["language"] not in LANGUAGES or row["id"] in seen_ids:
             raise ValueError(f"Invalid document language or ID in {split}/{row['id']}")
         seen_ids.add(row["id"])
+        mixed = row.get("mixed", False)
+        if not isinstance(mixed, bool):
+            raise ValueError(f"Invalid mixed marker in {split}/{row['id']}")
         documents.append(
-            Document(row["id"], row["language"], row["text"], frozenset(spans))
+            Document(row["id"], row["language"], row["text"], frozenset(spans), mixed)
         )
     return documents
 
