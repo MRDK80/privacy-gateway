@@ -1,10 +1,10 @@
 # ADR-446: Fine-tuned bilingual NER candidate
 
-- Status: Proposed, pending owner decision
+- Status: Accepted for rejection of this candidate, 2026-11-22
 - Issue: [#446](https://github.com/MRDK80/privacy-gateway/issues/446)
 - Evidence: [training, development and independent blind evaluation](ner-finetune.md)
 
-## Proposed decision
+## Decision
 
 Decline the fine-tuned routed pair for production integration. The trained
 pair passed both quality thresholds in five of six rows on development data

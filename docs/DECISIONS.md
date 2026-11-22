@@ -1518,4 +1518,4 @@ preregistered. The production contract remains unapproved.
 ## ADR-446: Fine-tuned bilingual NER candidate
 
 [ADR-446](ADR-446-ner-finetune-decision.md) records the independent evaluation
-and the proposed decision on the fine-tuned candidate for #428.
+and the owner's decision to decline the fine-tuned candidate for #428.
