@@ -1519,3 +1519,8 @@ preregistered. The production contract remains unapproved.
 
 [ADR-446](ADR-446-ner-finetune-decision.md) records the independent evaluation
 and the owner's decision to decline the fine-tuned candidate for #428.
+
+## ADR-449: WikiNEuRal ONNX INT8
+
+[ADR-449](ADR-449-wikineural-decision.md) records the owner decision to decline
+WikiNEuRal and the diagnostic quality, resource and license findings.
