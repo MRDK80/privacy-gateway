@@ -91,9 +91,14 @@ each run to meet:
 
 | Resource | Maximum | Measurement |
 | --- | ---: | --- |
-| CPU | 30 ms/document | Process CPU time for timed passes divided by number of calls |
-| Peak resident memory | 512 MiB | Maximum RSS for the complete process, including model initialization |
-| Warm latency | 50 ms/document | Nearest-rank p95 wall time over individual detection calls |
+| CPU | 75 ms/document | Process CPU time for timed passes divided by number of calls |
+| Peak resident memory | 1792 MiB (1.75 GiB) | Maximum RSS for the complete process, including model initialization |
+| Warm latency | 95 ms/document | Nearest-rank p95 wall time over individual detection calls |
+
+The owner approved this budget for #428 on 2026-11-22 after the #469
+measurements. ADR-469 preserves the original #429 limits (30 ms CPU per
+document, 50 ms warm p95 and 512 MiB peak RSS) and the alternative used for
+that experiment.
 
 These limits define a single-core interactive evaluation budget for the
 fixture workload. Warm latency includes the detection call and excludes model
