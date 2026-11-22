@@ -1,0 +1,16 @@
+{"id": "ru-01", "language": "ru", "text": "В мастерскую пришла Элвара Нимсвет, затем она ушла в Звонолесье.", "spans": [[20, 34, "PERSON"], [53, 63, "LOC"]]}
+{"id": "ru-02", "language": "ru", "text": "Посылку из Искрового Плёса приняло бюро Мелофар.", "spans": [[11, 26, "LOC"], [35, 47, "ORG"]]}
+{"id": "ru-03", "language": "ru", "text": "В протоколе выступил синтовый Мирн, а артель Лунный Винт внесла правку.", "spans": [[21, 34, "PERSON"], [38, 56, "ORG"]]}
+{"id": "ru-04", "language": "ru", "text": "На папке написано «Синтовый Мирн» — это название оттенка туши.", "spans": []}
+{"id": "ru-05", "language": "ru", "text": "На коробке остались слова «артель Лунный Винт», название узора на обёртке.", "spans": []}
+{"id": "ru-06", "language": "ru", "text": "Нелфир Таурен позвонил в студию Флинтокрыл в Засечной Гавани.", "spans": [[0, 13, "PERSON"], [25, 42, "ORG"], [45, 60, "LOC"]]}
+{"id": "ru-07", "language": "ru", "text": "Никто не выступил, черновик переслали утром.", "spans": []}
+{"id": "ru-08", "language": "ru", "text": "В сети написали: «Мелви Зорн arrived in Flintmere».", "spans": [[18, 28, "PERSON"], [40, 49, "LOC"]]}
+{"id": "en-01", "language": "en", "text": "Orvella Crindle reached Brindlewick by the morning tram.", "spans": [[0, 15, "PERSON"], [24, 35, "LOC"]]}
+{"id": "en-02", "language": "en", "text": "The courier from Quillhaven works for Veltara Joinery.", "spans": [[17, 27, "LOC"], [38, 53, "ORG"]]}
+{"id": "en-03", "language": "en", "text": "Milo Wexfern joined copperkite guild on Thursday.", "spans": [[0, 12, "PERSON"], [20, 36, "ORG"]]}
+{"id": "en-04", "language": "en", "text": "The paint swatch calls this shade “Milo Wexfern”.", "spans": []}
+{"id": "en-05", "language": "en", "text": "The puzzle's title is Copperkite Guild, printed in blue.", "spans": []}
+{"id": "en-06", "language": "en", "text": "Nyveth Bramcoil visited Fendrel Archive in Mossquay.", "spans": [[0, 15, "PERSON"], [24, 39, "ORG"], [43, 51, "LOC"]]}
+{"id": "en-07", "language": "en", "text": "A blank log lay next to the two spare lanterns.", "spans": []}
+{"id": "en-08", "language": "en", "text": "The note said «Келвар Мерниц работает в бюро Ветроклён».", "spans": [[15, 28, "PERSON"], [40, 54, "ORG"]]}

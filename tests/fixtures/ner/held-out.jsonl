@@ -1,0 +1,18 @@
+{"id": "ru-01", "language": "ru", "text": "К рассвету Арлина Шелесток добралась до Ветрогранска.", "spans": [[11, 26, "PERSON"], [40, 52, "LOC"]]}
+{"id": "ru-02", "language": "ru", "text": "Палата Семи Пружин открыла читальню в Лоскутном Броде.", "spans": [[0, 18, "ORG"], [38, 53, "LOC"]]}
+{"id": "ru-03", "language": "ru", "text": "Выметный Тарн подал заявку в коллегию Янтарный Шов.", "spans": [[0, 13, "PERSON"], [29, 50, "ORG"]]}
+{"id": "ru-04", "language": "ru", "text": "«Выметный Тарн» — название шрифта на упаковке.", "spans": []}
+{"id": "ru-05", "language": "ru", "text": "На карточке написано «Коллегию Янтарный Шов» — так назвали настольную игру.", "spans": []}
+{"id": "ru-06", "language": "ru", "text": "У Энвеля Дымоклёна встреча с мастерской Сферокрыл в Облачной Луке.", "spans": [[2, 18, "PERSON"], [29, 49, "ORG"], [52, 65, "LOC"]]}
+{"id": "ru-07", "language": "ru", "text": "Лист сложили пополам и убрали в пустой ящик.", "spans": []}
+{"id": "ru-08", "language": "ru", "text": "В заявке было: «Phera Glintwell works at Northquill Loomworks in Sablegate».", "spans": [[16, 31, "PERSON"], [41, 61, "ORG"], [65, 74, "LOC"]]}
+{"id": "ru-09", "language": "ru", "text": "Пришёл Выметный Тарн-Рой, за ним Выметный Тарн-Рой.", "spans": [[7, 24, "PERSON"], [33, 50, "PERSON"]]}
+{"id": "en-01", "language": "en", "text": "Vandra Fernwisp sent a postcard from Thimbleharbor.", "spans": [[0, 15, "PERSON"], [37, 50, "LOC"]]}
+{"id": "en-02", "language": "en", "text": "Nimbrel Cartography moved its office to Hushwillow.", "spans": [[0, 19, "ORG"], [40, 50, "LOC"]]}
+{"id": "en-03", "language": "en", "text": "Elowen Duskfern joined violetspoke workshop last spring.", "spans": [[0, 15, "PERSON"], [23, 43, "ORG"]]}
+{"id": "en-04", "language": "en", "text": "The wordmark Elowen Duskfern identifies a typeface in this sample.", "spans": []}
+{"id": "en-05", "language": "en", "text": "Violetspoke Workshop is the name of the board game on the shelf.", "spans": []}
+{"id": "en-06", "language": "en", "text": "Caldrin Wispvale met the Quernfall Trust near Amberwhistle.", "spans": [[0, 16, "PERSON"], [25, 40, "ORG"], [46, 58, "LOC"]]}
+{"id": "en-07", "language": "en", "text": "The folded page fell between the shelves.", "spans": []}
+{"id": "en-08", "language": "en", "text": "The card said «Равелла Ярногор из Тихолиста работает в бюро Искроствор».", "spans": [[15, 30, "PERSON"], [34, 43, "LOC"], [55, 70, "ORG"]]}
+{"id": "en-09", "language": "en", "text": "Elowen Duskfern-Sedge signed twice as Elowen Duskfern-Sedge.", "spans": [[0, 21, "PERSON"], [38, 59, "PERSON"]]}
