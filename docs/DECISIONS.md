@@ -1510,6 +1510,7 @@ compatibility change, unchanged machine/privacy contracts and required tests.
 
 ## ADR-430: Local NER evaluation for Russian and English
 
-[ADR-430](ADR-430-local-ner.md) records the proposed contract and recommends
-declining the evaluated spaCy model because the held-out PERSON and ORG results
-miss the required quality thresholds. Owner decision is pending.
+[ADR-430](ADR-430-local-ner.md) records the owner decision to decline
+`xx_ent_wiki_sm` 3.8.0 because the held-out PERSON and ORG results missed the
+required quality thresholds. The [next experiment](ner-next-experiment.md) is
+preregistered. The production contract remains unapproved.

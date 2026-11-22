@@ -1,18 +1,20 @@
 # ADR-430: Local NER evaluation for Russian and English
 
-- Status: Proposed, pending owner decision
+- Status: Accepted for the rejection of `xx_ent_wiki_sm` 3.8.0 only
 - Issue: [#430](https://github.com/MRDK80/privacy-gateway/issues/430)
 - Epic: [#428](https://github.com/MRDK80/privacy-gateway/issues/428)
 - Evaluation protocol: [#429 synthetic NER baseline](ner-baseline.md)
 
-## Recommendation
+## Accepted decision
 
-Decline spaCy `xx_ent_wiki_sm` 3.8.0 for integration. The combined detector
-passes the CPU, memory and warm-latency limits on the reference host. It passes
-both quality thresholds only for LOC in Russian and English. Keep the thresholds
-fixed. If the owner wants another candidate evaluated, predeclare its settings
-and use a fresh untouched held-out split for selection. Selecting any model and
-implementing a production contract require an Accepted ADR.
+The owner rejected spaCy `xx_ent_wiki_sm` 3.8.0 for integration. The combined
+detector passed the resource limits on the reference host and met both quality
+thresholds only for LOC in Russian and English. The #429 thresholds stay fixed.
+
+At the owner's request, [the next experiment](ner-next-experiment.md) prepares
+the evaluation of a different candidate. No new model has been qualified.
+The prospective production contract below remains unapproved. Model selection
+and production implementation require separately accepted decisions.
 
 ## Candidate and frozen evaluation rule
 
@@ -130,7 +132,7 @@ locally and requests CPU execution. It neither downloads models nor uses
 keys. Reproduction measures detector output, not the proposed preparation
 contract below.
 
-## Proposed production contract for a qualifying candidate
+## Unapproved production proposal for a qualifying candidate
 
 - **Enablement.** A future accepted implementation uses one explicit opt-in in
   the local detector YAML shared by CLI and Library preparation. An omitted or
@@ -138,10 +140,10 @@ contract below.
   runtime. Provision a reviewed runtime and version-pinned model from offline
   artifacts. Never download or install while processing input. Keep plaintext
   and span contents in the existing local trust boundary.
-- **Language and labels.** Select one qualified multilingual model at
-  configuration time and pass the whole document to it. RU, EN and mixed
-  input use the same tokenizer, pipeline and offset convention without
-  a script heuristic. Require explicit mapping into PERSON, ORG and LOC.
+- **Language and labels.** Select the qualified model or model pair at
+  configuration time. The accepted decision must specify how RU, EN and mixed
+  input are routed and how their offsets are preserved. Require explicit mapping
+  into PERSON, ORG and LOC.
   Discard unsupported labels. Test the chosen model and mapping on mixed
   text before acceptance.
 - **Precedence.** Keep all resolved baseline findings, including existing
