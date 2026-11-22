@@ -1,8 +1,16 @@
-# ADR-463: Evaluate GLiNER multi-v2.1 ONNX INT8
+# ADR-463: Decline the evaluated GLiNER multi-v2.1 INT8 configuration
 
-- Status: Proposed
+- Status: Accepted on 2026-11-22
 - Task: [#463](https://github.com/MRDK80/privacy-gateway/issues/463)
 - Epic: [#428](https://github.com/MRDK80/privacy-gateway/issues/428)
+
+## Decision
+
+The owner declined the tested GLiNER multi-v2.1 INT8 configuration for
+integration. It exceeded CPU and peak RSS limits and met both quality
+thresholds in zero of six groups on each disclosed corpus. #429 limits
+remain in effect. The blind test was not run. #431 and #432 still require
+a qualifying candidate and an approved production contract.
 
 ## Context
 
@@ -150,15 +158,14 @@ during the full runs.
 Both the CPU and peak RSS limits failed in all three runs. Warm p95 met
 the limit. ORT reduced steady memory in the short comparison from about
 833 MiB to 625 MiB, while its peak exceeded the original ONNX peak.
-The resource gate stopped the follow-up. The v2/v3 comparison and the
-blind evaluation remain unrun.
+The resource gate stopped the planned acceptance evaluation. The owner
+later authorized a separate diagnostic comparison on v2 and v3.
 
 For scale, all six recorded ONNX and ORT runs would fit an illustrative
 budget of 40 ms mean CPU, 1.25 GiB peak RSS and the existing 50 ms warm
 p95. That would raise the CPU allowance by one third and peak memory by
 2.5 times. The example describes this fixture on the reference CPU.
-The alternative budget and the decision about this candidate remain open
-for separate consideration. The existing #429 thresholds still apply.
+The owner kept the existing #429 thresholds for integration.
 
 With the original experiment artifacts and environment, run
 `bash reproduce.sh` from the ORT follow-up directory to regenerate the
@@ -166,3 +173,49 @@ ORT model, profile and run the benchmark. Run `bash compare.sh` to
 inspect the saved ONNX and ORT trials against both sets of numbers.
 The measured harness `measure.py` has SHA-256
 `9fbfdda20d382ef623eed3bbfc9e341850eb03039374ef04b9903f2f3e3c1247`.
+
+## Disclosed quality diagnostic
+
+The diagnostic evaluated 80 synthetic documents per corpus with the fixed
+INT8 configuration and the [#445 routed spaCy control](ner-language-routing.md).
+Both used the baseline detector and the same resolver. Scoring followed the
+[#429 exact-boundary and type protocol](ner-baseline.md) and grouped mixed
+documents by document language. The v2 and v3 corpus SHA-256 values were
+`c61f248db8337632d72682feb9b84ad4ade36eb78010f60b8d28888ccfdd62c6`
+and `6f7c5fad12a29670df5984008ebab6cfa156d4b3dc65010da79914a43807e591`.
+
+Cells show precision / recall. A dash denotes undefined precision due to
+zero predictions. Acceptance requires precision ≥ 80% and recall ≥ 75%
+in every group.
+
+| Group | v2 #445 | v2 GLiNER INT8 | v3 #445 | v3 GLiNER INT8 |
+| --- | ---: | ---: | ---: | ---: |
+| RU PERSON | 63.9% / 85.2% | 50.0% / 7.4% | 59.0% / 79.3% | 60.0% / 10.3% |
+| RU ORG | 70.0% / 53.8% | 33.3% / 3.8% | 65.2% / 55.6% | 100.0% / 3.7% |
+| RU LOC | 87.0% / 76.9% | — / 0.0% | 87.0% / 74.1% | — / 0.0% |
+| EN PERSON | 57.7% / 55.6% | 50.0% / 7.4% | 64.7% / 71.0% | 50.0% / 6.5% |
+| EN ORG | 39.5% / 57.7% | 33.3% / 3.8% | 56.0% / 51.9% | 100.0% / 3.7% |
+| EN LOC | 77.8% / 26.9% | — / 0.0% | 75.0% / 37.5% | — / 0.0% |
+
+The #445 control reproduced 94 / 58 / 64 on v2 and 103 / 53 / 62 on v3
+(TP / FP / FN). The INT8 candidate gave 6 / 8 / 152 and 7 / 4 / 158.
+Its two 100% ORG precision values on v3 each represent one correct
+prediction out of 27 gold entities. Relative to #445, the candidate
+lost 88 and 96 true positives and removed 50 and 49 false positives
+on v2 and v3, respectively. It added no final findings. GLiNER itself
+proposed zero spans on v2 and one exact gold span on v3. That proposal
+was already present in the #445 output. ONNX INT8 and ORT INT8 produced
+identical proposal sets and final outputs on all 160 documents.
+
+On four separate synthetic smoke inputs, the FP32 source graph produced
+2 / 2 / 2 / 2 proposals and the ONNX INT8 graph produced 1 / 0 / 0 / 0
+using the same adapter and threshold. The difference appeared before ORT
+conversion. FP32 quality on v2 and v3 was outside the diagnostic.
+
+The local diagnostic command was `bash run.sh` from the quality
+evaluation directory with the pinned corpora and the environments used
+above. #445 used spaCy 3.8.18 and both small packages at 3.8.0. The
+`diagnostic.py` SHA-256 was
+`a6b66887e1ac57b63452f5698d1e04e59fb167840a96b371da8edf3a2baa00e0`.
+The original and repeated aggregate reports were byte-identical at
+SHA-256 `01fb831675698fe3d291ff353d3b96a62e320c86791ca071542b67bd3d0ebd69`.
