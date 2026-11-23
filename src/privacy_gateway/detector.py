@@ -1,7 +1,7 @@
 """Детерминированное обнаружение потенциально чувствительных сущностей — Этап Э2.
 
 Использует regex и локальные синтетические словари из YAML-конфига.
-Автоматическое NER не применяется.
+Локальный NER подключается явно через конфигурацию.
 Поддерживаются Windows и Linux/macOS.
 """
 
@@ -67,6 +67,7 @@ class DetectorConfig:
 
     dictionary: dict[str, list[str]] = field(default_factory=dict)
     enabled_regex_types: set[str] = field(default_factory=set)
+    ner_model_dir: Path | None = None
 
 
 def load_config(config_path: Path) -> DetectorConfig:
@@ -106,7 +107,21 @@ def load_config(config_path: Path) -> DetectorConfig:
     if isinstance(raw_enabled, list):
         enabled = {str(e).upper() for e in raw_enabled}
 
-    return DetectorConfig(dictionary=dictionary, enabled_regex_types=enabled)
+    model_dir = None
+    if "local_ner" in data:
+        ner = data["local_ner"]
+        if (
+            not isinstance(ner, dict)
+            or set(ner) != {"model_dir"}
+            or not isinstance(ner["model_dir"], str)
+            or not ner["model_dir"].strip()
+        ):
+            raise ConfigurationError("local_ner requires a non-empty model_dir.")
+        model_dir = (config_path.parent / ner["model_dir"]).absolute()
+
+    return DetectorConfig(
+        dictionary=dictionary, enabled_regex_types=enabled, ner_model_dir=model_dir
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,11 +383,36 @@ def detect_entities(
         Список DetectedEntity, отсортированный по start.
         Исходные значения в публичные модели не попадают.
     """
+    return detect_with_model_spans(text, config)[0]
+
+
+def detect_with_model_spans(
+    text: str, config: DetectorConfig
+) -> tuple[list[DetectedEntity], set[tuple[int, int, str]]]:
+    """Return the findings and pre-merge model spans for coverage checks."""
     candidates: list[_Candidate] = []
     candidates.extend(_collect_regex_candidates(text, config.enabled_regex_types))
     candidates.extend(_collect_dictionary_candidates(text, config.dictionary))
 
     resolved = _resolve_overlaps(candidates)
+    model_spans: set[tuple[int, int, str]] = set()
+    if config.ner_model_dir is not None:
+        from privacy_gateway.local_ner import model_spans_for
+
+        model_spans = model_spans_for(config.ner_model_dir, text)
+        model_candidates = [
+            _Candidate(
+                entity_type=EntityType(label),
+                start=start,
+                end=end,
+                confidence=DetectionConfidence.MEDIUM,
+                source="ner",
+                value=text[start:end],
+                priority=9,
+            )
+            for start, end, label in sorted(model_spans)
+        ]
+        resolved = _resolve_overlaps([*resolved, *model_candidates])
 
     result: list[DetectedEntity] = []
     for c in resolved:
@@ -388,4 +428,4 @@ def detect_entities(
             )
         )
 
-    return result
+    return result, model_spans

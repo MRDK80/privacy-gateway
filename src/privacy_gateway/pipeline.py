@@ -45,6 +45,7 @@ from typing import Any
 from privacy_gateway.detector import (
     DetectorConfig,
     detect_entities,
+    detect_with_model_spans,
     load_config,
 )
 from privacy_gateway.keystore import (
@@ -233,7 +234,11 @@ def prepare_pipeline(
         raise
 
     # --- Детектор ---
-    entities = detect_entities(text, detector_cfg)
+    model_spans: set[tuple[int, int, str]] = set()
+    if detector_cfg.ner_model_dir is None:
+        entities = detect_entities(text, detector_cfg)
+    else:
+        entities, model_spans = detect_with_model_spans(text, detector_cfg)
 
     # --- Жёсткая блокировка секретов (fail closed, ADR-11) ---
     secret_entities = [e for e in entities if e.secret_kind is not None]
@@ -286,10 +291,28 @@ def prepare_pipeline(
             message="Invalid LOC detection offsets. Processing aborted.",
         )
 
+    if any(label in blocked_types for _, _, label in model_spans):
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Local NER found an unconditionally blocked type.",
+        )
+
     # --- Фильтрация: только разрешённые типы ---
     entities_to_tokenize = [
         e for e in entities if e.entity_type.value in allowed_types
     ]
+
+    for start, end, _ in sorted(model_spans):
+        covered = start
+        for item in entities_to_tokenize:
+            if covered >= end or item.start > covered:
+                break
+            covered = max(covered, item.end)
+        if covered < end:
+            return PipelineResult(
+                status=ProcessingStatus.BLOCKED,
+                message="Routing would leave a local NER detection unprotected.",
+            )
 
     original_values = [text[e.start:e.end] for e in entities_to_tokenize]
 

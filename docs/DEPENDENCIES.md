@@ -34,14 +34,10 @@ compatibility `requires-python >=3.11` does not expand that support list.
 Base imports and `pgw --help` use the runtime requirements above without selecting
 a system keyring backend or operating on keys. Subprocess tests enforce that
 boundary. The only declared extra is `dev`; it adds development tools, not product
-features. There are no product extras for NER, HTTP proxy, provider adapters or
-model downloads, nor a public path requiring such an optional package.
-
-Names `ner` and `proxy` are reserved in the plan for possible separately approved
-features; they are not published as empty extras. Before implementation, define
-capability, dependencies, lazy-import boundary and the tested missing-extra error
-in a separate decision. A provider SDK also needs an explicit adapter contract;
-an extra name is not that decision.
+features. No product extras are declared. The [opt-in local NER](local-ner.md)
+uses an operator-provisioned local runtime and model bundle under
+[ADR-432](ADR-432-local-ner-integration.md). Its imports occur on the enabled
+path. HTTP proxy and provider adapters remain separate decisions.
 
 This document changes no base dependencies, public commands, exceptions or
 security guarantees. See the [security guide](SECURITY.md) for keyring requirements

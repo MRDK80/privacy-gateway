@@ -416,10 +416,9 @@ def _cmd_detect(args: argparse.Namespace) -> int:
     config_path = Path(args.config) if args.config else _DEFAULT_ENTITIES_CONFIG
     try:
         cfg = load_config(config_path)
+        entities = detect_entities(input_text.text, cfg)
     except ConfigurationError as exc:
         return _report_exception(exc, _CONFIG_RULES)
-
-    entities = detect_entities(input_text.text, cfg)
 
     result: dict[str, Any] = {
         "source": input_text.source.value,
