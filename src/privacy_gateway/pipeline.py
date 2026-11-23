@@ -53,10 +53,11 @@ from privacy_gateway.keystore import (
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
+    EntityType,
     ProcessingStatus,
 )
 from privacy_gateway.publish import publish_temp
-from privacy_gateway.routing import RoutingConfig
+from privacy_gateway.routing import LOC_ROUTE_FORMAT_VERSION, RoutingConfig
 from privacy_gateway.tokenizer import tokenize
 from privacy_gateway.validator import validate
 
@@ -273,6 +274,18 @@ def prepare_pipeline(
             findings_summary=summary,
         )
 
+    locations = [e for e in entities if e.entity_type == EntityType.LOC]
+    if locations and EntityType.LOC not in allowed_types:
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Routing policy does not permit tokenization of LOC.",
+        )
+    if any(not 0 <= e.start < e.end <= len(text) for e in locations):
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Invalid LOC detection offsets. Processing aborted.",
+        )
+
     # --- Фильтрация: только разрешённые типы ---
     entities_to_tokenize = [
         e for e in entities if e.entity_type.value in allowed_types
@@ -350,7 +363,11 @@ def prepare_pipeline(
     # Шаг 4: route.json с manifest_sha256 (атомарно)
     token_count = len(token_records)
     route_data: dict[str, Any] = {
-        "format_version": ROUTE_FORMAT_VERSION,
+        "format_version": (
+            LOC_ROUTE_FORMAT_VERSION
+            if EntityType.LOC in token_counts
+            else ROUTE_FORMAT_VERSION
+        ),
         "status": ProcessingStatus.OK.value,
         "timestamp": timestamp,
         "source_ref": source_ref,

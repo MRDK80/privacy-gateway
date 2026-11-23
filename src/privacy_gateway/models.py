@@ -15,6 +15,7 @@ class EntityType(StrEnum):
     PERSON = "PERSON"
     ROLE = "ROLE"
     ORG = "ORG"
+    LOC = "LOC"
     DEPARTMENT = "DEPARTMENT"
     EMAIL = "EMAIL"
     PHONE = "PHONE"

@@ -46,7 +46,8 @@ _ALLOWED_TOP_KEYS: frozenset[str] = frozenset({"output_dir", "overwrite", "rules
 _ALLOWED_RULES_KEYS: frozenset[str] = frozenset({"tokenize", "block_unconditionally"})
 
 # Известные версии формата route.json
-_KNOWN_VERSIONS: frozenset[str] = frozenset({"1.0", "1.1"})
+LOC_ROUTE_FORMAT_VERSION = "1.2"
+_KNOWN_VERSIONS = frozenset({"1.0", "1.1", LOC_ROUTE_FORMAT_VERSION})
 
 # Безопасные умолчания
 _DEFAULT_OUTPUT_DIR = "./pgw_out"
@@ -56,6 +57,7 @@ _DEFAULT_TOKENIZE: list[str] = [
     EntityType.HOST.value,
     EntityType.PERSON.value,
     EntityType.ORG.value,
+    EntityType.LOC.value,
     EntityType.DOCUMENT.value,
     EntityType.AMOUNT.value,
     EntityType.METRIC.value,
@@ -227,9 +229,9 @@ def verify_manifest_integrity(
     файла манифеста целиком.
 
     Поведение по версии:
-    - "1.1", поле есть, сумма совпадает  → возвращает None молча.
-    - "1.1", поле есть, сумма не совпадает → ConfigurationError.
-    - "1.1", поля manifest_sha256 нет      → ConfigurationError (ошибка формата).
+    - "1.1" / "1.2", поле есть, сумма совпадает  → возвращает None молча.
+    - "1.1" / "1.2", поле есть, сумма не совпадает → ConfigurationError.
+    - "1.1" / "1.2", нет manifest_sha256 → ConfigurationError.
     - "1.0"                                → проверка пропускается без ошибки.
     - Неизвестная версия                   → ConfigurationError.
 
@@ -256,14 +258,19 @@ def verify_manifest_integrity(
         # Обратная совместимость: v1.0 не содержит manifest_sha256
         return
 
-    # version == "1.1"
     if "manifest_sha256" not in route_data:
         raise ConfigurationError(
-            "route.json format_version is \"1.1\" but field manifest_sha256 "
+            f'route.json format_version is "{version}" but field manifest_sha256 '
             "is missing. The file may be malformed or truncated."
         )
 
     expected_hex: str = route_data["manifest_sha256"]
+    if version == LOC_ROUTE_FORMAT_VERSION and (
+        not isinstance(expected_hex, str)
+        or len(expected_hex) != 64
+        or any(char not in "0123456789abcdef" for char in expected_hex)
+    ):
+        raise ConfigurationError("Invalid manifest_sha256 in LOC route.")
 
     if not manifest_path.exists():
         raise ConfigurationError(

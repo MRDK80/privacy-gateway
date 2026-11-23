@@ -48,12 +48,14 @@ from privacy_gateway.keystore import KeyNotFoundError, KeystoreError, get_all_ke
 from privacy_gateway.manifest import load_manifest
 from privacy_gateway.models import (
     ConfigurationError,
+    EntityType,
     ManifestEntry,
     RestoreStrictError,
 )
-from privacy_gateway.routing import verify_manifest_integrity
+from privacy_gateway.routing import LOC_ROUTE_FORMAT_VERSION, verify_manifest_integrity
 
 _TOKEN_CANDIDATE_RE = re.compile(r"\[([^\[\]\n]+)\]")
+_LOC_TOKEN_RE = re.compile(r"\[LOC_[1-9][0-9]*\]")
 _VALID_TOKEN_RE = re.compile(r"^[A-Z][A-Z0-9]*_[1-9][0-9]*$")
 
 
@@ -239,9 +241,21 @@ def restore_text(
         ) from exc
 
     # Перебираем все ключи до первого успешного (ADR-23).
-    entries: list[ManifestEntry] = _load_manifest_multi_key(
-        manifest_path, keys
-    )
+    loc_route = route_data["format_version"] == LOC_ROUTE_FORMAT_VERSION
+    try:
+        entries = _load_manifest_multi_key(manifest_path, keys)
+    except (ValueError, KeyError, TypeError):
+        if not loc_route:
+            raise
+        raise ConfigurationError("Invalid manifest record in LOC route.") from None
+    for entry in entries:
+        is_location = entry.entity_type == EntityType.LOC
+        has_location_token = entry.token.strip("[]").startswith("LOC_")
+        if is_location or has_location_token:
+            if not loc_route:
+                raise ConfigurationError("LOC requires route format 1.2.")
+            if not is_location or not _LOC_TOKEN_RE.fullmatch(entry.token):
+                raise ConfigurationError("Invalid LOC token in manifest.")
 
     # Строим словарь token -> plaintext через decrypt_multi (ADR-23)
     value_map: dict[str, str] = {}
