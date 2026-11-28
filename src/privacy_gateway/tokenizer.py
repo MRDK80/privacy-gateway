@@ -49,7 +49,12 @@ class PerDocumentStrategy:
     Сбрасывается при создании нового экземпляра.
     """
 
-    def __init__(self) -> None:  # noqa: D107
+    def __init__(
+        self, supplemental_spans: frozenset[tuple[int, int]] = frozenset()
+    ) -> None:
+        """Optionally distinguish supplemental spans from accepted findings."""
+        self._supplemental_spans = supplemental_spans
+        self._supplemental_tokens: dict[tuple[str, str], str] = {}
         self._counters: dict[str, int] = {}
         self._seen: dict[str, str] = {}
         self._seen_locations: dict[str, str] = {}
@@ -58,13 +63,24 @@ class PerDocumentStrategy:
         seen = (
             self._seen_locations if entity.entity_type == EntityType.LOC else self._seen
         )
+        type_key = entity.entity_type.value
+        if (entity.start, entity.end) in self._supplemental_spans:
+            existing = seen.get(value)
+            if existing is not None and existing.startswith(f"[{type_key}_"):
+                return existing
+            key = type_key, value
+            if key not in self._supplemental_tokens:
+                self._supplemental_tokens[key] = self._new_token(type_key)
+            return self._supplemental_tokens[key]
         if value in seen:
             return seen[value]
-        type_key = entity.entity_type.value
-        self._counters[type_key] = self._counters.get(type_key, 0) + 1
-        token = f"[{type_key}_{self._counters[type_key]}]"
+        token = self._new_token(type_key)
         seen[value] = token
         return token
+
+    def _new_token(self, type_key: str) -> str:
+        self._counters[type_key] = self._counters.get(type_key, 0) + 1
+        return f"[{type_key}_{self._counters[type_key]}]"
 
 
 def tokenize(
