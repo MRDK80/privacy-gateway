@@ -234,3 +234,34 @@ def test_prepare_masks_selected_rejected_spans(
     assert prompt == expected
     monkeypatch.setattr("privacy_gateway.restore.get_all_keys", lambda: [key])
     assert restore_text(prompt, result.route_path).restored_text == text
+
+
+def test_supplemental_mask_preserves_accepted_token_type(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+    from threading import Lock
+
+    from privacy_gateway.restore import restore_text
+
+    text = "Asterwick Works. Asterwick Works."
+    engine = object.__new__(local_ner._Engine)
+    engine._lock = Lock()
+    monkeypatch.setattr(
+        engine, "_gliner", lambda _: {(0, 15, "PERSON"): 2.0, (17, 32, "ORG"): 1.0}
+    )
+    monkeypatch.setattr(engine, "_recheck", lambda *_: set())
+    monkeypatch.setattr(local_ner, "_engine", lambda _: engine)
+    key = generate_key()
+    result = prepare_pipeline(
+        text, "synthetic", RoutingConfig(), key, tmp_path / "out",
+        entities_config_path=write_config(tmp_path),
+    )
+    assert result.status == ProcessingStatus.OK
+    assert result.prompt_path is not None and result.route_path is not None
+    prompt = result.prompt_path.read_text(encoding="utf-8")
+    assert prompt == "[PERSON_1]. [ORG_1]."
+    route = json.loads(result.route_path.read_text(encoding="utf-8"))
+    assert route["token_counts_by_type"] == {"PERSON": 1, "ORG": 1}
+    monkeypatch.setattr("privacy_gateway.restore.get_all_keys", lambda: [key])
+    assert restore_text(prompt, result.route_path, strict=True).restored_text == text

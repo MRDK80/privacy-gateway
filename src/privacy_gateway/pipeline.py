@@ -62,7 +62,7 @@ from privacy_gateway.models import (
 )
 from privacy_gateway.publish import publish_temp
 from privacy_gateway.routing import LOC_ROUTE_FORMAT_VERSION, RoutingConfig
-from privacy_gateway.tokenizer import tokenize
+from privacy_gateway.tokenizer import PerDocumentStrategy, tokenize
 from privacy_gateway.validator import validate
 
 # Версия формата route.json — Э7 читает этот файл, версия обязательна
@@ -358,29 +358,33 @@ def prepare_pipeline(
                 message="Routing would leave a local NER detection unprotected.",
             )
 
-    original_values = [text[e.start : e.end] for e in entities_to_tokenize]
+    masks = (
+        _supplemental_masks(text, entities_to_tokenize, supplemental)
+        if supplemental else []
+    )
+    strategy = PerDocumentStrategy(frozenset((mask.start, mask.end) for mask in masks))
 
     # --- Токенизатор ---
     tokenized_text, token_records = tokenize(
-        text, entities_to_tokenize, original_values
+        text, entities_to_tokenize, strategy=strategy
     )
 
     # Preserve validation failures from the original protection plan.
     validation = validate(tokenized_text)
-    if supplemental and validation.status == ProcessingStatus.OK:
-        masks = _supplemental_masks(text, entities_to_tokenize, supplemental)
+    if masks and validation.status == ProcessingStatus.OK:
         if any(mask.entity_type.value not in allowed_types for mask in masks):
             return PipelineResult(
                 status=ProcessingStatus.BLOCKED,
                 message="Routing would leave a local NER detection unprotected.",
             )
-        if masks:
-            entities = sorted([*entities, *masks], key=lambda entity: entity.start)
-            entities_to_tokenize = sorted(
-                [*entities_to_tokenize, *masks], key=lambda entity: entity.start
-            )
-            tokenized_text, token_records = tokenize(text, entities_to_tokenize)
-            validation = validate(tokenized_text)
+        entities = sorted([*entities, *masks], key=lambda entity: entity.start)
+        entities_to_tokenize = sorted(
+            [*entities_to_tokenize, *masks], key=lambda entity: entity.start
+        )
+        tokenized_text, token_records = tokenize(
+            text, entities_to_tokenize, strategy=strategy
+        )
+        validation = validate(tokenized_text)
 
     if validation.status != ProcessingStatus.OK:
         findings_summary = _safe_findings_summary(validation.findings)
