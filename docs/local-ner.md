@@ -22,8 +22,10 @@ installed spaCy model packages. Base installation has no NER extra.
 The runtime verifies the artifacts when it opens the local session and
 reuses that session in the process. Keep the provisioned model files fixed
 while the process runs. Missing dependencies, digest mismatches at load,
-and inference failures stop detection and preparation. The independent
-validator still checks the resulting text. Review the protected text before
+and inference failures stop detection and preparation. Prepare also protects
+selected Gather spans rejected by the recheck, including names with two
+capitalized words and organizations with «…» quotes in predominantly Cyrillic input.
+The independent validator still checks the resulting text. Review the protected text before
 sending it onward. Evaluation includes both exact detection and the separate
 measurement of exposed annotated values in successful preparations.
 
@@ -44,8 +46,10 @@ Gateway, установите ONNX Runtime 1.23.2, tokenizers 0.22.2, spaCy 3.8.
 Хэши проверяются при открытии локальной сессии, которая переиспользуется
 внутри процесса. Сохраняйте файлы комплекта неизменными во время работы.
 При отсутствии зависимостей, несовпадении хэша при загрузке или сбое
-инференса detect и prepare завершаются ошибкой. Независимый валидатор
-проверяет защищённый текст. Перед передачей проверьте его вручную.
+инференса detect и prepare завершаются ошибкой. Prepare дополнительно
+защищает часть отклонённых интервалов Gather, в том числе названия с двумя
+заглавными словами и организации в кавычках «…» в преимущественно
+кириллическом тексте. Независимый валидатор проверяет защищённый текст. Перед передачей проверьте его вручную.
 Для оценки качества отдельно измеряются точные совпадения детектора и
 открытые размеченные значения среди успешных подготовок.
 
