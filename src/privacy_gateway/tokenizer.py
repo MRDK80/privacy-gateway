@@ -10,11 +10,9 @@
 Формат токена: [TYPE_N], например [EMAIL_1], [PHONE_2], [HOST_1].
 Токен не содержит фрагментов исходного значения.
 
-Пересекающиеся/вложенные диапазоны: сущности сортируются по убыванию
-start перед подстановкой, что корректно работает при любых непересекающихся
-и вложенных диапазонах. Реально пересекающиеся (overlapping) диапазоны
-отбрасываются в пользу раннего (меньший start), позднее вхождение пропускается
-с предупреждением (не raises, чтобы не ломать пайплайн).
+Диапазоны обрабатываются справа налево. При пересечении следующий
+диапазон пропускается с предупреждением. Если пропущенный LOC покрыт
+выбранными диапазонами лишь частично, токенизация завершается ошибкой.
 
 Стратегия присвоения токена вынесена в TokenAssignmentStrategy,
 чтобы поведение можно было заменить без изменения вызывающего кода.
@@ -25,7 +23,12 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from privacy_gateway.models import DetectedEntity, TokenRecord
+from privacy_gateway.models import (
+    ConfigurationError,
+    DetectedEntity,
+    EntityType,
+    TokenRecord,
+)
 
 log = logging.getLogger(__name__)
 
@@ -46,18 +49,38 @@ class PerDocumentStrategy:
     Сбрасывается при создании нового экземпляра.
     """
 
-    def __init__(self) -> None:  # noqa: D107
+    def __init__(
+        self, supplemental_spans: frozenset[tuple[int, int]] = frozenset()
+    ) -> None:
+        """Optionally distinguish supplemental spans from accepted findings."""
+        self._supplemental_spans = supplemental_spans
+        self._supplemental_tokens: dict[tuple[str, str], str] = {}
         self._counters: dict[str, int] = {}
         self._seen: dict[str, str] = {}
+        self._seen_locations: dict[str, str] = {}
 
     def assign(self, entity: DetectedEntity, value: str) -> str:  # noqa: D102
-        if value in self._seen:
-            return self._seen[value]
+        seen = (
+            self._seen_locations if entity.entity_type == EntityType.LOC else self._seen
+        )
         type_key = entity.entity_type.value
-        self._counters[type_key] = self._counters.get(type_key, 0) + 1
-        token = f"[{type_key}_{self._counters[type_key]}]"
-        self._seen[value] = token
+        if (entity.start, entity.end) in self._supplemental_spans:
+            existing = seen.get(value)
+            if existing is not None and existing.startswith(f"[{type_key}_"):
+                return existing
+            key = type_key, value
+            if key not in self._supplemental_tokens:
+                self._supplemental_tokens[key] = self._new_token(type_key)
+            return self._supplemental_tokens[key]
+        if value in seen:
+            return seen[value]
+        token = self._new_token(type_key)
+        seen[value] = token
         return token
+
+    def _new_token(self, type_key: str) -> str:
+        self._counters[type_key] = self._counters.get(type_key, 0) + 1
+        return f"[{type_key}_{self._counters[type_key]}]"
 
 
 def tokenize(
@@ -118,6 +141,24 @@ def tokenize(
             fingerprint=entity.fingerprint,
             secret_kind=entity.secret_kind,
         )
+
+    skipped_locations = [
+        (entity.start, entity.end)
+        for idx, entity in indexed
+        if entity.entity_type == EntityType.LOC and idx not in token_map
+    ]
+    if skipped_locations:
+        spans = sorted(covered)
+        for start, end in skipped_locations:
+            cursor = start
+            for left, right in spans:
+                if left > cursor or cursor >= end:
+                    break
+                cursor = max(cursor, right)
+            if cursor < end:
+                raise ConfigurationError(
+                    "Tokenization would leave part of a LOC unprotected."
+                )
 
     result = text
     for orig_idx, entity in indexed:

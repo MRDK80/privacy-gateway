@@ -45,6 +45,7 @@ from typing import Any
 from privacy_gateway.detector import (
     DetectorConfig,
     detect_entities,
+    detect_with_model_spans,
     load_config,
 )
 from privacy_gateway.keystore import (
@@ -53,11 +54,15 @@ from privacy_gateway.keystore import (
 from privacy_gateway.manifest import build_manifest, save_manifest
 from privacy_gateway.models import (
     ConfigurationError,
+    DetectedEntity,
+    DetectionConfidence,
+    EntityType,
     ProcessingStatus,
+    _safe_fingerprint,
 )
 from privacy_gateway.publish import publish_temp
-from privacy_gateway.routing import RoutingConfig
-from privacy_gateway.tokenizer import tokenize
+from privacy_gateway.routing import LOC_ROUTE_FORMAT_VERSION, RoutingConfig
+from privacy_gateway.tokenizer import PerDocumentStrategy, tokenize
 from privacy_gateway.validator import validate
 
 # Версия формата route.json — Э7 читает этот файл, версия обязательна
@@ -158,6 +163,46 @@ def _collision_result(path: Path) -> PipelineResult:
     )
 
 
+def _supplemental_masks(
+    text: str,
+    entities: list[DetectedEntity],
+    proposals: dict[tuple[int, int, str], float],
+) -> list[DetectedEntity]:
+    covered = [(entity.start, entity.end) for entity in entities]
+    masks = []
+    for start, end, label in sorted(
+        proposals, key=lambda span: (-proposals[span], span[0] - span[1], span)
+    ):
+        gaps = []
+        cursor = start
+        for left, right in covered:
+            if right <= cursor:
+                continue
+            if left >= end:
+                break
+            if left > cursor:
+                gaps.append((cursor, left))
+            cursor = max(cursor, right)
+            if cursor >= end:
+                break
+        if cursor < end:
+            gaps.append((cursor, end))
+        for left, right in gaps:
+            masks.append(
+                DetectedEntity(
+                    EntityType(label),
+                    left,
+                    right,
+                    DetectionConfidence.MEDIUM,
+                    "ner",
+                    _safe_fingerprint(text[left:right]),
+                )
+            )
+        if gaps:
+            covered = sorted([*covered, *gaps])
+    return masks
+
+
 def prepare_pipeline(
     text: str,
     source_ref: str,
@@ -232,7 +277,14 @@ def prepare_pipeline(
         raise
 
     # --- Детектор ---
-    entities = detect_entities(text, detector_cfg)
+    model_spans: set[tuple[int, int, str]] = set()
+    supplemental: dict[tuple[int, int, str], float] = {}
+    if detector_cfg.ner_model_dir is None:
+        entities = detect_entities(text, detector_cfg)
+    else:
+        entities, model_spans = detect_with_model_spans(
+            text, detector_cfg, supplemental
+        )
 
     # --- Жёсткая блокировка секретов (fail closed, ADR-11) ---
     secret_entities = [e for e in entities if e.secret_kind is not None]
@@ -273,33 +325,66 @@ def prepare_pipeline(
             findings_summary=summary,
         )
 
-    # --- Фильтрация: только разрешённые типы ---
-    entities_to_tokenize = [
-        e for e in entities if e.entity_type.value in allowed_types
-    ]
+    locations = [e for e in entities if e.entity_type == EntityType.LOC]
+    if locations and EntityType.LOC not in allowed_types:
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Routing policy does not permit tokenization of LOC.",
+        )
+    if any(not 0 <= e.start < e.end <= len(text) for e in locations):
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Invalid LOC detection offsets. Processing aborted.",
+        )
 
-    original_values = [text[e.start:e.end] for e in entities_to_tokenize]
+    if any(label in blocked_types for _, _, label in model_spans | supplemental.keys()):
+        return PipelineResult(
+            status=ProcessingStatus.BLOCKED,
+            message="Local NER found an unconditionally blocked type.",
+        )
+
+    # --- Фильтрация: только разрешённые типы ---
+    entities_to_tokenize = [e for e in entities if e.entity_type.value in allowed_types]
+
+    for start, end, _ in sorted(model_spans):
+        covered = start
+        for item in entities_to_tokenize:
+            if covered >= end or item.start > covered:
+                break
+            covered = max(covered, item.end)
+        if covered < end:
+            return PipelineResult(
+                status=ProcessingStatus.BLOCKED,
+                message="Routing would leave a local NER detection unprotected.",
+            )
+
+    masks = (
+        _supplemental_masks(text, entities_to_tokenize, supplemental)
+        if supplemental else []
+    )
+    strategy = PerDocumentStrategy(frozenset((mask.start, mask.end) for mask in masks))
 
     # --- Токенизатор ---
     tokenized_text, token_records = tokenize(
-        text, entities_to_tokenize, original_values
+        text, entities_to_tokenize, strategy=strategy
     )
 
-    # --- Манифест ---
-    fp_to_value: dict[str, str] = {
-        e.fingerprint: text[e.start:e.end] for e in entities_to_tokenize
-    }
-    manifest_values = [fp_to_value.get(r.fingerprint, "") for r in token_records]
-    manifest_entries = build_manifest(token_records, manifest_values, key)
-
-    # --- Валидатор ---
+    # Preserve validation failures from the original protection plan.
     validation = validate(tokenized_text)
-
-    token_counts: dict[str, int] = {}
-    for r in token_records:
-        token_counts[r.entity_type.value] = (
-            token_counts.get(r.entity_type.value, 0) + 1
+    if masks and validation.status == ProcessingStatus.OK:
+        if any(mask.entity_type.value not in allowed_types for mask in masks):
+            return PipelineResult(
+                status=ProcessingStatus.BLOCKED,
+                message="Routing would leave a local NER detection unprotected.",
+            )
+        entities = sorted([*entities, *masks], key=lambda entity: entity.start)
+        entities_to_tokenize = sorted(
+            [*entities_to_tokenize, *masks], key=lambda entity: entity.start
         )
+        tokenized_text, token_records = tokenize(
+            text, entities_to_tokenize, strategy=strategy
+        )
+        validation = validate(tokenized_text)
 
     if validation.status != ProcessingStatus.OK:
         findings_summary = _safe_findings_summary(validation.findings)
@@ -318,6 +403,17 @@ def prepare_pipeline(
             message=msg,
             findings_summary=findings_summary,
         )
+
+    # --- Манифест ---
+    fp_to_value: dict[str, str] = {
+        e.fingerprint: text[e.start : e.end] for e in entities_to_tokenize
+    }
+    manifest_values = [fp_to_value.get(r.fingerprint, "") for r in token_records]
+    manifest_entries = build_manifest(token_records, manifest_values, key)
+    token_counts: dict[str, int] = {}
+    for record in token_records:
+        label = record.entity_type.value
+        token_counts[label] = token_counts.get(label, 0) + 1
 
     # --- Запись артефактов (только при OK) ---
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -350,7 +446,11 @@ def prepare_pipeline(
     # Шаг 4: route.json с manifest_sha256 (атомарно)
     token_count = len(token_records)
     route_data: dict[str, Any] = {
-        "format_version": ROUTE_FORMAT_VERSION,
+        "format_version": (
+            LOC_ROUTE_FORMAT_VERSION
+            if EntityType.LOC in token_counts
+            else ROUTE_FORMAT_VERSION
+        ),
         "status": ProcessingStatus.OK.value,
         "timestamp": timestamp,
         "source_ref": source_ref,

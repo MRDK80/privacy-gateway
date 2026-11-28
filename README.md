@@ -41,7 +41,7 @@ What it provides:
 
 What it does not provide:
 
-- False negatives remain possible. Detection is limited to implemented regular expressions and dictionaries;
+- False negatives remain possible. Detection uses implemented rules and dictionaries, with optional local NER;
   unknown data classes may remain undetected.
 - Multiline secrets and passwords outside keyword patterns are not recognized.
 - Indirect identification from combinations of pseudonymized fields is not prevented.
@@ -54,7 +54,7 @@ See the [security model](https://github.com/MRDK80/privacy-gateway/blob/main/doc
 
 The only declared optional extra is `dev`, containing development and quality
 tools. The base installation provides both CLI and Library API; no additional
-product extras are declared.
+product extras are declared. See [local NER setup](https://github.com/MRDK80/privacy-gateway/blob/main/docs/local-ner.md).
 
 ## Requirements
 
