@@ -171,3 +171,66 @@ def test_unconditional_block_covers_dropped_model_type(
     )
     assert result.status == ProcessingStatus.BLOCKED
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("text", "surface", "label", "expected"),
+    [
+        (
+            "Delivery from Asterwick Works.",
+            "Asterwick Works",
+            "ORG",
+            "Delivery from [ORG_1].",
+        ),
+        (
+            "Письмо от артели «Медный берег».",
+            "артели «Медный берег»",
+            "ORG",
+            "Письмо от [ORG_1].",
+        ),
+        (
+            "Письмо от артели «Медный берег».",
+            "артели «Медный берег»",
+            "LOC",
+            "Письмо от артели «Медный берег».",
+        ),
+        ("Notes from Asterwick.", "Asterwick", "LOC", "Notes from Asterwick."),
+    ],
+)
+def test_prepare_masks_selected_rejected_spans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    surface: str,
+    label: str,
+    expected: str,
+) -> None:
+    from threading import Lock
+
+    from privacy_gateway.restore import restore_text
+
+    config = write_config(tmp_path)
+    start = text.index(surface)
+    engine = object.__new__(local_ner._Engine)
+    engine._lock = Lock()
+    monkeypatch.setattr(
+        engine, "_gliner", lambda _: {(start, start + len(surface), label): 1.0}
+    )
+    monkeypatch.setattr(engine, "_recheck", lambda *_: set())
+    monkeypatch.setattr(local_ner, "_engine", lambda _: engine)
+    assert not detect_entities(text, load_config(config))
+    key = generate_key()
+    result = prepare_pipeline(
+        text,
+        "synthetic",
+        RoutingConfig(),
+        key,
+        tmp_path / "out",
+        entities_config_path=config,
+    )
+    assert result.status == ProcessingStatus.OK
+    assert result.prompt_path is not None and result.route_path is not None
+    prompt = result.prompt_path.read_text(encoding="utf-8")
+    assert prompt == expected
+    monkeypatch.setattr("privacy_gateway.restore.get_all_keys", lambda: [key])
+    assert restore_text(prompt, result.route_path).restored_text == text

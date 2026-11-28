@@ -26,6 +26,7 @@ PROMPT = (
     "location",
     "<<SEP>>",
 )
+CAPITALIZED_WORDS = re.compile(r"[^\W\d_]+")
 WORD = re.compile(r"\w+(?:[-_]\w+)*|\S")
 BOUNDARY = re.compile(r"""[.!?…]+["'”’»\)\]\}]*(?=\s|$)|\r\n|[\r\n]""")
 WIDTH = 12
@@ -88,13 +89,18 @@ def _sentences(text: str) -> Iterator[tuple[int, str]]:
         yield len(text) - len(sentence), sentence.rstrip()
 
 
-def _route(text: str) -> tuple[int, ...]:
+def _script_counts(text: str) -> tuple[int, int]:
     cyrillic = latin = 0
     for char in text:
         if char.isalpha():
             script = name(char, "").partition(" ")[0]
             cyrillic += script == "CYRILLIC"
             latin += script == "LATIN"
+    return cyrillic, latin
+
+
+def _route(text: str) -> tuple[int, ...]:
+    cyrillic, latin = _script_counts(text)
     total = cyrillic + latin
     if total < 4:
         return (0, 1)
@@ -296,7 +302,9 @@ class _Engine:
                     found.add((offset + start, offset + end + 1, label))
         return found
 
-    def spans(self, text: str) -> set[Span]:
+    def spans(
+        self, text: str, supplemental: dict[Span, float] | None = None
+    ) -> set[Span]:
         with self._lock:
             scored = self._gliner(text)
             kept = set(scored)
@@ -317,9 +325,25 @@ class _Engine:
                             _org_additions(sentence, offset, inside, spots, matched)
                         )
             other = {p for p in kept if p[2] != "ORG"}
-            return kept | {
+            accepted = kept | {
                 p for p in additions if not any(_overlaps(p, item) for item in other)
             }
+
+            if supplemental is not None:
+                cyrillic, latin = _script_counts(text)
+                for span in scored.keys() - accepted:
+                    start, end, label = span
+                    surface = text[start:end]
+                    if sum(
+                        word[0].isupper() for word in CAPITALIZED_WORDS.findall(surface)
+                    ) >= 2 or (
+                        cyrillic > latin
+                        and label == "ORG"
+                        and "«" in surface
+                        and "»" in surface
+                    ):
+                        supplemental[span] = scored[span]
+            return accepted
 
 
 _ENGINE_LOCK = Lock()
@@ -330,12 +354,14 @@ def _engine(model_dir: Path) -> _Engine:
     return _Engine(model_dir)
 
 
-def model_spans_for(model_dir: Path, text: str) -> set[Span]:
+def model_spans_for(
+    model_dir: Path, text: str, supplemental: dict[Span, float] | None = None
+) -> set[Span]:
     """Run the pinned local NER pipeline, suppressing runtime details on failure."""
     try:
         with _ENGINE_LOCK:
             engine = _engine(model_dir)
-        return engine.spans(text)
+        return engine.spans(text, supplemental)
     except Exception:
         raise ConfigurationError(
             "Enabled local NER could not process the input."

@@ -387,7 +387,9 @@ def detect_entities(
 
 
 def detect_with_model_spans(
-    text: str, config: DetectorConfig
+    text: str,
+    config: DetectorConfig,
+    supplemental: dict[tuple[int, int, str], float] | None = None,
 ) -> tuple[list[DetectedEntity], set[tuple[int, int, str]]]:
     """Return the findings and pre-merge model spans for coverage checks."""
     candidates: list[_Candidate] = []
@@ -399,7 +401,7 @@ def detect_with_model_spans(
     if config.ner_model_dir is not None:
         from privacy_gateway.local_ner import model_spans_for
 
-        model_spans = model_spans_for(config.ner_model_dir, text)
+        model_spans = model_spans_for(config.ner_model_dir, text, supplemental)
         model_candidates = [
             _Candidate(
                 entity_type=EntityType(label),
